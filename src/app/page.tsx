@@ -539,8 +539,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
                     <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
                   </div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>AI（Antigravity）</div>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Lesson 16: レスポンシブ実装</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{activeCourse.name || "コース"}</div>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>進捗: {activeCourse.progress}%</div>
                   <Button size="sm" style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "7px 16px" }}>
                     <PlayCircle size={14} /> 開く
                   </Button>
@@ -550,7 +550,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <RadialBarChart innerRadius={30} outerRadius={46} data={radial} startAngle={90} endAngle={-270}>
                       <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
                       <RadialBar background={{ fill: "rgba(255,255,255,0.06)" }} dataKey="value" cornerRadius={12} fill={T.accentVivid} angleAxisId={0} />
-                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{cur.progress}</text>
+                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeCourse.progress}</text>
                       <text x="50%" y="64%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 9, fill: "rgba(255,255,255,0.35)", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
                     </RadialBarChart>
                   </ResponsiveContainer>
