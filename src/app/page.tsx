@@ -344,7 +344,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
               style={{
                 display: "flex", alignItems: "center", gap: 11, padding: "11px 14px",
                 borderRadius: 10, border: "none", cursor: "pointer", fontSize: 13.5,
-                fontWeight: active ? 600 : 450, fontFamily: "'Zen Kaku Gothic New', sans-serif",
+                fontWeight: active ? 600 : 450, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif",
                 color: active ? "#fff" : "rgba(255,255,255,0.45)",
                 background: active ? "rgba(59,130,246,0.15)" : "transparent",
                 transition: "all 0.2s ease", textAlign: "left", width: "100%", position: "relative",
@@ -372,10 +372,10 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
           onMouseLeave={e => e.currentTarget.style.background = "transparent"}
         >
           <Avatar style={{ width: 34, height: 34, boxShadow: "0 0 0 2px rgba(59,130,246,0.3)" }}>
-            <AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "'Sora'" }}>T</AvatarFallback>
+            <AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>T</AvatarFallback>
           </Avatar>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "'Sora'" }}>Tec</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Tec</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{isAdmin ? "講師" : "在校生"}</div>
           </div>
           <LogOut size={15} style={{ color: "rgba(255,255,255,0.25)", cursor: "pointer" }} onClick={onLogout} />
@@ -497,9 +497,9 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <div style={{ marginBottom: 24 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
               <Sparkles size={14} style={{ color: T.accent }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Dashboard</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Dashboard</span>
             </div>
-            <h1 style={{ fontFamily: "'Sora'", fontSize: 30, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em" }}>おかえりなさい、Tec さん</h1>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 30, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em" }}>おかえりなさい、Tec さん</h1>
           </div>
         </FadeIn>
 
@@ -517,10 +517,10 @@ const StudentDashboard = ({ setCurrentPage }) => {
                   <div style={{ position: "absolute", top: -16, right: -16, width: 60, height: 60, borderRadius: "50%", background: s.gradient, opacity: 0.06, filter: "blur(16px)" }} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative", zIndex: 1 }}>
                     <div>
-                      <span style={{ fontSize: 10, fontWeight: 600, color: T.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Sora'" }}>{s.label}</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: T.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.label}</span>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 3, marginTop: 6 }}>
-                        <span style={{ fontSize: 30, fontWeight: 800, color: T.dark, fontFamily: "'Sora'", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
-                        <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>{s.sub}</span>
+                        <span style={{ fontSize: 30, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
+                        <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.sub}</span>
                       </div>
                     </div>
                     <div style={{ width: 36, height: 36, borderRadius: 11, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 3px 10px ${s.accent}20` }}>
@@ -547,11 +547,11 @@ const StudentDashboard = ({ setCurrentPage }) => {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                     <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
-                    <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Continue Learning</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
                   </div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "'Sora'", letterSpacing: "-0.02em" }}>Antigravity</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>Antigravity</div>
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Lesson 16: レスポンシブ実装</div>
-                  <Button size="sm" style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "'Sora'", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "7px 16px" }}>
+                  <Button size="sm" style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "7px 16px" }}>
                     <PlayCircle size={14} /> 開く
                   </Button>
                 </div>
@@ -560,8 +560,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <RadialBarChart innerRadius={30} outerRadius={46} data={radial} startAngle={90} endAngle={-270}>
                       <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
                       <RadialBar background={{ fill: "rgba(255,255,255,0.06)" }} dataKey="value" cornerRadius={12} fill={T.accentVivid} angleAxisId={0} />
-                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "'Sora'" }}>{cur.progress}</text>
-                      <text x="50%" y="64%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 9, fill: "rgba(255,255,255,0.35)", fontFamily: "'Sora'" }}>%</text>
+                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{cur.progress}</text>
+                      <text x="50%" y="64%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 9, fill: "rgba(255,255,255,0.35)", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
                     </RadialBarChart>
                   </ResponsiveContainer>
                 </div>
@@ -572,7 +572,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={120} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Next Up</h3>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Next Up</h3>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.danger, boxShadow: `0 0 6px ${T.danger}40` }} />
               </div>
               <div style={{ padding: "0 20px 16px", flex: 1 }}>
@@ -597,8 +597,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={160} style={{ gridColumn: "span 8" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, padding: "20px 24px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h2 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>カリキュラム進度</h2>
-                <Button variant="ghost" size="sm" onClick={() => setCurrentPage("courses")} style={{ color: T.accent, fontWeight: 600, fontSize: 11, fontFamily: "'Sora'", gap: 3, padding: "4px 8px" }}>
+                <h2 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>カリキュラム進度</h2>
+                <Button variant="ghost" size="sm" onClick={() => setCurrentPage("courses")} style={{ color: T.accent, fontWeight: 600, fontSize: 11, fontFamily: "var(--font-sora), 'Sora', sans-serif", gap: 3, padding: "4px 8px" }}>
                   詳細 <ArrowUpRight size={12} />
                 </Button>
               </div>
@@ -631,7 +631,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                           {isAct && <div style={{ position: "absolute", right: -1, top: "50%", transform: "translateY(-50%)", width: 10, height: 10, borderRadius: "50%", background: c.color, border: `2px solid ${T.mode === "dark" ? T.surface : "white"}`, boxShadow: `0 0 8px ${c.color}50` }} />}
                         </div>
                       </div>
-                      <span style={{ fontSize: 12, fontWeight: 800, minWidth: 34, textAlign: "right", fontFamily: "'Sora'", color: isDone ? T.success : isAct ? T.dark : T.textMuted }}>{c.progress}%</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, minWidth: 34, textAlign: "right", fontFamily: "var(--font-sora), 'Sora', sans-serif", color: isDone ? T.success : isAct ? T.dark : T.textMuted }}>{c.progress}%</span>
                     </div>
                   );
                 })}
@@ -642,8 +642,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={200} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>📅 Schedule</h3>
-                <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "'Sora'", fontWeight: 500 }}>Google Cal</span>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>📅 Schedule</h3>
+                <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>Google Cal</span>
               </div>
               <div style={{ padding: "0 20px 16px", flex: 1 }}>
                 {calLoading ? (
@@ -656,7 +656,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <div style={{ width: 3, height: 26, borderRadius: 3, flexShrink: 0, marginTop: 1, background: calColors[i % calColors.length] }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 550, color: T.textPrimary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{evt.title}</div>
-                      <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2, fontFamily: "'Sora'" }}>{fmtTime(evt.start)}</div>
+                      <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{fmtTime(evt.start)}</div>
                     </div>
                   </div>
                 ))}
@@ -668,8 +668,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={240} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
               <div style={{ padding: "16px 20px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Weekly</h3>
-                <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${T.purple}12`, color: T.purple, border: "none", fontFamily: "'Sora'" }}>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Weekly</h3>
+                <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${T.purple}12`, color: T.purple, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                   <Flame size={10} style={{ marginRight: 2 }} />4日
                 </Badge>
               </div>
@@ -677,9 +677,9 @@ const StudentDashboard = ({ setCurrentPage }) => {
                 <ResponsiveContainer width="100%" height={130}>
                   <BarChart data={weekly} barCategoryGap="24%">
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
-                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: T.textMuted, fontFamily: "'Sora'" }} />
+                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                     <YAxis hide />
-                    <Tooltip cursor={{ fill: `${T.accent}06`, radius: 6 }} contentStyle={{ borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 11, fontFamily: "'Sora'" }} formatter={v => [`${v}h`]} />
+                    <Tooltip cursor={{ fill: `${T.accent}06`, radius: 6 }} contentStyle={{ borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 11, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} formatter={v => [`${v}h`]} />
                     <Bar dataKey="h" radius={[6, 6, 0, 0]}>
                       {weekly.map((_, i) => <Cell key={i} fill={weekly[i].h > 0 ? T.accent : T.borderSubtle} />)}
                     </Bar>
@@ -692,7 +692,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={280} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
               <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>お知らせ</h3>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>お知らせ</h3>
                 <Bell size={13} style={{ color: T.textMuted }} />
               </div>
               <div style={{ padding: "0 20px 16px" }}>
@@ -702,14 +702,14 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <Avatar style={{ width: 28, height: 28, flexShrink: 0 }}>
                       <AvatarFallback style={{
                         background: n.imp ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : T.mode === "dark" ? "rgba(255,255,255,0.06)" : "#E8EDF4",
-                        color: n.imp ? "#fff" : T.textMuted, fontSize: 10, fontWeight: 700, fontFamily: "'Sora'",
+                        color: n.imp ? "#fff" : T.textMuted, fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif",
                       }}>{n.av}</AvatarFallback>
                     </Avatar>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: T.textPrimary, fontFamily: "'Sora'" }}>{n.from}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{n.from}</span>
                         {n.imp && <div style={{ width: 4, height: 4, borderRadius: "50%", background: T.accent }} />}
-                        <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "'Sora'", marginLeft: "auto" }}>{n.time}</span>
+                        <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginLeft: "auto" }}>{n.time}</span>
                       </div>
                       <div style={{ fontSize: 11, color: T.textSecondary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.msg}</div>
                     </div>
@@ -722,7 +722,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={320} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
               <div style={{ padding: "16px 20px 10px" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Activity</h3>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Activity</h3>
               </div>
               <div style={{ padding: "0 20px 16px" }}>
                 {[
@@ -739,7 +739,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, color: T.textPrimary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.text}</div>
-                        <div style={{ fontSize: 9, color: T.textMuted, marginTop: 2, fontFamily: "'Sora'" }}>{a.time}</div>
+                        <div style={{ fontSize: 9, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{a.time}</div>
                       </div>
                     </div>
                   );
@@ -752,8 +752,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
           <FadeIn delay={360} style={{ gridColumn: "span 12" }}>
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
               <div style={{ padding: "18px 24px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>課題の提出状況</h3>
-                <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>STEP5 模擬案件</span>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>課題の提出状況</h3>
+                <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP5 模擬案件</span>
               </div>
               <div className="nwa-assign-grid" style={{ padding: "0 24px 18px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14 }}>
                 {assigns.map((a, i) => {
@@ -773,8 +773,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
                         <Icon size={16} style={{ color: sc.c }} />
                       </div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary, marginBottom: 6 }}>{a.title}</div>
-                      <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${sc.c}12`, color: sc.c, border: "none", fontFamily: "'Sora'" }}>{sc.l}</Badge>
-                      <div style={{ fontSize: 9, color: T.textMuted, marginTop: 6, fontFamily: "'Sora'" }}>〆 {a.dl}</div>
+                      <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${sc.c}12`, color: sc.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{sc.l}</Badge>
+                      <div style={{ fontSize: 9, color: T.textMuted, marginTop: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>〆 {a.dl}</div>
                       {a.fb && <div style={{ fontSize: 10, color: T.success, marginTop: 4, fontWeight: 600 }}>{a.fb}</div>}
                     </div>
                   );
@@ -809,12 +809,12 @@ const CourseList = ({ setCurrentPage }) => {
         <FadeIn>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 32 }}>
             <div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Courses</span>
-              <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>コース一覧</h1>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Courses</span>
+              <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>コース一覧</h1>
             </div>
             <div style={{ ...glassStyle(12), borderRadius: 12, padding: "9px 16px", display: "flex", alignItems: "center", gap: 8 }}>
               <Search size={15} style={{ color: T.textMuted }} />
-              <input placeholder="Search courses..." style={{ border: "none", outline: "none", fontSize: 13, width: 170, background: "transparent", color: T.textPrimary, fontFamily: "'Sora'" }} />
+              <input placeholder="Search courses..." style={{ border: "none", outline: "none", fontSize: 13, width: 170, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
             </div>
           </div>
         </FadeIn>
@@ -839,27 +839,27 @@ const CourseList = ({ setCurrentPage }) => {
                     <div style={{ width: 54, height: 54, borderRadius: 16, background: `${c.color}08`, border: `1.5px solid ${c.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: c.color }}>{CourseIcons[c.icon] ? CourseIcons[c.icon]({ size: 26 }) : c.icon}</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                        <h3 style={{ fontSize: 17, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'", letterSpacing: "-0.02em" }}>{c.name}</h3>
+                        <h3 style={{ fontSize: 17, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{c.name}</h3>
                         {c.locked && <Lock size={14} style={{ color: T.textMuted }} />}
                       </div>
                       <p style={{ fontSize: 13, color: T.textMuted, margin: 0, lineHeight: 1.4 }}>{c.desc}</p>
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 14, marginBottom: 18, fontSize: 11, color: T.textSecondary, alignItems: "center", fontFamily: "'Sora'", fontWeight: 500 }}>
+                  <div style={{ display: "flex", gap: 14, marginBottom: 18, fontSize: 11, color: T.textSecondary, alignItems: "center", fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}>📚 {c.lessons}</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {c.hours}h</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Users size={12} /> {c.students}</span>
-                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 600, fontFamily: "'Sora'", letterSpacing: "0.02em" }}>{c.level}</Badge>
+                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "0.02em" }}>{c.level}</Badge>
                   </div>
                   {!c.locked && (
                     <div>
                       <div style={{ height: 5, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
                         <div style={{ width: `${c.progress}%`, height: "100%", borderRadius: 99, background: c.progress === 100 ? T.success : `linear-gradient(90deg, ${c.color}, ${c.color}90)`, transition: "width 1s cubic-bezier(0.16,1,0.3,1)" }} />
                       </div>
-                      <div style={{ textAlign: "right", marginTop: 8, fontSize: 13, fontWeight: 800, color: c.progress === 100 ? T.success : T.dark, fontFamily: "'Sora'" }}>{c.progress}%</div>
+                      <div style={{ textAlign: "right", marginTop: 8, fontSize: 13, fontWeight: 800, color: c.progress === 100 ? T.success : T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{c.progress}%</div>
                     </div>
                   )}
-                  {c.locked && <div style={{ fontSize: 12, color: T.textMuted, fontStyle: "italic", fontFamily: "'Sora'" }}>Coming soon</div>}
+                  {c.locked && <div style={{ fontSize: 12, color: T.textMuted, fontStyle: "italic", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Coming soon</div>}
                 </div>
               </div>
             </FadeIn>
@@ -903,16 +903,16 @@ const LessonView = ({ setCurrentPage }) => {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 28px", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
-          <Button variant="ghost" size="sm" onClick={() => setCurrentPage("courses")} style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "'Sora'" }}>
+          <Button variant="ghost" size="sm" onClick={() => setCurrentPage("courses")} style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
             <ArrowLeft size={16} /> Back
           </Button>
           <Separator orientation="vertical" style={{ height: 20 }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "'Sora'" }}>Antigravity</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Antigravity</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, width: 180 }}>
             <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
               <div style={{ width: "68%", height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 800, color: T.dark, fontFamily: "'Sora'" }}>68%</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>68%</span>
           </div>
         </div>
 
@@ -932,8 +932,8 @@ const LessonView = ({ setCurrentPage }) => {
             >
               <Play size={34} fill="white" style={{ color: "white", marginLeft: 4 }} />
             </div>
-            <div style={{ fontSize: 16, fontWeight: 600, opacity: 0.85, fontFamily: "'Sora'" }}>レスポンシブ実装</div>
-            <div style={{ fontSize: 12, opacity: 0.35, marginTop: 5, fontFamily: "'Sora'" }}>22:15</div>
+            <div style={{ fontSize: 16, fontWeight: 600, opacity: 0.85, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>レスポンシブ実装</div>
+            <div style={{ fontSize: 12, opacity: 0.35, marginTop: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>22:15</div>
           </div>
           <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.06)" }}>
             <div style={{ width: "35%", height: "100%", background: T.accent, boxShadow: `0 0 12px ${T.accent}60` }} />
@@ -944,20 +944,20 @@ const LessonView = ({ setCurrentPage }) => {
         <Tabs defaultValue="content" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <TabsList style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, borderRadius: 0, padding: "0 28px", height: "auto", justifyContent: "flex-start" }}>
             {[{ v: "content", l: "概要" }, { v: "resources", l: "教材" }, { v: "comments", l: "質問 (3)" }].map(t => (
-              <TabsTrigger key={t.v} value={t.v} style={{ borderRadius: 0, padding: "13px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Sora'" }}>{t.l}</TabsTrigger>
+              <TabsTrigger key={t.v} value={t.v} style={{ borderRadius: 0, padding: "13px 20px", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
           <div style={{ flex: 1, overflow: "auto" }}>
             <TabsContent value="content" style={{ padding: 28 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "'Sora'", letterSpacing: "-0.03em" }}>レスポンシブ実装</h2>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>レスポンシブ実装</h2>
               <p style={{ fontSize: 14, color: T.textSecondary, lineHeight: 1.8, margin: "0 0 24px" }}>
                 Antigravityを使ってレスポンシブ対応のサイトを実装します。モバイルファーストの考え方とブレイクポイントの設定方法を実践的に学びます。
               </p>
               <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
-                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "'Sora'" }}><Clock size={13} /> 22:15</Badge>
-                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "'Sora'" }}><FileText size={13} /> PDF付き</Badge>
+                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> 22:15</Badge>
+                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> PDF付き</Badge>
               </div>
-              <Button style={{ background: T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "'Sora'", boxShadow: `0 4px 16px ${T.accent}30` }}>
+              <Button style={{ background: T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif", boxShadow: `0 4px 16px ${T.accent}30` }}>
                 <CheckCircle2 size={16} /> レッスン完了にする
               </Button>
             </TabsContent>
@@ -970,9 +970,9 @@ const LessonView = ({ setCurrentPage }) => {
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: T.textPrimary }}>{f.name}</div>
-                    <div style={{ fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>{f.size}</div>
+                    <div style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{f.size}</div>
                   </div>
-                  <Button variant="ghost" size="sm" style={{ color: T.accent, fontWeight: 600, fontFamily: "'Sora'", fontSize: 12 }}>Download</Button>
+                  <Button variant="ghost" size="sm" style={{ color: T.accent, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12 }}>Download</Button>
                 </div>
               ))}
             </TabsContent>
@@ -981,16 +981,16 @@ const LessonView = ({ setCurrentPage }) => {
                 <Avatar style={{ width: 34, height: 34 }}><AvatarFallback style={{ background: "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 12, fontWeight: 700 }}>佐</AvatarFallback></Avatar>
                 <div style={{ flex: 1 }}>
                   <div style={{ ...glassStyle(8), borderRadius: 14, padding: "14px 18px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, marginBottom: 5, fontFamily: "'Sora'" }}>佐藤 太郎</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, marginBottom: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>佐藤 太郎</div>
                     <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.55 }}>レスポンシブのブレイクポイントを768pxに設定したのですが、タブレットでレイアウトが崩れます。原因は何でしょうか？</div>
                   </div>
-                  <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "'Sora'" }}>3h ago</span>
+                  <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>3h ago</span>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <Avatar style={{ width: 34, height: 34 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "'Sora'" }}>T</AvatarFallback></Avatar>
+                <Avatar style={{ width: 34, height: 34 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>T</AvatarFallback></Avatar>
                 <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, ...glassStyle(8), borderRadius: 14, padding: "9px 16px" }}>
-                  <input placeholder="Write a question..." style={{ flex: 1, border: "none", outline: "none", fontSize: 13, background: "transparent", color: T.textPrimary, fontFamily: "'Zen Kaku Gothic New'" }} />
+                  <input placeholder="Write a question..." style={{ flex: 1, border: "none", outline: "none", fontSize: 13, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
                   <Button size="sm" style={{ background: T.accent, borderRadius: 10, padding: "7px 10px", boxShadow: `0 2px 8px ${T.accent}30` }}><Send size={15} /></Button>
                 </div>
               </div>
@@ -1002,15 +1002,15 @@ const LessonView = ({ setCurrentPage }) => {
       {/* Sidebar */}
       <ScrollArea className="nwa-lesson-sidebar" style={{ width: 340, borderLeft: `1px solid ${T.border}`, background: T.surface, flexShrink: 0 }}>
         <div style={{ padding: "18px 20px", borderBottom: `1px solid ${T.border}` }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Course Content</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Course Content</h3>
         </div>
         {sections.map((sec, si) => (
           <div key={si}>
             <button onClick={() => setExpanded(expanded === si ? -1 : si)}
               style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "14px 20px", background: expanded === si ? `${T.accent}04` : "transparent", border: "none", borderBottom: `1px solid ${T.borderSubtle}`, cursor: "pointer", textAlign: "left", transition: "background 0.2s" }}>
               <ChevronRight size={13} style={{ color: T.textMuted, transform: expanded === si ? "rotate(90deg)" : "none", transition: "transform 0.3s cubic-bezier(0.16,1,0.3,1)" }} />
-              <span style={{ fontSize: 13, fontWeight: 650, color: T.dark, flex: 1, fontFamily: "'Sora'" }}>{sec.title}</span>
-              <span style={{ fontSize: 10, color: T.textMuted, fontFamily: "'Sora'", fontWeight: 600 }}>{sec.lessons.filter(l => l.done).length}/{sec.lessons.length}</span>
+              <span style={{ fontSize: 13, fontWeight: 650, color: T.dark, flex: 1, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{sec.title}</span>
+              <span style={{ fontSize: 10, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600 }}>{sec.lessons.filter(l => l.done).length}/{sec.lessons.length}</span>
             </button>
             <div style={{ maxHeight: expanded === si ? 500 : 0, overflow: "hidden", transition: "max-height 0.45s cubic-bezier(0.16,1,0.3,1)" }}>
               {sec.lessons.map((l, li) => {
@@ -1022,7 +1022,7 @@ const LessonView = ({ setCurrentPage }) => {
                   >
                     {l.done ? <CheckCircle2 size={17} style={{ color: T.success, flexShrink: 0 }} /> : <Icon size={17} style={{ color: l.active ? T.accent : "#C1CDE0", flexShrink: 0 }} />}
                     <span style={{ flex: 1, fontSize: 13, fontWeight: l.active ? 600 : 400, color: l.active ? T.accent : T.textPrimary }}>{l.title}</span>
-                    <span style={{ fontSize: 10, color: T.textMuted, flexShrink: 0, fontFamily: "'Sora'", fontWeight: 500 }}>{l.dur}</span>
+                    <span style={{ fontSize: 10, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{l.dur}</span>
                   </div>
                 );
               })}
@@ -1054,8 +1054,8 @@ const AdminDashboard = () => {
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 1160 }}>
         <FadeIn>
           <div style={{ marginBottom: 32 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Admin</span>
-            <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>管理者ダッシュボード</h1>
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Admin</span>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>管理者ダッシュボード</h1>
           </div>
         </FadeIn>
 
@@ -1077,17 +1077,17 @@ const AdminDashboard = () => {
                   <div style={{ position: "absolute", top: -20, right: -20, width: 80, height: 80, borderRadius: "50%", background: s.gradient, opacity: 0.06, filter: "blur(20px)" }} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative", zIndex: 1 }}>
                     <div>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "'Sora'" }}>{s.label}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.label}</span>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 3, marginTop: 10 }}>
-                        <span style={{ fontSize: 36, fontWeight: 800, color: T.dark, fontFamily: "'Sora'", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
-                        {s.sub && <span style={{ fontSize: 14, color: T.textMuted, fontFamily: "'Sora'" }}>{s.sub}</span>}
+                        <span style={{ fontSize: 36, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
+                        {s.sub && <span style={{ fontSize: 14, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.sub}</span>}
                       </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
                       <div style={{ width: 42, height: 42, borderRadius: 13, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <Icon size={20} style={{ color: "#fff" }} />
                       </div>
-                      {s.change && <span style={{ fontSize: 10, fontWeight: 700, color: T.success, fontFamily: "'Sora'", display: "flex", alignItems: "center", gap: 2 }}><TrendingUp size={10} />{s.change}</span>}
+                      {s.change && <span style={{ fontSize: 10, fontWeight: 700, color: T.success, fontFamily: "var(--font-sora), 'Sora', sans-serif", display: "flex", alignItems: "center", gap: 2 }}><TrendingUp size={10} />{s.change}</span>}
                     </div>
                   </div>
                 </div>
@@ -1101,7 +1101,7 @@ const AdminDashboard = () => {
           <FadeIn delay={180}>
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
               <div style={{ padding: "20px 24px 8px" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Monthly Trends</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Monthly Trends</h3>
               </div>
               <div style={{ padding: "4px 14px 16px" }}>
                 <ResponsiveContainer width="100%" height={230}>
@@ -1111,9 +1111,9 @@ const AdminDashboard = () => {
                       <linearGradient id="gc2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.success} stopOpacity={0.15} /><stop offset="100%" stopColor={T.success} stopOpacity={0} /></linearGradient>
                     </defs>
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
-                    <XAxis dataKey="m" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.textMuted, fontFamily: "'Sora'" }} />
+                    <XAxis dataKey="m" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: T.textMuted }} />
-                    <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", fontSize: 12, fontFamily: "'Sora'" }} />
+                    <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                     <Area type="monotone" dataKey="a" stroke={T.accent} strokeWidth={2.5} fill="url(#ga2)" name="Active" />
                     <Area type="monotone" dataKey="c" stroke={T.success} strokeWidth={2.5} fill="url(#gc2)" name="Completed" />
                   </AreaChart>
@@ -1124,7 +1124,7 @@ const AdminDashboard = () => {
           <FadeIn delay={260}>
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
               <div style={{ padding: "20px 24px 0" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Distribution</h3>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Distribution</h3>
               </div>
               <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", alignItems: "center" }}>
                 <ResponsiveContainer width="100%" height={170}>
@@ -1132,12 +1132,12 @@ const AdminDashboard = () => {
                     <Pie data={dist} cx="50%" cy="50%" innerRadius={44} outerRadius={70} paddingAngle={4} dataKey="value" strokeWidth={0}>
                       {dist.map((e, i) => <Cell key={i} fill={e.color} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "'Sora'" }} formatter={(v) => [`${v}名`]} />
+                    <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} formatter={(v) => [`${v}名`]} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
                   {dist.map((c, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.textSecondary, fontFamily: "'Sora'", fontWeight: 500 }}>
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>
                       <div style={{ width: 8, height: 8, borderRadius: 3, background: c.color }} />{c.name}
                     </div>
                   ))}
@@ -1151,25 +1151,25 @@ const AdminDashboard = () => {
         <FadeIn delay={320}>
           <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
             <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'" }}>Students</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: "rgba(255,255,255,0.5)" }}>
                   <Search size={14} style={{ color: T.textMuted }} />
-                  <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", fontFamily: "'Sora'" }} />
+                  <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                 </div>
-                <Button size="sm" style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "'Sora'", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
+                <Button size="sm" style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
                   <Plus size={14} /> Invite
                 </Button>
               </div>
             </div>
-            <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "'Sora'" }}>
+            <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
               <div>Name</div><div>Course</div><div>Progress</div><div>Last Seen</div><div>Status</div>
             </div>
             {students.map((s, i) => (
               <div key={i} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "14px 24px", borderBottom: i < students.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", cursor: "pointer", transition: "background 0.2s" }}
                 onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Avatar style={{ width: 32, height: 32 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "'Sora'" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
+                  <Avatar style={{ width: 32, height: 32 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary }}>{s.name}</span>
                 </div>
                 <span style={{ fontSize: 13, color: T.textSecondary }}>{s.course}</span>
@@ -1177,10 +1177,10 @@ const AdminDashboard = () => {
                   <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
                     <div style={{ width: `${s.progress}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "'Sora'" }}>{s.progress}%</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.progress}%</span>
                 </div>
-                <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "'Sora'" }}>{s.last}</span>
-                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.status]?.c}12`, color: st[s.status]?.c, border: "none", fontFamily: "'Sora'" }}>
+                <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.last}</span>
+                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.status]?.c}12`, color: st[s.status]?.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                   {st[s.status]?.l}
                 </Badge>
               </div>
@@ -1251,7 +1251,7 @@ const QuizPage = () => {
         <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 760 }}>
           <FadeIn>
             <Button variant="ghost" size="sm" onClick={() => { setActiveQuiz(null); setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-              style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "'Sora'", marginBottom: 20 }}>
+              style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginBottom: 20 }}>
               <ArrowLeft size={16} /> テスト一覧に戻る
             </Button>
           </FadeIn>
@@ -1262,8 +1262,8 @@ const QuizPage = () => {
                 {/* Progress header */}
                 <div style={{ padding: "20px 28px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "'Sora'" }}>{activeQuiz}</span>
-                    <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4, fontFamily: "'Sora'" }}>Question {currentQ + 1} / {demoQuestions.length}</div>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeQuiz}</span>
+                    <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Question {currentQ + 1} / {demoQuestions.length}</div>
                   </div>
                   <div style={{ display: "flex", gap: 4 }}>
                     {demoQuestions.map((_, i) => (
@@ -1274,7 +1274,7 @@ const QuizPage = () => {
 
                 {/* Question */}
                 <div style={{ padding: "32px 28px" }}>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: T.dark, margin: "0 0 28px", fontFamily: "'Zen Kaku Gothic New'", lineHeight: 1.5 }}>{q.q}</h2>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: T.dark, margin: "0 0 28px", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", lineHeight: 1.5 }}>{q.q}</h2>
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     {q.options.map((opt, oi) => {
                       const selected = selectedAnswer === oi;
@@ -1316,7 +1316,7 @@ const QuizPage = () => {
                       }}
                       style={{
                         background: selectedAnswer !== null ? T.accent : T.border,
-                        borderRadius: 12, fontWeight: 600, fontFamily: "'Sora'", fontSize: 14,
+                        borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14,
                         padding: "10px 28px", gap: 6,
                         boxShadow: selectedAnswer !== null ? `0 4px 16px ${T.accent}30` : "none",
                       }}
@@ -1335,12 +1335,12 @@ const QuizPage = () => {
                     <RadialBarChart innerRadius={32} outerRadius={48} data={[{ value: Math.round(score / demoQuestions.length * 100), fill: score / demoQuestions.length >= 0.7 ? T.success : T.danger }]} startAngle={90} endAngle={-270}>
                       <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
                       <RadialBar background={{ fill: T.borderSubtle }} dataKey="value" cornerRadius={14} angleAxisId={0} />
-                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 20, fontWeight: 800, fill: T.dark, fontFamily: "'Sora'" }}>{Math.round(score / demoQuestions.length * 100)}</text>
-                      <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 10, fill: T.textMuted, fontFamily: "'Sora'" }}>%</text>
+                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 20, fontWeight: 800, fill: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{Math.round(score / demoQuestions.length * 100)}</text>
+                      <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 10, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
                     </RadialBarChart>
                   </ResponsiveContainer>
                 </div>
-                <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, fontFamily: "'Sora'", margin: "0 0 8px" }}>
+                <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", margin: "0 0 8px" }}>
                   {score / demoQuestions.length >= 0.7 ? "合格！🎉" : "不合格…"}
                 </h2>
                 <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 8px" }}>{score} / {demoQuestions.length} 正解</p>
@@ -1349,9 +1349,9 @@ const QuizPage = () => {
                 </p>
                 <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
                   <Button variant="outline" onClick={() => { setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-                    style={{ borderRadius: 12, fontFamily: "'Sora'", fontWeight: 600 }}>もう一度受ける</Button>
+                    style={{ borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600 }}>もう一度受ける</Button>
                   <Button onClick={() => { setActiveQuiz(null); setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-                    style={{ background: T.accent, borderRadius: 12, fontFamily: "'Sora'", fontWeight: 600, boxShadow: `0 4px 16px ${T.accent}30` }}>テスト一覧に戻る</Button>
+                    style={{ background: T.accent, borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600, boxShadow: `0 4px 16px ${T.accent}30` }}>テスト一覧に戻る</Button>
                 </div>
               </div>
             </FadeIn>
@@ -1366,8 +1366,8 @@ const QuizPage = () => {
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 960 }}>
         <FadeIn>
           <div style={{ marginBottom: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Assessment</span>
-            <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>確認テスト受講</h1>
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Assessment</span>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>確認テスト受講</h1>
           </div>
           <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 32px" }}>各STEPの修了テストとレッスンごとのミニテストを受けられます。STEP1〜3のみテストが用意されています。</p>
         </FadeIn>
@@ -1382,11 +1382,11 @@ const QuizPage = () => {
                     {CourseIcons[step.icon] ? CourseIcons[step.icon]({ size: 22 }) : null}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "'Sora'", letterSpacing: "-0.02em" }}>{step.name}</h3>
-                    <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "'Sora'" }}>修了テスト + ミニテスト {step.miniQuizzes.length}件</span>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{step.name}</h3>
+                    <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>修了テスト + ミニテスト {step.miniQuizzes.length}件</span>
                   </div>
                   {step.stepQuiz.passed && (
-                    <Badge variant="secondary" style={{ fontSize: 11, fontWeight: 700, background: `${T.success}12`, color: T.success, border: "none", fontFamily: "'Sora'" }}>
+                    <Badge variant="secondary" style={{ fontSize: 11, fontWeight: 700, background: `${T.success}12`, color: T.success, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                       <CheckCircle2 size={12} style={{ marginRight: 4 }} /> STEP完了
                     </Badge>
                   )}
@@ -1411,14 +1411,14 @@ const QuizPage = () => {
                     {step.stepQuiz.passed ? <CheckCircle2 size={18} style={{ color: T.success }} /> : <Award size={18} style={{ color: step.color }} />}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: T.textPrimary, fontFamily: "'Zen Kaku Gothic New'" }}>{step.stepQuiz.title}</div>
-                    <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2, fontFamily: "'Sora'" }}>{step.stepQuiz.questions}問 · {step.stepQuiz.time}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{step.stepQuiz.title}</div>
+                    <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{step.stepQuiz.questions}問 · {step.stepQuiz.time}</div>
                   </div>
                   {step.stepQuiz.score !== null && (
-                    <span style={{ fontSize: 16, fontWeight: 800, color: step.stepQuiz.passed ? T.success : T.danger, fontFamily: "'Sora'" }}>{step.stepQuiz.score}点</span>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: step.stepQuiz.passed ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{step.stepQuiz.score}点</span>
                   )}
                   {step.stepQuiz.score === null && (
-                    <Button size="sm" style={{ background: step.color, color: "#fff", borderRadius: 10, fontWeight: 600, fontFamily: "'Sora'", fontSize: 12, boxShadow: `0 2px 8px ${step.color}30` }}>
+                    <Button size="sm" style={{ background: step.color, color: "#fff", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${step.color}30` }}>
                       受験する
                     </Button>
                   )}
@@ -1446,10 +1446,10 @@ const QuizPage = () => {
                       )}
                       <span style={{ flex: 1, fontSize: 13, color: T.textPrimary, fontWeight: mq.passed === null ? 400 : 500 }}>ミニテスト: {mq.title}</span>
                       {mq.score !== null && (
-                        <span style={{ fontSize: 13, fontWeight: 700, color: mq.passed ? T.success : T.danger, fontFamily: "'Sora'" }}>{mq.score}点</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: mq.passed ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{mq.score}点</span>
                       )}
                       {mq.score === null && (
-                        <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>未受験</span>
+                        <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>未受験</span>
                       )}
                     </div>
                   ))}
@@ -1462,7 +1462,7 @@ const QuizPage = () => {
           <FadeIn delay={300}>
             <div style={{ ...glassStyle(), borderRadius: 18, padding: "24px 28px", textAlign: "center", opacity: 0.7 }}>
               <div style={{ fontSize: 20, marginBottom: 10 }}>📝</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "'Sora'" }}>STEP4〜7 はテストなし</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP4〜7 はテストなし</div>
               <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（Antigravity）以降は実践課題で評価されます。</div>
             </div>
           </FadeIn>
@@ -1485,8 +1485,8 @@ const Notifications = () => {
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 880 }}>
-        <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Notifications</span>
-          <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>通知</h1></FadeIn>
+        <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Notifications</span>
+          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>通知</h1></FadeIn>
         <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
           {n.map((x, i) => { const Icon = x.icon; return (
             <FadeIn key={i} delay={50 * i}>
@@ -1500,7 +1500,7 @@ const Notifications = () => {
                   <div style={{ fontSize: 14, fontWeight: x.unread ? 650 : 450, color: T.textPrimary }}>{x.title}</div>
                   <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2 }}>{x.desc}</div>
                 </div>
-                <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "'Sora'", fontWeight: 500 }}>{x.time}</span>
+                <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{x.time}</span>
               </div>
             </FadeIn>
           );})}
@@ -1519,8 +1519,8 @@ const Questions = () => {
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 980 }}>
-        <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Support</span>
-          <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>質問スレッド</h1></FadeIn>
+        <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Support</span>
+          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>質問スレッド</h1></FadeIn>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {t.map((x, i) => (
             <FadeIn key={i} delay={70 * i}>
@@ -1530,14 +1530,14 @@ const Questions = () => {
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar style={{ width: 28, height: 28 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "'Sora'" }}>{x.author.charAt(0)}</AvatarFallback></Avatar>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "'Sora'" }}>{x.author}</span>
-                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.ok ? `${T.success}12` : `${T.warning}12`, color: x.ok ? T.success : T.warning, border: "none", fontFamily: "'Sora'" }}>{x.ok ? "Resolved" : "Open"}</Badge>
+                    <Avatar style={{ width: 28, height: 28 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.author.charAt(0)}</AvatarFallback></Avatar>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.author}</span>
+                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.ok ? `${T.success}12` : `${T.warning}12`, color: x.ok ? T.success : T.warning, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.ok ? "Resolved" : "Open"}</Badge>
                   </div>
-                  <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>{x.time}</span>
+                  <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: T.dark, marginBottom: 10, fontFamily: "'Zen Kaku Gothic New'" }}>{x.q}</div>
-                <div style={{ display: "flex", gap: 16, fontSize: 11, color: T.textMuted, fontFamily: "'Sora'" }}>
+                <div style={{ fontSize: 15, fontWeight: 650, color: T.dark, marginBottom: 10, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.q}</div>
+                <div style={{ display: "flex", gap: 16, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                   <span><BookOpen size={12} style={{ verticalAlign: "middle" }} /> {x.course}</span>
                   <span><MessageSquare size={12} style={{ verticalAlign: "middle" }} /> {x.replies} replies</span>
                 </div>
@@ -1566,10 +1566,10 @@ const AdminCourses = () => {
         <FadeIn>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 32 }}>
             <div>
-              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Manage</span>
-              <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>コース管理</h1>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Manage</span>
+              <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>コース管理</h1>
             </div>
-            <Button style={{ background: T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "'Sora'", boxShadow: `0 4px 16px ${T.accent}25` }}><Plus size={18} /> New Course</Button>
+            <Button style={{ background: T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif", boxShadow: `0 4px 16px ${T.accent}25` }}><Plus size={18} /> New Course</Button>
           </div>
         </FadeIn>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1581,13 +1581,13 @@ const AdminCourses = () => {
               >
                 <div style={{ width: 50, height: 50, borderRadius: 15, background: `${x.color}08`, border: `1.5px solid ${x.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: x.color }}>{CourseIcons[x.icon] ? CourseIcons[x.icon]({ size: 24 }) : x.icon}</div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: T.dark, marginBottom: 4, fontFamily: "'Sora'" }}>{x.name}</div>
-                  <div style={{ display: "flex", gap: 16, fontSize: 11, color: T.textMuted, fontFamily: "'Sora'", fontWeight: 500 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: T.dark, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.name}</div>
+                  <div style={{ display: "flex", gap: 16, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>
                     <span>👥 {x.s}</span><span>📚 {x.l}</span>
                   </div>
                 </div>
-                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.st === "Live" ? `${T.success}12` : `${T.textMuted}12`, color: x.st === "Live" ? T.success : T.textMuted, border: "none", fontFamily: "'Sora'" }}>{x.st}</Badge>
-                <Button variant="outline" size="sm" style={{ borderRadius: 10, fontFamily: "'Sora'", fontWeight: 600, fontSize: 12 }}>Edit</Button>
+                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.st === "Live" ? `${T.success}12` : `${T.textMuted}12`, color: x.st === "Live" ? T.success : T.textMuted, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.st}</Badge>
+                <Button variant="outline" size="sm" style={{ borderRadius: 10, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600, fontSize: 12 }}>Edit</Button>
               </div>
             </FadeIn>
           ))}
@@ -1599,13 +1599,13 @@ const AdminCourses = () => {
 
 const Placeholder = ({ title, desc }) => (
   <div style={{ padding: "36px 40px", maxWidth: 1160 }}>
-    <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "'Sora'" }}>Coming Soon</span>
-      <h1 style={{ fontFamily: "'Sora'", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 8px", letterSpacing: "-0.04em" }}>{title}</h1>
+    <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Coming Soon</span>
+      <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 8px", letterSpacing: "-0.04em" }}>{title}</h1>
       <p style={{ color: T.textMuted, fontSize: 14 }}>{desc}</p></FadeIn>
     <FadeIn delay={100}>
       <div style={{ ...glassStyle(), marginTop: 40, borderRadius: 20, textAlign: "center", padding: 56 }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🚧</div>
-        <div style={{ fontSize: 15, fontWeight: 600, color: T.textMuted, fontFamily: "'Sora'" }}>Under construction</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Under construction</div>
       </div>
     </FadeIn>
   </div>
@@ -1630,7 +1630,7 @@ const LoginScreen = ({ onLogin }) => {
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
       background: "#0B1120", position: "relative", overflow: "hidden",
-      fontFamily: "'Zen Kaku Gothic New', sans-serif",
+      fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif",
     }}>
       {/* Noise texture */}
       <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", pointerEvents: "none", zIndex: 1 }} />
@@ -1650,7 +1650,7 @@ const LoginScreen = ({ onLogin }) => {
           {/* Logo */}
           <div style={{ textAlign: "center", marginBottom: 32 }}>
             <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 56, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.92, margin: "0 auto" }} />
-            <h1 style={{ fontFamily: "'Sora'", fontSize: 20, fontWeight: 700, color: "#F1F5F9", margin: "20px 0 0", letterSpacing: "-0.02em" }}>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 20, fontWeight: 700, color: "#F1F5F9", margin: "20px 0 0", letterSpacing: "-0.02em" }}>
               Next World Academy へようこそ
             </h1>
             <p style={{ fontSize: 13, color: "#64748B", marginTop: 6 }}>ログインして学習を始めましょう</p>
@@ -1658,14 +1658,14 @@ const LoginScreen = ({ onLogin }) => {
 
           {/* Email */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "'Sora'", display: "block", marginBottom: 6 }}>メールアドレス</label>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "var(--font-sora), 'Sora', sans-serif", display: "block", marginBottom: 6 }}>メールアドレス</label>
             <input
               type="email" value={email} onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
               style={{
                 width: "100%", padding: "12px 16px", borderRadius: 12, fontSize: 14,
                 background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
-                color: "#F1F5F9", outline: "none", fontFamily: "'Sora'",
+                color: "#F1F5F9", outline: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif",
                 transition: "border-color 0.2s",
                 boxSizing: "border-box",
               }}
@@ -1676,7 +1676,7 @@ const LoginScreen = ({ onLogin }) => {
 
           {/* Password */}
           <div style={{ marginBottom: 24 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "'Sora'", display: "block", marginBottom: 6 }}>パスワード</label>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "var(--font-sora), 'Sora', sans-serif", display: "block", marginBottom: 6 }}>パスワード</label>
             <div style={{ position: "relative" }}>
               <input
                 type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
@@ -1684,7 +1684,7 @@ const LoginScreen = ({ onLogin }) => {
                 style={{
                   width: "100%", padding: "12px 44px 12px 16px", borderRadius: 12, fontSize: 14,
                   background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
-                  color: "#F1F5F9", outline: "none", fontFamily: "'Sora'",
+                  color: "#F1F5F9", outline: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif",
                   transition: "border-color 0.2s",
                   boxSizing: "border-box",
                 }}
@@ -1713,7 +1713,7 @@ const LoginScreen = ({ onLogin }) => {
               onMouseLeave={() => setHoveredBtn(null)}
               style={{
                 width: "100%", padding: "13px 0", borderRadius: 12, border: "none", fontSize: 15, fontWeight: 700,
-                cursor: "pointer", fontFamily: "'Sora'", letterSpacing: "-0.01em",
+                cursor: "pointer", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.01em",
                 background: hoveredBtn === "student" ? "#3B82F6" : "#60A5FA",
                 color: "#fff",
                 boxShadow: "0 4px 16px rgba(96,165,250,0.35)",
@@ -1731,7 +1731,7 @@ const LoginScreen = ({ onLogin }) => {
               onMouseLeave={() => setHoveredBtn(null)}
               style={{
                 width: "100%", padding: "13px 0", borderRadius: 12, fontSize: 15, fontWeight: 700,
-                cursor: "pointer", fontFamily: "'Sora'", letterSpacing: "-0.01em",
+                cursor: "pointer", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.01em",
                 background: hoveredBtn === "admin" ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)",
                 border: "1px solid rgba(255,255,255,0.12)",
                 color: "#E2E8F0",
@@ -1748,7 +1748,7 @@ const LoginScreen = ({ onLogin }) => {
           {/* Forgot password */}
           <div style={{ textAlign: "center" }}>
             <a href="#" onClick={e => e.preventDefault()} style={{
-              fontSize: 12, color: "#60A5FA", textDecoration: "none", fontFamily: "'Sora'", fontWeight: 500,
+              fontSize: 12, color: "#60A5FA", textDecoration: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500,
               transition: "opacity 0.2s",
             }}
               onMouseEnter={e => e.currentTarget.style.opacity = "0.7"}
@@ -1836,7 +1836,7 @@ export default function NWALearningPlatform() {
     <ThemeContext.Provider value={T}>
       <div style={{
         display: "flex", height: "100vh", width: "100%",
-        fontFamily: "'Zen Kaku Gothic New', sans-serif",
+        fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif",
         backgroundColor: T.bg, color: T.textPrimary, overflow: "hidden",
         transition: "background-color 0.5s cubic-bezier(0.16,1,0.3,1), color 0.5s cubic-bezier(0.16,1,0.3,1)",
       }}>
@@ -1927,7 +1927,7 @@ export default function NWALearningPlatform() {
                 <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
               </svg>
             </button>
-            <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 28, objectFit: "contain" }} />
+            <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 36, objectFit: "contain", position: "absolute", left: "50%", transform: "translateX(-50%)", filter: isDark ? "brightness(0) invert(1)" : "none" }} />
             <ThemeToggle isDark={isDark} onToggle={handleThemeToggle} />
           </div>
 

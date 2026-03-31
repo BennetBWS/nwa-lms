@@ -9,11 +9,12 @@ const sora = Sora({
   display: "swap",
 });
 
-const zenKakuGothicNew = Zen_Kaku_Gothic_New({
+const zenKaku = Zen_Kaku_Gothic_New({
   subsets: ["latin"],
   weight: ["400", "500", "700"],
-  variable: "--font-zen-kaku",
+  variable: "--font-zen",
   display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -27,7 +28,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja" className={`${sora.variable} ${zenKakuGothicNew.variable}`}>
+    <html lang="ja" className={`${sora.variable} ${zenKaku.variable}`}>
       <body>{children}</body>
     </html>
   );
