@@ -18,8 +18,11 @@ const zenKaku = Zen_Kaku_Gothic_New({
 });
 
 export const metadata: Metadata = {
-  title: "NWA LMS",
-  description: "NWA Learning Management System",
+  title: {
+    default: "NWA LMS | Next World Academy",
+    template: "%s | NWA LMS",
+  },
+  description: "Next World Academy - 未来のWeb制作を、ここから。実践的なカリキュラムで未経験からプロのWeb制作者へ。",
 };
 
 export default function RootLayout({

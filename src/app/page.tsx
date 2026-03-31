@@ -307,6 +307,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
     { id: "quiz", icon: HelpCircle, label: "確認テスト受講" },
     { id: "notifications", icon: Bell, label: "通知", badge: 2 },
     { id: "questions", icon: MessageSquare, label: "質問" },
+    { id: "settings", icon: Settings, label: "設定" },
   ];
   const adminNav = [
     { id: "admin-dashboard", icon: BarChart3, label: "管理ダッシュボード" },
@@ -1059,15 +1060,44 @@ const LessonView = ({ setCurrentPage, courseId }) => {
 // ADMIN DASHBOARD
 // ═══════════════════════════════════════════
 const AdminDashboard = () => {
+  const [adminData, setAdminData] = useState(null);
+  const [inviteModal, setInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteResult, setInviteResult] = useState(null);
+  const [inviting, setInviting] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/admin/students").then(r => r.json()),
+      fetch("/api/admin/courses").then(r => r.json()),
+    ]).then(([studentsData, coursesData]) => {
+      setAdminData({ students: Array.isArray(studentsData) ? studentsData : [], courses: Array.isArray(coursesData) ? coursesData : [] });
+    }).catch(() => {});
+  }, []);
+
+  const handleInvite = async () => {
+    setInviting(true);
+    const res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
+    const data = await res.json();
+    setInviteResult(data);
+    setInviting(false);
+    if (!data.error) {
+      // Refresh students
+      const s = await fetch("/api/admin/students").then(r => r.json());
+      if (adminData) setAdminData({ ...adminData, students: Array.isArray(s) ? s : adminData.students });
+    }
+  };
+
   const monthly = [{ m: "Jan", a: 18, c: 6 }, { m: "Feb", a: 20, c: 8 }, { m: "Mar", a: 22, c: 10 }, { m: "Apr", a: 24, c: 12 }];
-  const dist = [{ name: "IT基礎", value: 24, color: "#6366F1" }, { name: "HTML・CSS", value: 24, color: "#EF4444" }, { name: "JS", value: 22, color: "#3B82F6" }, { name: "AI", value: 18, color: "#A78BFA" }, { name: "模擬案件", value: 10, color: "#F59E0B" }, { name: "PF", value: 6, color: "#22C55E" }];
-  const students = [
-    { name: "佐藤 太郎", course: "AI（AG）", progress: 82, last: "3h ago", status: "good" },
-    { name: "鈴木 花子", course: "JavaScript", progress: 95, last: "1d ago", status: "good" },
-    { name: "田中 次郎", course: "AI（AG）", progress: 23, last: "5d ago", status: "warn" },
-    { name: "高橋 美咲", course: "模擬案件", progress: 60, last: "2h ago", status: "good" },
-    { name: "渡辺 健一", course: "ポートフォリオ", progress: 10, last: "2w ago", status: "alert" },
-  ];
+  const courseColors = ["#6366F1", "#EF4444", "#3B82F6", "#A78BFA", "#F59E0B", "#22C55E", "#EC4899"];
+  const dist = (adminData?.courses || []).map((c, i) => ({ name: c.name.replace(/STEP\d\s/, "").substring(0, 8), value: c._count?.sections || 0, color: courseColors[i % courseColors.length] }));
+
+  const students = (adminData?.students || []).map(s => {
+    const progress = s.totalLessons > 0 ? Math.round((s.completedLessons / s.totalLessons) * 100) : 0;
+    const status = progress >= 50 ? "good" : progress >= 20 ? "warn" : "alert";
+    return { id: s.id, name: s.name, course: "", progress, last: s.lastActive ? new Date(s.lastActive).toLocaleDateString() : "N/A", status };
+  });
   const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
 
   return (
@@ -1178,10 +1208,45 @@ const AdminDashboard = () => {
                   <Search size={14} style={{ color: T.textMuted }} />
                   <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                 </div>
-                <Button size="sm" style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
-                  <Plus size={14} /> Invite
+                <Button size="sm" onClick={() => { setInviteModal(true); setInviteResult(null); setInviteEmail(""); setInviteName(""); }} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
+                  <Plus size={14} /> 招待
                 </Button>
               </div>
+              {/* Invite Modal */}
+              {inviteModal && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setInviteModal(false)}>
+                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw" }}>
+                    <h3 style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>生徒を招待</h3>
+                    {inviteResult?.password ? (
+                      <div>
+                        <div style={{ padding: 16, borderRadius: 12, background: `${T.success}10`, border: `1px solid ${T.success}30`, marginBottom: 16 }}>
+                          <div style={{ fontSize: 13, color: T.success, fontWeight: 600, marginBottom: 8 }}>アカウント作成完了</div>
+                          <div style={{ fontSize: 13, color: T.textPrimary, marginBottom: 4 }}>メール: <strong>{inviteResult.email}</strong></div>
+                          <div style={{ fontSize: 13, color: T.textPrimary }}>パスワード: <strong>{inviteResult.password}</strong></div>
+                        </div>
+                        <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>この情報を生徒に共有してください。パスワードは後から変更できます。</div>
+                        <Button onClick={() => setInviteModal(false)} style={{ width: "100%", background: T.accent, borderRadius: 10 }}>閉じる</Button>
+                      </div>
+                    ) : (
+                      <div>
+                        {inviteResult?.error && <div style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{inviteResult.error}</div>}
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>名前</label>
+                          <input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="山田 花子" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ marginBottom: 20 }}>
+                          <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>メールアドレス</label>
+                          <input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="student@example.com" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Button variant="outline" onClick={() => setInviteModal(false)} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                          <Button onClick={handleInvite} disabled={inviting || !inviteEmail || !inviteName} style={{ flex: 1, background: T.accent, borderRadius: 10 }}>{inviting ? "作成中..." : "招待する"}</Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
               <div>Name</div><div>Course</div><div>Progress</div><div>Last Seen</div><div>Status</div>
@@ -1583,15 +1648,15 @@ const Questions = () => {
 };
 
 const AdminCourses = () => {
-  const c = [
-    { name: "STEP1 ITリテラシー", s: 24, l: 12, st: "Live", icon: "it", color: "#6366F1" },
-    { name: "STEP2 HTML・CSS", s: 24, l: 18, st: "Live", icon: "html", color: "#EF4444" },
-    { name: "STEP3 JavaScript", s: 22, l: 20, st: "Live", icon: "js", color: "#3B82F6" },
-    { name: "STEP4 AI（Antigravity・Claude, etc）", s: 18, l: 24, st: "Live", icon: "ag", color: "#A78BFA" },
-    { name: "STEP5 模擬案件", s: 10, l: 15, st: "Live", icon: "mock", color: "#F59E0B" },
-    { name: "STEP6 ポートフォリオ", s: 6, l: 10, st: "Live", icon: "portfolio", color: "#22C55E" },
-    { name: "STEP7 案件獲得", s: 0, l: 8, st: "Draft", icon: "sales", color: "#EC4899" },
-  ];
+  const [apiCourses, setApiCourses] = useState([]);
+  useEffect(() => {
+    fetch("/api/admin/courses").then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setApiCourses(data);
+    }).catch(() => {});
+  }, []);
+  const c = apiCourses.map(x => ({
+    id: x.id, name: x.name, s: x._count?.sections || 0, l: x._count?.sections || 0, st: "Live", icon: x.icon, color: x.color,
+  }));
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 1160 }}>
@@ -1624,6 +1689,60 @@ const AdminCourses = () => {
             </FadeIn>
           ))}
         </div>
+      </div>
+    </ScrollArea>
+  );
+};
+
+// ═══════════════════════════════════════════
+// SETTINGS PAGE
+// ═══════════════════════════════════════════
+const SettingsPage = () => {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [msg, setMsg] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const handleChangePw = async () => {
+    if (newPw !== confirmPw) { setMsg({ type: "error", text: "新しいパスワードが一致しません" }); return; }
+    if (newPw.length < 6) { setMsg({ type: "error", text: "パスワードは6文字以上にしてください" }); return; }
+    setSaving(true);
+    const res = await fetch("/api/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
+    const data = await res.json();
+    setSaving(false);
+    if (data.error) setMsg({ type: "error", text: data.error });
+    else { setMsg({ type: "success", text: "パスワードを変更しました" }); setCurrentPw(""); setNewPw(""); setConfirmPw(""); }
+  };
+
+  return (
+    <ScrollArea style={{ height: "100%" }}>
+      <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 600 }}>
+        <FadeIn>
+          <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Settings</span>
+          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>設定</h1>
+        </FadeIn>
+        <FadeIn delay={100}>
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: 28 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>パスワード変更</h3>
+            {msg && <div style={{ padding: "10px 14px", borderRadius: 10, marginBottom: 16, background: msg.type === "error" ? `${T.danger}10` : `${T.success}10`, color: msg.type === "error" ? T.danger : T.success, fontSize: 13 }}>{msg.text}</div>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>現在のパスワード</label>
+                <input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>新しいパスワード</label>
+                <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>パスワード確認</label>
+                <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <Button onClick={handleChangePw} disabled={saving || !currentPw || !newPw || !confirmPw} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, marginTop: 8 }}>{saving ? "変更中..." : "パスワードを変更"}</Button>
+            </div>
+          </div>
+        </FadeIn>
       </div>
     </ScrollArea>
   );
@@ -1699,8 +1818,9 @@ export default function NWALearningPlatform() {
     "admin-dashboard": <AdminDashboard />,
     "admin-students": <Placeholder title="生徒管理" desc="生徒の招待・詳細確認・アカウント管理" />,
     "admin-courses": <AdminCourses />,
-    "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え" />,
-    "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定" />,
+    "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え（管理APIは実装済み）" />,
+    "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定（管理APIは実装済み）" />,
+    "settings": <SettingsPage />,
   };
 
   return (
