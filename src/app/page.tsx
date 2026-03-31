@@ -41,11 +41,11 @@ const CourseIcons = {
       <text x="12" y="15" textAnchor="middle" fill="currentColor" fontSize="7" fontWeight="800" fontFamily="'Sora', sans-serif">5</text>
     </svg>
   ),
-  css: ({ size = 24 }) => (
+  js: ({ size = 24 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <path d="M4 3l1.78 17.1L12 22l6.22-1.9L20 3H4z" fill="currentColor" opacity="0.12"/>
       <path d="M4 3l1.78 17.1L12 22l6.22-1.9L20 3H4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-      <text x="12" y="15" textAnchor="middle" fill="currentColor" fontSize="6" fontWeight="800" fontFamily="'Sora', sans-serif">{ }</text>
+      <text x="12" y="15" textAnchor="middle" fill="currentColor" fontSize="6" fontWeight="800" fontFamily="'Sora', sans-serif">JS</text>
     </svg>
   ),
   ag: ({ size = 24 }) => (
@@ -417,8 +417,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
         if (Array.isArray(events)) setCalEvents(events.slice(0, 5));
       } catch {
         setCalEvents([
-          { title: "Antigravity L16 視聴", start: new Date(Date.now() + 3600000).toISOString() },
-          { title: "CSS ミニテスト再受験", start: new Date(Date.now() + 7200000).toISOString() },
+          { title: "AI（AG）L16 視聴", start: new Date(Date.now() + 3600000).toISOString() },
+          { title: "JS ミニテスト再受験", start: new Date(Date.now() + 7200000).toISOString() },
           { title: "山田先生 1on1", start: new Date(Date.now() + 86400000).toISOString() },
           { title: "模擬案件 課題2 締切", start: new Date(Date.now() + 172800000).toISOString() },
         ]);
@@ -443,11 +443,11 @@ const StudentDashboard = ({ setCurrentPage }) => {
   ];
   const courses = [
     { name: "STEP1 ITリテラシー", progress: 100, lessons: 12, icon: "it", color: "#6366F1" },
-    { name: "STEP2 HTML", progress: 100, lessons: 18, icon: "html", color: "#EF4444" },
-    { name: "STEP3 CSS", progress: 100, lessons: 20, icon: "css", color: "#3B82F6" },
-    { name: "STEP4 Antigravity", progress: 65, lessons: 24, icon: "ag", color: "#A78BFA" },
+    { name: "STEP2 HTML・CSS", progress: 100, lessons: 18, icon: "html", color: "#EF4444" },
+    { name: "STEP3 JavaScript", progress: 100, lessons: 20, icon: "js", color: "#3B82F6" },
+    { name: "STEP4 AI（Antigravity・Claude, etc）", progress: 65, lessons: 24, icon: "ag", color: "#A78BFA" },
     { name: "STEP5 模擬案件", progress: 20, lessons: 15, icon: "mock", color: "#F59E0B" },
-    { name: "STEP6 ポートフォリオ作成", progress: 0, lessons: 10, icon: "portfolio", color: "#22C55E" },
+    { name: "STEP6 ポートフォリオ", progress: 0, lessons: 10, icon: "portfolio", color: "#22C55E" },
     { name: "STEP7 案件獲得", progress: 0, lessons: 8, icon: "sales", color: "#EC4899" },
   ];
   const cur = courses[3];
@@ -461,10 +461,10 @@ const StudentDashboard = ({ setCurrentPage }) => {
   ];
 
   const todos = [
-    { text: "Antigravity L16 を視聴", icon: PlayCircle, color: T.accent, hi: true },
-    { text: "CSS Flexbox ミニテスト再受験", icon: HelpCircle, color: T.warning, hi: true },
+    { text: "AI（AG）L16 を視聴", icon: PlayCircle, color: T.accent, hi: true },
+    { text: "JS DOM操作 ミニテスト再受験", icon: HelpCircle, color: T.warning, hi: true },
     { text: "質問への返信を確認", icon: MessageSquare, color: T.success },
-    { text: "STEP3 修了テスト受験", icon: Award, color: T.purple },
+    { text: "STEP3 JS修了テスト受験", icon: Award, color: T.purple },
   ];
 
   const assigns = [
@@ -549,7 +549,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                     <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
                     <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
                   </div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>Antigravity</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>AI（Antigravity）</div>
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>Lesson 16: レスポンシブ実装</div>
                   <Button size="sm" style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "7px 16px" }}>
                     <PlayCircle size={14} /> 開く
@@ -726,8 +726,8 @@ const StudentDashboard = ({ setCurrentPage }) => {
               </div>
               <div style={{ padding: "0 20px 16px" }}>
                 {[
-                  { icon: PlayCircle, color: T.accent, text: "AG - レスポンシブ #15", time: "2h" },
-                  { icon: Award, color: T.warning, text: "CSS クイズ — 90点", time: "1d" },
+                  { icon: PlayCircle, color: T.accent, text: "AI（AG）- レスポンシブ #15", time: "2h" },
+                  { icon: Award, color: T.warning, text: "JS クイズ — 90点", time: "1d" },
                   { icon: MessageSquare, color: T.success, text: "山田先生が回答", time: "2d" },
                 ].map((a, i) => {
                   const Icon = a.icon;
@@ -795,11 +795,11 @@ const StudentDashboard = ({ setCurrentPage }) => {
 const CourseList = ({ setCurrentPage }) => {
   const courses = [
     { name: "STEP1 ITリテラシー", desc: "PC基礎操作・ネットリテラシー・ツール活用", lessons: 12, hours: 6, progress: 100, icon: "it", color: "#6366F1", level: "STEP1", students: 24 },
-    { name: "STEP2 HTML", desc: "Webページの骨格となるHTMLを基礎から学ぶ", lessons: 18, hours: 10, progress: 100, icon: "html", color: "#EF4444", level: "STEP2", students: 24 },
-    { name: "STEP3 CSS", desc: "デザインを実現するCSS・レイアウト手法を習得", lessons: 20, hours: 12, progress: 100, icon: "css", color: "#3B82F6", level: "STEP3", students: 22 },
-    { name: "STEP4 Antigravity", desc: "AIツールを活用した次世代Web制作を実践", lessons: 24, hours: 14, progress: 65, icon: "ag", color: "#A78BFA", level: "STEP4", students: 18 },
+    { name: "STEP2 HTML・CSS", desc: "Webページの構造とデザインを基礎から学ぶ", lessons: 18, hours: 10, progress: 100, icon: "html", color: "#EF4444", level: "STEP2", students: 24 },
+    { name: "STEP3 JavaScript", desc: "DOM操作・イベント処理などJS基礎を固める", lessons: 20, hours: 12, progress: 100, icon: "js", color: "#3B82F6", level: "STEP3", students: 22 },
+    { name: "STEP4 AI（Antigravity・Claude, etc）", desc: "AIツールを活用した次世代Web制作を実践", lessons: 24, hours: 14, progress: 65, icon: "ag", color: "#A78BFA", level: "STEP4", students: 18 },
     { name: "STEP5 模擬案件", desc: "模擬案件で実務フロー・納品までをシミュレーション", lessons: 15, hours: 20, progress: 20, icon: "mock", color: "#F59E0B", level: "STEP5", students: 10 },
-    { name: "STEP6 ポートフォリオ作成", desc: "案件獲得に向けたポートフォリオサイトを構築", lessons: 10, hours: 8, progress: 0, icon: "portfolio", color: "#22C55E", level: "STEP6", students: 6, locked: true },
+    { name: "STEP6 ポートフォリオ", desc: "案件獲得に向けたポートフォリオサイトを構築", lessons: 10, hours: 8, progress: 0, icon: "portfolio", color: "#22C55E", level: "STEP6", students: 6, locked: true },
     { name: "STEP7 案件獲得", desc: "営業・提案・契約など案件獲得の実践ノウハウ", lessons: 8, hours: 6, progress: 0, icon: "sales", color: "#EC4899", level: "STEP7", students: 0, locked: true },
   ];
 
@@ -877,7 +877,7 @@ const LessonView = ({ setCurrentPage }) => {
   const [expanded, setExpanded] = useState(1);
   const sections = [
     { title: "AG基礎", lessons: [
-      { title: "Antigravityとは", dur: "8:30", done: true, type: "video" },
+      { title: "AI制作ツールとは", dur: "8:30", done: true, type: "video" },
       { title: "環境セットアップ", dur: "12:45", done: true, type: "video" },
       { title: "プロンプトの基本", dur: "10:20", done: true, type: "video" },
       { title: "確認クイズ", dur: "5問", done: true, type: "quiz" },
@@ -907,7 +907,7 @@ const LessonView = ({ setCurrentPage }) => {
             <ArrowLeft size={16} /> Back
           </Button>
           <Separator orientation="vertical" style={{ height: 20 }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Antigravity</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>AI（Antigravity）</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, width: 180 }}>
             <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
               <div style={{ width: "68%", height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
@@ -951,7 +951,7 @@ const LessonView = ({ setCurrentPage }) => {
             <TabsContent value="content" style={{ padding: 28 }}>
               <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>レスポンシブ実装</h2>
               <p style={{ fontSize: 14, color: T.textSecondary, lineHeight: 1.8, margin: "0 0 24px" }}>
-                Antigravityを使ってレスポンシブ対応のサイトを実装します。モバイルファーストの考え方とブレイクポイントの設定方法を実践的に学びます。
+                AIツールを使ってレスポンシブ対応のサイトを実装します。モバイルファーストの考え方とブレイクポイントの設定方法を実践的に学びます。
               </p>
               <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
                 <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> 22:15</Badge>
@@ -1039,11 +1039,11 @@ const LessonView = ({ setCurrentPage }) => {
 // ═══════════════════════════════════════════
 const AdminDashboard = () => {
   const monthly = [{ m: "Jan", a: 18, c: 6 }, { m: "Feb", a: 20, c: 8 }, { m: "Mar", a: 22, c: 10 }, { m: "Apr", a: 24, c: 12 }];
-  const dist = [{ name: "IT基礎", value: 24, color: "#6366F1" }, { name: "HTML", value: 24, color: "#EF4444" }, { name: "CSS", value: 22, color: "#3B82F6" }, { name: "AG", value: 18, color: "#A78BFA" }, { name: "模擬案件", value: 10, color: "#F59E0B" }, { name: "PF", value: 6, color: "#22C55E" }];
+  const dist = [{ name: "IT基礎", value: 24, color: "#6366F1" }, { name: "HTML・CSS", value: 24, color: "#EF4444" }, { name: "JS", value: 22, color: "#3B82F6" }, { name: "AI", value: 18, color: "#A78BFA" }, { name: "模擬案件", value: 10, color: "#F59E0B" }, { name: "PF", value: 6, color: "#22C55E" }];
   const students = [
-    { name: "佐藤 太郎", course: "Antigravity", progress: 82, last: "3h ago", status: "good" },
-    { name: "鈴木 花子", course: "CSS", progress: 95, last: "1d ago", status: "good" },
-    { name: "田中 次郎", course: "Antigravity", progress: 23, last: "5d ago", status: "warn" },
+    { name: "佐藤 太郎", course: "AI（AG）", progress: 82, last: "3h ago", status: "good" },
+    { name: "鈴木 花子", course: "JavaScript", progress: 95, last: "1d ago", status: "good" },
+    { name: "田中 次郎", course: "AI（AG）", progress: 23, last: "5d ago", status: "warn" },
     { name: "高橋 美咲", course: "模擬案件", progress: 60, last: "2h ago", status: "good" },
     { name: "渡辺 健一", course: "ポートフォリオ", progress: 10, last: "2w ago", status: "alert" },
   ];
@@ -1214,7 +1214,7 @@ const QuizPage = () => {
       ],
     },
     {
-      name: "STEP2 HTML", color: "#EF4444", icon: "html",
+      name: "STEP2 HTML・CSS", color: "#EF4444", icon: "html",
       stepQuiz: { title: "STEP2 修了テスト", questions: 15, time: "20分", passed: true, score: 85 },
       miniQuizzes: [
         { title: "L3: HTML基本構造", passed: true, score: 90 },
@@ -1224,13 +1224,13 @@ const QuizPage = () => {
       ],
     },
     {
-      name: "STEP3 CSS", color: "#3B82F6", icon: "css",
+      name: "STEP3 JavaScript", color: "#3B82F6", icon: "js",
       stepQuiz: { title: "STEP3 修了テスト", questions: 15, time: "20分", passed: false, score: null },
       miniQuizzes: [
-        { title: "L4: セレクター・プロパティ", passed: true, score: 85 },
-        { title: "L9: ボックスモデル", passed: true, score: 90 },
-        { title: "L14: Flexbox", passed: false, score: 60 },
-        { title: "L18: レスポンシブ", passed: null, score: null },
+        { title: "L4: 変数・データ型", passed: true, score: 85 },
+        { title: "L9: DOM操作", passed: true, score: 90 },
+        { title: "L14: イベント処理", passed: false, score: 60 },
+        { title: "L18: 非同期処理", passed: null, score: null },
       ],
     },
   ];
@@ -1463,7 +1463,7 @@ const QuizPage = () => {
             <div style={{ ...glassStyle(), borderRadius: 18, padding: "24px 28px", textAlign: "center", opacity: 0.7 }}>
               <div style={{ fontSize: 20, marginBottom: 10 }}>📝</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP4〜7 はテストなし</div>
-              <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（Antigravity）以降は実践課題で評価されます。</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（AI）以降は実践課題で評価されます。</div>
             </div>
           </FadeIn>
         </div>
@@ -1477,9 +1477,9 @@ const QuizPage = () => {
 // ═══════════════════════════════════════════
 const Notifications = () => {
   const n = [
-    { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "Antigravity - L16", time: "2h", unread: true },
+    { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "AI（AG） - L16", time: "2h", unread: true },
     { icon: GraduationCap, color: T.purple, title: "STEP5「模擬案件」が開放されました", desc: "STEP4完了後に受講可能", time: "1d", unread: true },
-    { icon: Award, color: T.warning, title: "CSS Flexboxクイズ — 90点", desc: "合格おめでとう！", time: "2d", unread: false },
+    { icon: Award, color: T.warning, title: "JS DOM操作クイズ — 90点", desc: "合格おめでとう！", time: "2d", unread: false },
     { icon: Settings, color: T.textMuted, title: "パスワード変更のお知らせ", desc: "定期変更を推奨", time: "1w", unread: false },
   ];
   return (
@@ -1512,8 +1512,8 @@ const Notifications = () => {
 
 const Questions = () => {
   const t = [
-    { author: "佐藤", q: "レスポンシブでタブレット表示が崩れる", course: "AG", time: "3h", replies: 2, ok: false },
-    { author: "鈴木", q: "Flexboxで縦中央揃えができない", course: "CSS", time: "1d", replies: 4, ok: true },
+    { author: "佐藤", q: "レスポンシブでタブレット表示が崩れる", course: "AI（AG）", time: "3h", replies: 2, ok: false },
+    { author: "鈴木", q: "Flexboxで縦中央揃えができない", course: "JS", time: "1d", replies: 4, ok: true },
     { author: "田中", q: "模擬案件の納品形式について", course: "模擬案件", time: "2d", replies: 1, ok: false },
   ];
   return (
@@ -1553,11 +1553,11 @@ const Questions = () => {
 const AdminCourses = () => {
   const c = [
     { name: "STEP1 ITリテラシー", s: 24, l: 12, st: "Live", icon: "it", color: "#6366F1" },
-    { name: "STEP2 HTML", s: 24, l: 18, st: "Live", icon: "html", color: "#EF4444" },
-    { name: "STEP3 CSS", s: 22, l: 20, st: "Live", icon: "css", color: "#3B82F6" },
-    { name: "STEP4 Antigravity", s: 18, l: 24, st: "Live", icon: "ag", color: "#A78BFA" },
+    { name: "STEP2 HTML・CSS", s: 24, l: 18, st: "Live", icon: "html", color: "#EF4444" },
+    { name: "STEP3 JavaScript", s: 22, l: 20, st: "Live", icon: "js", color: "#3B82F6" },
+    { name: "STEP4 AI（Antigravity・Claude, etc）", s: 18, l: 24, st: "Live", icon: "ag", color: "#A78BFA" },
     { name: "STEP5 模擬案件", s: 10, l: 15, st: "Live", icon: "mock", color: "#F59E0B" },
-    { name: "STEP6 ポートフォリオ作成", s: 6, l: 10, st: "Live", icon: "portfolio", color: "#22C55E" },
+    { name: "STEP6 ポートフォリオ", s: 6, l: 10, st: "Live", icon: "portfolio", color: "#22C55E" },
     { name: "STEP7 案件獲得", s: 0, l: 8, st: "Draft", icon: "sales", color: "#EC4899" },
   ];
   return (
@@ -1629,9 +1629,9 @@ const LoginScreen = ({ onLogin }) => {
 
   const steps = [
     { num: "01", name: "ITリテラシー", color: "#6366F1" },
-    { num: "02", name: "HTML", color: "#EF4444" },
-    { num: "03", name: "CSS", color: "#3B82F6" },
-    { num: "04", name: "Antigravity", color: "#A78BFA" },
+    { num: "02", name: "HTML・CSS", color: "#EF4444" },
+    { num: "03", name: "JavaScript", color: "#3B82F6" },
+    { num: "04", name: "AI（AG・Claude）", color: "#A78BFA" },
     { num: "05", name: "模擬案件", color: "#F59E0B" },
     { num: "06", name: "ポートフォリオ", color: "#22C55E" },
     { num: "07", name: "案件獲得", color: "#EC4899" },
@@ -1652,10 +1652,12 @@ const LoginScreen = ({ onLogin }) => {
         .login-left { display: flex; }
         .login-right { flex: 1; }
         .login-card-wrap { padding: 0 48px; }
+        .login-mobile-logo { display: none !important; }
         @media (max-width: 900px) {
           .login-left { display: none !important; }
           .login-right { min-height: 100vh; }
           .login-card-wrap { padding: 0 24px; }
+          .login-mobile-logo { display: flex !important; }
         }
       `}</style>
 
@@ -1771,8 +1773,8 @@ const LoginScreen = ({ onLogin }) => {
                 background: `linear-gradient(90deg, transparent, ${neon}50, transparent)`,
               }} />
 
-              {/* Mobile logo (hidden on desktop) */}
-              <div className="login-left" style={{ display: "none", justifyContent: "center", marginBottom: 24 }}>
+              {/* Mobile logo (hidden on desktop, shown on mobile) */}
+              <div className="login-mobile-logo" style={{ display: "none", justifyContent: "center", marginBottom: 28 }}>
                 <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 44, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.9 }} />
               </div>
 
