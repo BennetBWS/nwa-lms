@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, GraduationCap, BarChart3 } from "lucide-react";
@@ -32,7 +32,15 @@ const steps = [
   { num: "07", name: "案件獲得", color: "#EC4899" },
 ];
 
-export default function LoginPage() {
+export default function LoginPageWrapper() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "#060D1B" }} />}>
+      <LoginPage />
+    </Suspense>
+  );
+}
+
+function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
