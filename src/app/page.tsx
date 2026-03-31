@@ -964,10 +964,10 @@ const LessonView = ({ setCurrentPage, courseId }) => {
         <Tabs defaultValue="content" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <TabsList style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, borderRadius: 0, padding: "0 28px", height: "auto", justifyContent: "flex-start" }}>
             {[{ v: "content", l: "概要" }, { v: "resources", l: "教材" }, { v: "comments", l: "質問 (3)" }].map(t => (
-              <TabsTrigger key={t.v} value={t.v} style={{ borderRadius: 0, padding: "13px 20px", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{t.l}</TabsTrigger>
+              <TabsTrigger key={t.v} value={t.v} style={{ borderRadius: 0, padding: "13px 20px", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", color: T.textSecondary }}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
-          <div style={{ flex: 1, overflow: "auto" }}>
+          <div style={{ flex: 1, overflow: "auto", background: T.bg, color: T.textPrimary }}>
             <TabsContent value="content" style={{ padding: 28 }}>
               <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>レスポンシブ実装</h2>
               <p style={{ fontSize: 14, color: T.textSecondary, lineHeight: 1.8, margin: "0 0 24px" }}>
@@ -1041,7 +1041,7 @@ const LessonView = ({ setCurrentPage, courseId }) => {
                     onMouseEnter={e => { if (!l.active) e.currentTarget.style.background = `${T.accent}03`; }}
                     onMouseLeave={e => { if (!l.active) e.currentTarget.style.background = "transparent"; }}
                   >
-                    {l.done ? <CheckCircle2 size={17} style={{ color: T.success, flexShrink: 0 }} /> : <Icon size={17} style={{ color: l.active ? T.accent : "#C1CDE0", flexShrink: 0 }} />}
+                    {l.done ? <CheckCircle2 size={17} style={{ color: T.success, flexShrink: 0 }} /> : <Icon size={17} style={{ color: l.active ? T.accent : T.textMuted, flexShrink: 0 }} />}
                     <span style={{ flex: 1, fontSize: 13, fontWeight: l.active ? 600 : 400, color: l.active ? T.accent : T.textPrimary }}>{l.title}</span>
                     <span style={{ fontSize: 10, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{l.dur}</span>
                   </div>
@@ -1174,9 +1174,9 @@ const AdminDashboard = () => {
             <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
               <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: "rgba(255,255,255,0.5)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: T.glass }}>
                   <Search size={14} style={{ color: T.textMuted }} />
-                  <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
+                  <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                 </div>
                 <Button size="sm" style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
                   <Plus size={14} /> Invite
@@ -1675,8 +1675,11 @@ export default function NWALearningPlatform() {
     if (data?.courseId) setSelectedCourseId(data.courseId);
   };
 
-  // Update global T when theme changes
+  // Update global T when theme changes + toggle dark class on html
   T = createTheme(isDark);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDark);
+  }, [isDark]);
 
   const handleThemeToggle = () => {
     setTransitioning(true);
