@@ -299,7 +299,7 @@ const ThemeToggle = ({ isDark, onToggle }) => {
 // ═══════════════════════════════════════════
 // SIDEBAR
 // ═══════════════════════════════════════════
-const Sidebar = ({ currentPage, setCurrentPage, isAdmin, setIsAdmin }) => {
+const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
   const studentNav = [
     { id: "dashboard", icon: Home, label: "ダッシュボード" },
     { id: "courses", icon: BookOpen, label: "コース一覧" },
@@ -328,28 +328,8 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, setIsAdmin }) => {
       <div style={{ position: "absolute", top: -80, left: -60, width: 240, height: 240, borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)", pointerEvents: "none" }} />
 
       {/* Logo */}
-      <div style={{ padding: "22px 24px 18px", position: "relative", zIndex: 2 }}>
-        <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 36, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.92 }} />
-      </div>
-
-      {/* Role Switch */}
-      <div style={{ padding: "0 16px 16px", position: "relative", zIndex: 2 }}>
-        <div style={{ display: "flex", background: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 3, border: "1px solid rgba(255,255,255,0.06)" }}>
-          {["生徒", "管理者"].map((role, i) => {
-            const active = i === 0 ? !isAdmin : isAdmin;
-            return (
-              <button key={role} onClick={() => { setIsAdmin(i === 1); setCurrentPage(i === 0 ? "dashboard" : "admin-dashboard"); }}
-                style={{
-                  flex: 1, padding: "7px 0", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600,
-                  cursor: "pointer", transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
-                  background: active ? "rgba(255,255,255,0.1)" : "transparent",
-                  color: active ? "#fff" : "rgba(255,255,255,0.35)",
-                  fontFamily: "'Sora', sans-serif", letterSpacing: "0.02em",
-                }}
-              >{role}</button>
-            );
-          })}
-        </div>
+      <div style={{ padding: "22px 28px 24px", position: "relative", zIndex: 2 }}>
+        <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 48, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.92 }} />
       </div>
 
       <Separator style={{ background: "rgba(255,255,255,0.06)", margin: "0 16px" }} />
@@ -396,9 +376,9 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, setIsAdmin }) => {
           </Avatar>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "'Sora'" }}>Tec</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{isAdmin ? "管理者" : "在校生"}</div>
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{isAdmin ? "講師" : "在校生"}</div>
           </div>
-          <LogOut size={15} style={{ color: "rgba(255,255,255,0.25)" }} />
+          <LogOut size={15} style={{ color: "rgba(255,255,255,0.25)", cursor: "pointer" }} onClick={onLogout} />
         </div>
       </div>
     </div>
@@ -1632,6 +1612,156 @@ const Placeholder = ({ title, desc }) => (
 );
 
 // ═══════════════════════════════════════════
+// LOGIN SCREEN
+// ═══════════════════════════════════════════
+const LoginScreen = ({ onLogin }) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [hoveredBtn, setHoveredBtn] = useState(null);
+
+  const T = createTheme(true); // Login always uses dark theme
+
+  const handleSubmit = (role) => {
+    onLogin(role);
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+      background: "#0B1120", position: "relative", overflow: "hidden",
+      fontFamily: "'Zen Kaku Gothic New', sans-serif",
+    }}>
+      {/* Noise texture */}
+      <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", pointerEvents: "none", zIndex: 1 }} />
+      {/* Decorative circles */}
+      <div style={{ position: "absolute", top: -120, right: -120, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", bottom: -100, left: -100, width: 350, height: 350, borderRadius: "50%", background: "radial-gradient(circle, rgba(167,139,250,0.1) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", top: "40%", left: "60%", width: 250, height: 250, borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.06) 0%, transparent 70%)", pointerEvents: "none" }} />
+
+      <FadeIn>
+        <div style={{
+          position: "relative", zIndex: 2, width: 420, padding: "44px 40px",
+          background: "rgba(17,24,39,0.7)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          borderRadius: 24,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.2), 0 8px 32px rgba(0,0,0,0.15), 0 32px 64px rgba(0,0,0,0.1)",
+        }}>
+          {/* Logo */}
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style={{ height: 56, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.92, margin: "0 auto" }} />
+            <h1 style={{ fontFamily: "'Sora'", fontSize: 20, fontWeight: 700, color: "#F1F5F9", margin: "20px 0 0", letterSpacing: "-0.02em" }}>
+              Next World Academy へようこそ
+            </h1>
+            <p style={{ fontSize: 13, color: "#64748B", marginTop: 6 }}>ログインして学習を始めましょう</p>
+          </div>
+
+          {/* Email */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "'Sora'", display: "block", marginBottom: 6 }}>メールアドレス</label>
+            <input
+              type="email" value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              style={{
+                width: "100%", padding: "12px 16px", borderRadius: 12, fontSize: 14,
+                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+                color: "#F1F5F9", outline: "none", fontFamily: "'Sora'",
+                transition: "border-color 0.2s",
+                boxSizing: "border-box",
+              }}
+              onFocus={e => e.currentTarget.style.borderColor = "#60A5FA"}
+              onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"}
+            />
+          </div>
+
+          {/* Password */}
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", fontFamily: "'Sora'", display: "block", marginBottom: 6 }}>パスワード</label>
+            <div style={{ position: "relative" }}>
+              <input
+                type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                style={{
+                  width: "100%", padding: "12px 44px 12px 16px", borderRadius: 12, fontSize: 14,
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+                  color: "#F1F5F9", outline: "none", fontFamily: "'Sora'",
+                  transition: "border-color 0.2s",
+                  boxSizing: "border-box",
+                }}
+                onFocus={e => e.currentTarget.style.borderColor = "#60A5FA"}
+                onBlur={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"}
+              />
+              <button onClick={() => setShowPassword(!showPassword)} style={{
+                position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer", color: "#64748B", padding: 4,
+                display: "flex", alignItems: "center",
+              }}>
+                {showPassword ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Role login buttons */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+            <button
+              onClick={() => handleSubmit("student")}
+              onMouseEnter={() => setHoveredBtn("student")}
+              onMouseLeave={() => setHoveredBtn(null)}
+              style={{
+                width: "100%", padding: "13px 0", borderRadius: 12, border: "none", fontSize: 15, fontWeight: 700,
+                cursor: "pointer", fontFamily: "'Sora'", letterSpacing: "-0.01em",
+                background: hoveredBtn === "student" ? "#3B82F6" : "#60A5FA",
+                color: "#fff",
+                boxShadow: "0 4px 16px rgba(96,165,250,0.35)",
+                transition: "all 0.25s cubic-bezier(0.16,1,0.3,1)",
+                transform: hoveredBtn === "student" ? "translateY(-1px)" : "none",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <GraduationCap size={18} /> 生徒としてログイン
+              </span>
+            </button>
+            <button
+              onClick={() => handleSubmit("admin")}
+              onMouseEnter={() => setHoveredBtn("admin")}
+              onMouseLeave={() => setHoveredBtn(null)}
+              style={{
+                width: "100%", padding: "13px 0", borderRadius: 12, fontSize: 15, fontWeight: 700,
+                cursor: "pointer", fontFamily: "'Sora'", letterSpacing: "-0.01em",
+                background: hoveredBtn === "admin" ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                color: "#E2E8F0",
+                transition: "all 0.25s cubic-bezier(0.16,1,0.3,1)",
+                transform: hoveredBtn === "admin" ? "translateY(-1px)" : "none",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <BarChart3 size={18} /> 講師としてログイン
+              </span>
+            </button>
+          </div>
+
+          {/* Forgot password */}
+          <div style={{ textAlign: "center" }}>
+            <a href="#" onClick={e => e.preventDefault()} style={{
+              fontSize: 12, color: "#60A5FA", textDecoration: "none", fontFamily: "'Sora'", fontWeight: 500,
+              transition: "opacity 0.2s",
+            }}
+              onMouseEnter={e => e.currentTarget.style.opacity = "0.7"}
+              onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+            >パスワードを忘れた方</a>
+          </div>
+        </div>
+      </FadeIn>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════
 export default function NWALearningPlatform() {
@@ -1640,6 +1770,32 @@ export default function NWALearningPlatform() {
   const [isDark, setIsDark] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // Check localStorage on mount
+  useEffect(() => {
+    const role = localStorage.getItem("nwa-role");
+    if (role) {
+      setAdmin(role === "admin");
+      setPage(role === "admin" ? "admin-dashboard" : "dashboard");
+      setLoggedIn(true);
+    }
+    setAuthChecked(true);
+  }, []);
+
+  const handleLogin = (role) => {
+    localStorage.setItem("nwa-role", role);
+    setAdmin(role === "admin");
+    setPage(role === "admin" ? "admin-dashboard" : "dashboard");
+    setLoggedIn(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("nwa-role");
+    setLoggedIn(false);
+    setAdmin(false);
+  };
 
   const handlePageChange = (p) => { setPage(p); setMobileMenu(false); };
 
@@ -1667,6 +1823,14 @@ export default function NWALearningPlatform() {
     "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え" />,
     "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定" />,
   };
+
+  // Show nothing until auth check completes (prevents flash)
+  if (!authChecked) return null;
+
+  // Show login screen if not logged in
+  if (!loggedIn) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <ThemeContext.Provider value={T}>
@@ -1746,7 +1910,7 @@ export default function NWALearningPlatform() {
         {mobileMenu && <div className="nwa-sidebar-overlay" onClick={() => setMobileMenu(false)} />}
 
         <div className={`nwa-sidebar ${mobileMenu ? "open" : ""}`}>
-          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} setIsAdmin={setAdmin} />
+          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} onLogout={handleLogout} />
         </div>
         <main style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
           {/* Mobile header */}
