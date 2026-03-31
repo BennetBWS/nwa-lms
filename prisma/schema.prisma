@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+}
+
+enum LessonType {
+  VIDEO
+  TEXT
+  PDF
+  QUIZ
+}
+
+enum QuizType {
+  MINI
+  FINAL
+}
+
+enum AssignmentStatus {
+  LOCKED
+  WORKING
+  REVIEW
+  APPROVED
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String
+  password      String
+  role          Role           @default(STUDENT)
+  avatar        String?
+  createdAt     DateTime       @default(now())
+  progress      Progress[]
+  quizAttempts  QuizAttempt[]
+  comments      Comment[]
+  assignments   Assignment[]
+  notifications Notification[]
+}
+
+model Course {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  order       Int
+  icon        String
+  color       String
+  sections    Section[]
+  assignments Assignment[]
+}
+
+model Section {
+  id       String   @id @default(cuid())
+  courseId  String
+  course   Course   @relation(fields: [courseId], references: [id])
+  title    String
+  order    Int
+  lessons  Lesson[]
+}
+
+model Lesson {
+  id        String     @id @default(cuid())
+  sectionId String
+  section   Section    @relation(fields: [sectionId], references: [id])
+  title     String
+  type      LessonType
+  videoUrl  String?
+  content   String?
+  pdfUrl    String?
+  duration  String?
+  order     Int
+  progress  Progress[]
+  comments  Comment[]
+  quizzes   Quiz[]
+}
+
+model Progress {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  lessonId       String
+  lesson         Lesson    @relation(fields: [lessonId], references: [id])
+  completed      Boolean   @default(false)
+  watchedSeconds Int       @default(0)
+  completedAt    DateTime?
+
+  @@unique([userId, lessonId])
+}
+
+model Quiz {
+  id        String         @id @default(cuid())
+  lessonId  String?
+  lesson    Lesson?        @relation(fields: [lessonId], references: [id])
+  courseId  String?
+  type      QuizType
+  title     String
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+}
+
+model QuizQuestion {
+  id           String @id @default(cuid())
+  quizId       String
+  quiz         Quiz   @relation(fields: [quizId], references: [id])
+  question     String
+  options      Json
+  correctIndex Int
+  order        Int
+}
+
+model QuizAttempt {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  quizId    String
+  quiz      Quiz     @relation(fields: [quizId], references: [id])
+  score     Int
+  passed    Boolean
+  answers   Json
+  createdAt DateTime @default(now())
+}
+
+model Comment {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  lessonId  String
+  lesson    Lesson    @relation(fields: [lessonId], references: [id])
+  content   String
+  parentId  String?
+  parent    Comment?  @relation("Replies", fields: [parentId], references: [id])
+  replies   Comment[] @relation("Replies")
+  createdAt DateTime  @default(now())
+}
+
+model Assignment {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  courseId  String
+  course    Course           @relation(fields: [courseId], references: [id])
+  title     String
+  status    AssignmentStatus @default(LOCKED)
+  deadline  DateTime?
+  feedback  String?
+  createdAt DateTime         @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
