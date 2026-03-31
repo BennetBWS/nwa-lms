@@ -390,42 +390,26 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
 // STUDENT DASHBOARD — Bento Grid Layout
 // ═══════════════════════════════════════════
 const StudentDashboard = ({ setCurrentPage }) => {
+  const [dashData, setDashData] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [calEvents, setCalEvents] = useState([]);
   const [calLoading, setCalLoading] = useState(true);
 
-  // Google Calendar MCP
+  // Fetch dashboard data from API
   useEffect(() => {
-    const fetchCal = async () => {
-      try {
-        const now = new Date(), later = new Date(now); later.setDate(later.getDate() + 7);
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514", max_tokens: 1000,
-            messages: [{ role: "user", content: `List my calendar events from ${now.toISOString()} to ${later.toISOString()}. Return ONLY a JSON array with fields: title, start (ISO), end (ISO). No other text.` }],
-            mcp_servers: [{ type: "url", url: "https://gcal.mcp.claude.com/mcp", name: "gcal" }],
-          }),
-        });
-        const data = await res.json();
-        let events = [];
-        const tr = data.content?.find(b => b.type === "mcp_tool_result");
-        const tx = data.content?.find(b => b.type === "text");
-        try {
-          if (tr?.content?.[0]?.text) events = JSON.parse(tr.content[0].text);
-          else if (tx?.text) events = JSON.parse(tx.text.replace(/```json|```/g, "").trim());
-        } catch {}
-        if (Array.isArray(events)) setCalEvents(events.slice(0, 5));
-      } catch {
-        setCalEvents([
-          { title: "AI（AG）L16 視聴", start: new Date(Date.now() + 3600000).toISOString() },
-          { title: "JS ミニテスト再受験", start: new Date(Date.now() + 7200000).toISOString() },
-          { title: "山田先生 1on1", start: new Date(Date.now() + 86400000).toISOString() },
-          { title: "模擬案件 課題2 締切", start: new Date(Date.now() + 172800000).toISOString() },
-        ]);
-      }
-      setCalLoading(false);
-    };
-    fetchCal();
+    fetch("/api/dashboard").then(r => r.json()).then(data => {
+      if (!data.error) setDashData(data);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  // Calendar fallback
+  useEffect(() => {
+    setCalEvents([
+      { title: "次のレッスンを視聴", start: new Date(Date.now() + 3600000).toISOString() },
+      { title: "ミニテスト再受験", start: new Date(Date.now() + 7200000).toISOString() },
+      { title: "講師 1on1", start: new Date(Date.now() + 86400000).toISOString() },
+    ]);
+    setCalLoading(false);
   }, []);
 
   const fmtTime = (iso) => {
@@ -441,30 +425,26 @@ const StudentDashboard = ({ setCurrentPage }) => {
     { day: "M", h: 1.5 }, { day: "T", h: 2.0 }, { day: "W", h: 0.5 },
     { day: "T", h: 3.0 }, { day: "F", h: 1.0 }, { day: "S", h: 2.5 }, { day: "S", h: 0 },
   ];
-  const courses = [
-    { name: "STEP1 ITリテラシー", progress: 100, lessons: 12, icon: "it", color: "#6366F1" },
-    { name: "STEP2 HTML・CSS", progress: 100, lessons: 18, icon: "html", color: "#EF4444" },
-    { name: "STEP3 JavaScript", progress: 100, lessons: 20, icon: "js", color: "#3B82F6" },
-    { name: "STEP4 AI（Antigravity・Claude, etc）", progress: 65, lessons: 24, icon: "ag", color: "#A78BFA" },
-    { name: "STEP5 模擬案件", progress: 20, lessons: 15, icon: "mock", color: "#F59E0B" },
-    { name: "STEP6 ポートフォリオ", progress: 0, lessons: 10, icon: "portfolio", color: "#22C55E" },
-    { name: "STEP7 案件獲得", progress: 0, lessons: 8, icon: "sales", color: "#EC4899" },
-  ];
-  const cur = courses[3];
-  const radial = [{ value: cur.progress, fill: T.accentVivid, max: 100 }];
+
+  // Use API data or fallback
+  const courses = dashData?.courses?.map(c => ({
+    name: c.name, progress: c.progress, lessons: c.totalLessons, icon: c.icon, color: c.color,
+  })) || [];
+
+  const activeCourse = courses.find(c => c.progress > 0 && c.progress < 100) || courses[0] || { name: "コース", progress: 0 };
+  const radial = [{ value: activeCourse?.progress || 0, fill: T.accentVivid, max: 100 }];
 
   const stats = [
-    { label: "受講中", value: "4", sub: "/ 7", icon: BookOpen, accent: T.accent, gradient: "linear-gradient(135deg, #3B82F6, #1D4ED8)" },
-    { label: "完了", value: "56", sub: "lessons", icon: CheckCircle2, accent: T.success, gradient: "linear-gradient(135deg, #22C55E, #16A34A)" },
-    { label: "学習時間", value: "8", sub: "h/w", icon: Flame, accent: T.purple, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
-    { label: "全体進度", value: "55", sub: "%", icon: Target, accent: T.warning, gradient: "linear-gradient(135deg, #FBBF24, #D97706)" },
+    { label: "受講中", value: String(dashData?.activeCourses || 0), sub: `/ ${courses.length}`, icon: BookOpen, accent: T.accent, gradient: "linear-gradient(135deg, #3B82F6, #1D4ED8)" },
+    { label: "完了", value: String(dashData?.completedLessons || 0), sub: "lessons", icon: CheckCircle2, accent: T.success, gradient: "linear-gradient(135deg, #22C55E, #16A34A)" },
+    { label: "学習時間", value: String(dashData?.weeklyHours || 0), sub: "h/w", icon: Flame, accent: T.purple, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
+    { label: "全体進度", value: String(dashData?.overallProgress || 0), sub: "%", icon: Target, accent: T.warning, gradient: "linear-gradient(135deg, #FBBF24, #D97706)" },
   ];
 
   const todos = [
-    { text: "AI（AG）L16 を視聴", icon: PlayCircle, color: T.accent, hi: true },
-    { text: "JS DOM操作 ミニテスト再受験", icon: HelpCircle, color: T.warning, hi: true },
+    { text: "次のレッスンを視聴", icon: PlayCircle, color: T.accent, hi: true },
+    { text: "ミニテスト再受験", icon: HelpCircle, color: T.warning, hi: true },
     { text: "質問への返信を確認", icon: MessageSquare, color: T.success },
-    { text: "STEP3 JS修了テスト受験", icon: Award, color: T.purple },
   ];
 
   const assigns = [
@@ -481,13 +461,23 @@ const StudentDashboard = ({ setCurrentPage }) => {
     locked: { l: "未開放", c: T.textMuted, i: Lock },
   };
 
-  const news = [
-    { from: "山田先生", msg: "STEP4の課題フィードバックを送りました", time: "1h", av: "山", imp: true },
-    { from: "運営事務局", msg: "3/15 メンテナンス 8:00〜10:00", time: "3h", av: "N" },
-    { from: "佐々木先生", msg: "模擬案件の新ブリーフを追加しました！", time: "1d", av: "佐" },
+  const news = dashData?.notifications?.map(n => ({
+    from: n.title.split("が")[0] || "NWA", msg: n.message, time: "new", av: n.title.charAt(0), imp: !n.read,
+  })) || [
+    { from: "NWA", msg: "ようこそ！学習を始めましょう", time: "now", av: "N", imp: true },
   ];
 
   const calColors = [T.accent, T.warning, T.purple, T.success, T.danger];
+
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: T.textMuted }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+        <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    </div>
+  );
 
   return (
     <ScrollArea style={{ height: "100%" }}>
@@ -793,15 +783,27 @@ const StudentDashboard = ({ setCurrentPage }) => {
 // COURSE LIST
 // ═══════════════════════════════════════════
 const CourseList = ({ setCurrentPage }) => {
-  const courses = [
-    { name: "STEP1 ITリテラシー", desc: "PC基礎操作・ネットリテラシー・ツール活用", lessons: 12, hours: 6, progress: 100, icon: "it", color: "#6366F1", level: "STEP1", students: 24 },
-    { name: "STEP2 HTML・CSS", desc: "Webページの構造とデザインを基礎から学ぶ", lessons: 18, hours: 10, progress: 100, icon: "html", color: "#EF4444", level: "STEP2", students: 24 },
-    { name: "STEP3 JavaScript", desc: "DOM操作・イベント処理などJS基礎を固める", lessons: 20, hours: 12, progress: 100, icon: "js", color: "#3B82F6", level: "STEP3", students: 22 },
-    { name: "STEP4 AI（Antigravity・Claude, etc）", desc: "AIツールを活用した次世代Web制作を実践", lessons: 24, hours: 14, progress: 65, icon: "ag", color: "#A78BFA", level: "STEP4", students: 18 },
-    { name: "STEP5 模擬案件", desc: "模擬案件で実務フロー・納品までをシミュレーション", lessons: 15, hours: 20, progress: 20, icon: "mock", color: "#F59E0B", level: "STEP5", students: 10 },
-    { name: "STEP6 ポートフォリオ", desc: "案件獲得に向けたポートフォリオサイトを構築", lessons: 10, hours: 8, progress: 0, icon: "portfolio", color: "#22C55E", level: "STEP6", students: 6, locked: true },
-    { name: "STEP7 案件獲得", desc: "営業・提案・契約など案件獲得の実践ノウハウ", lessons: 8, hours: 6, progress: 0, icon: "sales", color: "#EC4899", level: "STEP7", students: 0, locked: true },
-  ];
+  const [apiCourses, setApiCourses] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/courses").then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setApiCourses(data);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const courses = apiCourses.map((c, i) => {
+    const totalLessons = c.sections?.reduce((s, sec) => s + (sec.lessons?.length || 0), 0) || 0;
+    // Lock courses where previous course isn't 100% complete
+    const prevCourse = i > 0 ? apiCourses[i - 1] : null;
+    const prevProgress = prevCourse?.progress ?? 100;
+    const locked = i > 0 && prevProgress < 100 && c.progress === 0;
+    return {
+      id: c.id, name: c.name, desc: c.description || "", lessons: totalLessons,
+      hours: Math.round(totalLessons * 0.5), progress: c.progress || 0,
+      icon: c.icon, color: c.color, level: `STEP${c.order}`, students: 0, locked,
+    };
+  });
 
   return (
     <ScrollArea style={{ height: "100%" }}>
@@ -823,7 +825,7 @@ const CourseList = ({ setCurrentPage }) => {
           {courses.map((c, i) => (
             <FadeIn key={i} delay={70 * i}>
               <div
-                onClick={() => !c.locked && setCurrentPage("lesson")}
+                onClick={() => !c.locked && setCurrentPage("lesson", { courseId: c.id })}
                 style={{
                   ...glassStyle(), borderRadius: 20, overflow: "hidden",
                   cursor: c.locked ? "default" : "pointer", opacity: c.locked ? 0.45 : 1,
@@ -873,29 +875,47 @@ const CourseList = ({ setCurrentPage }) => {
 // ═══════════════════════════════════════════
 // LESSON VIEW
 // ═══════════════════════════════════════════
-const LessonView = ({ setCurrentPage }) => {
-  const [expanded, setExpanded] = useState(1);
-  const sections = [
-    { title: "AG基礎", lessons: [
-      { title: "AI制作ツールとは", dur: "8:30", done: true, type: "video" },
-      { title: "環境セットアップ", dur: "12:45", done: true, type: "video" },
-      { title: "プロンプトの基本", dur: "10:20", done: true, type: "video" },
-      { title: "確認クイズ", dur: "5問", done: true, type: "quiz" },
-    ]},
-    { title: "実践サイト制作", lessons: [
-      { title: "LP構成の設計", dur: "15:00", done: true, type: "video" },
-      { title: "ヘッダー・ナビ作成", dur: "18:30", done: true, type: "video" },
-      { title: "レスポンシブ実装", dur: "22:15", done: false, type: "video", active: true },
-      { title: "フォーム実装", dur: "14:00", done: false, type: "video" },
-      { title: "AG制作フロー PDF", dur: "3P", done: false, type: "pdf" },
-      { title: "確認クイズ", dur: "8問", done: false, type: "quiz" },
-    ]},
-    { title: "応用テクニック", lessons: [
-      { title: "アニメーション指示", dur: "11:00", done: false, type: "video" },
-      { title: "複数ページサイト", dur: "16:30", done: false, type: "video" },
-      { title: "デバッグ・修正依頼", dur: "14:20", done: false, type: "video" },
-    ]},
-  ];
+const LessonView = ({ setCurrentPage, courseId }) => {
+  const [expanded, setExpanded] = useState(0);
+  const [courseData, setCourseData] = useState(null);
+  const [activeLesson, setActiveLesson] = useState(null);
+  const [completing, setCompleting] = useState(false);
+
+  useEffect(() => {
+    if (courseId) {
+      fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
+        if (!data.error) {
+          setCourseData(data);
+          // Find first incomplete lesson
+          for (const sec of data.sections || []) {
+            for (const l of sec.lessons || []) {
+              if (!l.completed) { setActiveLesson(l); return; }
+            }
+          }
+        }
+      });
+    }
+  }, [courseId]);
+
+  const handleComplete = async (lessonId) => {
+    setCompleting(true);
+    await fetch("/api/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lessonId }) });
+    // Refresh course data
+    if (courseId) {
+      const data = await fetch(`/api/courses/${courseId}`).then(r => r.json());
+      if (!data.error) setCourseData(data);
+    }
+    setCompleting(false);
+  };
+
+  const sections = (courseData?.sections || []).map(sec => ({
+    title: sec.title,
+    lessons: (sec.lessons || []).map(l => ({
+      id: l.id, title: l.title, dur: l.duration || "", done: l.completed,
+      type: l.type?.toLowerCase() || "video",
+      active: activeLesson?.id === l.id,
+    })),
+  }));
   const icons = { video: PlayCircle, quiz: HelpCircle, pdf: FileText };
 
   return (
@@ -907,7 +927,7 @@ const LessonView = ({ setCurrentPage }) => {
             <ArrowLeft size={16} /> Back
           </Button>
           <Separator orientation="vertical" style={{ height: 20 }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>AI（Antigravity）</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{courseData?.name || "コース"}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, width: 180 }}>
             <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
               <div style={{ width: "68%", height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
@@ -957,8 +977,9 @@ const LessonView = ({ setCurrentPage }) => {
                 <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> 22:15</Badge>
                 <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> PDF付き</Badge>
               </div>
-              <Button style={{ background: T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif", boxShadow: `0 4px 16px ${T.accent}30` }}>
-                <CheckCircle2 size={16} /> レッスン完了にする
+              <Button onClick={() => activeLesson && handleComplete(activeLesson.id)} disabled={completing || activeLesson?.completed}
+                style={{ background: activeLesson?.completed ? T.success : T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif", boxShadow: `0 4px 16px ${T.accent}30` }}>
+                <CheckCircle2 size={16} /> {completing ? "保存中..." : activeLesson?.completed ? "完了済み" : "レッスン完了にする"}
               </Button>
             </TabsContent>
             <TabsContent value="resources" style={{ padding: 28 }}>
@@ -1476,7 +1497,18 @@ const QuizPage = () => {
 // NOTIFICATIONS / QUESTIONS / ADMIN COURSES
 // ═══════════════════════════════════════════
 const Notifications = () => {
-  const n = [
+  const [apiNotifs, setApiNotifs] = useState([]);
+  useEffect(() => {
+    fetch("/api/notifications").then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setApiNotifs(data);
+    }).catch(() => {});
+  }, []);
+  const iconMap = { "質問": MessageSquare, "開放": GraduationCap, "クイズ": Award, "テスト": Award };
+  const colorMap = { "質問": T.accent, "開放": T.purple, "クイズ": T.warning, "テスト": T.warning };
+  const n = apiNotifs.length > 0 ? apiNotifs.map(x => {
+    const key = Object.keys(iconMap).find(k => x.title.includes(k)) || "";
+    return { icon: iconMap[key] || Bell, color: colorMap[key] || T.textMuted, title: x.title, desc: x.message, time: "new", unread: !x.read };
+  }) : [
     { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "AI（AG） - L16", time: "2h", unread: true },
     { icon: GraduationCap, color: T.purple, title: "STEP5「模擬案件」が開放されました", desc: "STEP4完了後に受講可能", time: "1d", unread: true },
     { icon: Award, color: T.warning, title: "JS DOM操作クイズ — 90点", desc: "合格おめでとう！", time: "2d", unread: false },
@@ -1621,6 +1653,7 @@ export default function NWALearningPlatform() {
   const [isDark, setIsDark] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [selectedCourseId, setSelectedCourseId] = useState(null);
 
   // Load role from session on mount
   useEffect(() => {
@@ -1637,7 +1670,10 @@ export default function NWALearningPlatform() {
     signOut({ callbackUrl: "/login" });
   };
 
-  const handlePageChange = (p) => { setPage(p); setMobileMenu(false); };
+  const handlePageChange = (p, data) => {
+    setPage(p); setMobileMenu(false);
+    if (data?.courseId) setSelectedCourseId(data.courseId);
+  };
 
   // Update global T when theme changes
   T = createTheme(isDark);
@@ -1653,7 +1689,7 @@ export default function NWALearningPlatform() {
   const pages = {
     "dashboard": <StudentDashboard setCurrentPage={handlePageChange} />,
     "courses": <CourseList setCurrentPage={handlePageChange} />,
-    "lesson": <LessonView setCurrentPage={handlePageChange} />,
+    "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} />,
     "quiz": <QuizPage />,
     "notifications": <Notifications />,
     "questions": <Questions />,
