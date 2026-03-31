@@ -6,16 +6,18 @@ import bcrypt from "bcryptjs";
 export async function POST(request: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    const userId = (session?.user as any)?.id;
+    const userEmail = session?.user?.email;
+    if (!userId && !userEmail) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await request.json();
     const { currentPassword, newPassword } = body;
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
+    const user = userId
+      ? await prisma.user.findUnique({ where: { id: userId } })
+      : await prisma.user.findUnique({ where: { email: userEmail! } });
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await prisma.user.update({
-      where: { id: session.user.id },
+      where: { id: user.id },
       data: { password: hashedPassword },
     });
 

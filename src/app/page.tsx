@@ -1708,7 +1708,7 @@ const SettingsPage = () => {
     if (newPw !== confirmPw) { setMsg({ type: "error", text: "新しいパスワードが一致しません" }); return; }
     if (newPw.length < 6) { setMsg({ type: "error", text: "パスワードは6文字以上にしてください" }); return; }
     setSaving(true);
-    const res = await fetch("/api/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
+    const res = await fetch("/api/user/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
     const data = await res.json();
     setSaving(false);
     if (data.error) setMsg({ type: "error", text: data.error });
