@@ -69,34 +69,41 @@ export default function ChatSidebar({ theme: T }: ChatSidebarProps) {
 
   return (
     <>
-      {/* Toggle button — desktop only */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="nwa-chat-toggle"
-        style={{
-          position: "fixed",
-          right: open ? 360 : 0,
-          top: "50%",
-          transform: "translateY(-50%)",
-          zIndex: 160,
-          width: 44,
-          height: 44,
-          borderRadius: "12px 0 0 12px",
-          background: "linear-gradient(135deg, #3B82F6, #2563EB)",
-          border: "none",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#fff",
-          boxShadow: "0 4px 20px rgba(59,130,246,0.4), 0 0 20px rgba(59,130,246,0.2)",
-          transition: "right 0.35s cubic-bezier(0.16,1,0.3,1), transform 0.2s",
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-50%) scale(1.05)")}
-        onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(-50%) scale(1)")}
-      >
-        {open ? <X size={18} /> : <MessageSquare size={18} />}
-      </button>
+      {/* FAB toggle button — desktop only, hidden when sidebar open */}
+      {!open && (
+        <button
+          onClick={() => setOpen(true)}
+          className="nwa-chat-toggle"
+          style={{
+            position: "fixed",
+            right: 24,
+            bottom: 24,
+            zIndex: 160,
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #3B82F6, #8B5CF6)",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            boxShadow: "0 4px 24px rgba(59,130,246,0.45), 0 0 30px rgba(139,92,246,0.25)",
+            transition: "transform 0.2s, box-shadow 0.2s",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = "scale(1.1)";
+            e.currentTarget.style.boxShadow = "0 6px 32px rgba(59,130,246,0.55), 0 0 40px rgba(139,92,246,0.35)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = "scale(1)";
+            e.currentTarget.style.boxShadow = "0 4px 24px rgba(59,130,246,0.45), 0 0 30px rgba(139,92,246,0.25)";
+          }}
+        >
+          <MessageSquare size={20} />
+        </button>
+      )}
 
       {/* Sidebar panel */}
       <div

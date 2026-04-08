@@ -1855,6 +1855,9 @@ export default function NWALearningPlatform() {
             transition: none !important;
           }
 
+          /* ── Page content centering ── */
+          .nwa-page-content { margin: 0 auto; }
+
           /* ── Responsive ── */
           .nwa-sidebar { transition: transform 0.35s cubic-bezier(0.16,1,0.3,1), opacity 0.35s; }
           .nwa-sidebar-overlay { display: none; }
@@ -1890,7 +1893,7 @@ export default function NWALearningPlatform() {
             .nwa-admin-table-grid > div:nth-child(5n-1) { display: none; }
             .nwa-course-grid { grid-template-columns: 1fr !important; }
             .nwa-assign-grid { grid-template-columns: repeat(2, 1fr) !important; }
-            .nwa-page-content { padding: 20px 16px 32px !important; }
+            .nwa-page-content { padding: 20px 16px 32px !important; margin: 0 auto !important; }
           }
 
           @media (max-width: 480px) {
