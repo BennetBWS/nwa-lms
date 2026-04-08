@@ -21,6 +21,8 @@ import {
   Plus, TrendingUp, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
   LogOut, Target, Zap, Sparkles, ArrowUpRight
 } from "lucide-react";
+import ChatSidebar from "@/components/ChatSidebar";
+import ChatMobile from "@/components/ChatMobile";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -1936,6 +1938,8 @@ export default function NWALearningPlatform() {
             {pages[page] || pages["dashboard"]}
           </div>
         </main>
+        <ChatSidebar theme={T} />
+        <ChatMobile theme={T} />
       </div>
     </ThemeContext.Provider>
   );
