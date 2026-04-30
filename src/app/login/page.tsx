@@ -24,12 +24,13 @@ const FadeIn = ({ children, delay = 0, style = {} }) => {
 
 const steps = [
   { num: "01", name: "ITリテラシー", color: "#6366F1" },
-  { num: "02", name: "HTML・CSS", color: "#EF4444" },
-  { num: "03", name: "JavaScript", color: "#3B82F6" },
-  { num: "04", name: "AI（AG・Claude）", color: "#A78BFA" },
-  { num: "05", name: "模擬案件", color: "#F59E0B" },
-  { num: "06", name: "ポートフォリオ", color: "#22C55E" },
-  { num: "07", name: "案件獲得", color: "#EC4899" },
+  { num: "02", name: "HTML", color: "#EF4444" },
+  { num: "03", name: "CSS", color: "#3B82F6" },
+  { num: "04", name: "AIコーディング（AG）", color: "#A78BFA" },
+  { num: "05", name: "Apple模写コーディング", color: "#F97316" },
+  { num: "06", name: "模擬案件挑戦", color: "#F59E0B" },
+  { num: "07", name: "ポートフォリオ作成", color: "#22C55E" },
+  { num: "08", name: "案件応募", color: "#EC4899" },
 ];
 
 export default function LoginPageWrapper() {

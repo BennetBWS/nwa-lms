@@ -50,6 +50,13 @@ const CourseIcons = {
       <text x="12" y="15" textAnchor="middle" fill="currentColor" fontSize="6" fontWeight="800" fontFamily="'Sora', sans-serif">JS</text>
     </svg>
   ),
+  css: ({ size = 24 }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M4 3l1.78 17.1L12 22l6.22-1.9L20 3H4z" fill="currentColor" opacity="0.12"/>
+      <path d="M4 3l1.78 17.1L12 22l6.22-1.9L20 3H4z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+      <text x="12" y="15" textAnchor="middle" fill="currentColor" fontSize="5.5" fontWeight="800" fontFamily="'Sora', sans-serif">CSS</text>
+    </svg>
+  ),
   ag: ({ size = 24 }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" opacity="0.3"/>
@@ -719,7 +726,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
               </div>
               <div style={{ padding: "0 20px 16px" }}>
                 {[
-                  { icon: PlayCircle, color: T.accent, text: "AI（AG）- レスポンシブ #15", time: "2h" },
+                  { icon: PlayCircle, color: T.accent, text: "AIコーディング（AG）- レスポンシブ #15", time: "2h" },
                   { icon: Award, color: T.warning, text: "JS クイズ — 90点", time: "1d" },
                   { icon: MessageSquare, color: T.success, text: "山田先生が回答", time: "2d" },
                 ].map((a, i) => {
@@ -746,7 +753,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
               <div style={{ padding: "18px 24px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>課題の提出状況</h3>
-                <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP5 模擬案件</span>
+                <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP6 模擬案件挑戦</span>
               </div>
               <div className="nwa-assign-grid" style={{ padding: "0 24px 18px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14 }}>
                 {assigns.map((a, i) => {
@@ -1302,23 +1309,23 @@ const QuizPage = () => {
       ],
     },
     {
-      name: "STEP2 HTML・CSS", color: "#EF4444", icon: "html",
-      stepQuiz: { title: "STEP2 修了テスト", questions: 15, time: "20分", passed: true, score: 85 },
+      name: "STEP2 HTML", color: "#EF4444", icon: "html",
+      stepQuiz: { title: "STEP2 修了テスト", questions: 10, time: "15分", passed: true, score: 85 },
       miniQuizzes: [
         { title: "L3: HTML基本構造", passed: true, score: 90 },
         { title: "L7: テキスト・リスト", passed: true, score: 95 },
-        { title: "L12: フォーム要素", passed: true, score: 80 },
-        { title: "L16: セマンティックHTML", passed: true, score: 85 },
+        { title: "L10: セマンティックタグ", passed: true, score: 80 },
+        { title: "L12: リンク・画像・テーブル", passed: true, score: 85 },
       ],
     },
     {
-      name: "STEP3 JavaScript", color: "#3B82F6", icon: "js",
-      stepQuiz: { title: "STEP3 修了テスト", questions: 15, time: "20分", passed: false, score: null },
+      name: "STEP3 CSS", color: "#3B82F6", icon: "css",
+      stepQuiz: { title: "STEP3 修了テスト", questions: 12, time: "20分", passed: false, score: null },
       miniQuizzes: [
-        { title: "L4: 変数・データ型", passed: true, score: 85 },
-        { title: "L9: DOM操作", passed: true, score: 90 },
-        { title: "L14: イベント処理", passed: false, score: 60 },
-        { title: "L18: 非同期処理", passed: null, score: null },
+        { title: "L2: セレクター・プロパティ", passed: true, score: 85 },
+        { title: "L3: ボックスモデル", passed: true, score: 90 },
+        { title: "L5: Flexbox", passed: false, score: 60 },
+        { title: "L7: レスポンシブデザイン", passed: null, score: null },
       ],
     },
   ];
@@ -1550,8 +1557,8 @@ const QuizPage = () => {
           <FadeIn delay={300}>
             <div style={{ ...glassStyle(), borderRadius: 18, padding: "24px 28px", textAlign: "center", opacity: 0.7 }}>
               <div style={{ fontSize: 20, marginBottom: 10 }}>📝</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP4〜7 はテストなし</div>
-              <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（AI）以降は実践課題で評価されます。</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP4〜8 はテストなし</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（AIコーディング）以降は実践課題で評価されます。</div>
             </div>
           </FadeIn>
         </div>
@@ -1576,8 +1583,8 @@ const Notifications = () => {
     const key = Object.keys(iconMap).find(k => x.title.includes(k)) || "";
     return { icon: iconMap[key] || Bell, color: colorMap[key] || T.textMuted, title: x.title, desc: x.message, time: "new", unread: !x.read };
   }) : [
-    { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "AI（AG） - L16", time: "2h", unread: true },
-    { icon: GraduationCap, color: T.purple, title: "STEP5「模擬案件」が開放されました", desc: "STEP4完了後に受講可能", time: "1d", unread: true },
+    { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "AIコーディング（AG） - L16", time: "2h", unread: true },
+    { icon: GraduationCap, color: T.purple, title: "STEP5「Apple模写コーディング」が開放されました", desc: "STEP4完了後に受講可能", time: "1d", unread: true },
     { icon: Award, color: T.warning, title: "JS DOM操作クイズ — 90点", desc: "合格おめでとう！", time: "2d", unread: false },
     { icon: Settings, color: T.textMuted, title: "パスワード変更のお知らせ", desc: "定期変更を推奨", time: "1w", unread: false },
   ];
@@ -1611,9 +1618,9 @@ const Notifications = () => {
 
 const Questions = () => {
   const t = [
-    { author: "佐藤", q: "レスポンシブでタブレット表示が崩れる", course: "AI（AG）", time: "3h", replies: 2, ok: false },
+    { author: "佐藤", q: "レスポンシブでタブレット表示が崩れる", course: "AIコーディング（AG）", time: "3h", replies: 2, ok: false },
     { author: "鈴木", q: "Flexboxで縦中央揃えができない", course: "JS", time: "1d", replies: 4, ok: true },
-    { author: "田中", q: "模擬案件の納品形式について", course: "模擬案件", time: "2d", replies: 1, ok: false },
+    { author: "田中", q: "模擬案件挑戦の進め方について", course: "模擬案件挑戦", time: "2d", replies: 1, ok: false },
   ];
   return (
     <ScrollArea style={{ height: "100%" }}>
