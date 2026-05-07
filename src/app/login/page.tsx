@@ -330,7 +330,7 @@ function LoginPage() {
 
               {/* Forgot password */}
               <div style={{ textAlign: "center" }}>
-                <a href="#" onClick={e => e.preventDefault()} style={{
+                <a href="/forgot-password" style={{
                   fontSize: 12, color: "#475569", textDecoration: "none", fontFamily: sora, fontWeight: 500,
                   transition: "all 0.2s", borderBottom: "1px solid transparent",
                 }}

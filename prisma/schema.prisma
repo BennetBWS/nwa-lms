@@ -33,18 +33,29 @@ enum AssignmentStatus {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  email         String         @unique
-  name          String
-  password      String
-  role          Role           @default(STUDENT)
-  avatar        String?
-  createdAt     DateTime       @default(now())
-  progress      Progress[]
-  quizAttempts  QuizAttempt[]
-  comments      Comment[]
-  assignments   Assignment[]
-  notifications Notification[]
+  id             String          @id @default(cuid())
+  email          String          @unique
+  name           String
+  password       String
+  role           Role            @default(STUDENT)
+  avatar         String?
+  createdAt      DateTime        @default(now())
+  progress       Progress[]
+  quizAttempts   QuizAttempt[]
+  comments       Comment[]
+  assignments    Assignment[]
+  notifications  Notification[]
+  passwordResets PasswordReset[]
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Course {
