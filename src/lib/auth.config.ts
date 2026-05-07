@@ -7,13 +7,24 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
-      const isOnLogin = nextUrl.pathname.startsWith("/login");
+      const { pathname } = nextUrl;
 
-      if (isOnLogin) {
+      const publicPaths = [
+        "/login",
+        "/forgot-password",
+        "/reset-password",
+        "/api/auth/forgot-password",
+        "/api/auth/verify-reset-token",
+        "/api/auth/reset-password",
+      ];
+      const isPublic = publicPaths.some((p) => pathname.startsWith(p));
+
+      if (pathname.startsWith("/login")) {
         if (isLoggedIn) return Response.redirect(new URL("/", nextUrl));
         return true;
       }
 
+      if (isPublic) return true;
       if (!isLoggedIn) return false;
       return true;
     },
