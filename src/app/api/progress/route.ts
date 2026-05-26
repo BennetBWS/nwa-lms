@@ -37,7 +37,9 @@ export async function POST(request: Request) {
       },
     });
 
-    return NextResponse.json(progress);
+    return NextResponse.json(progress, {
+      headers: { "Cache-Control": "no-cache, no-store" },
+    });
   } catch (error) {
     console.error("POST /api/progress error:", error);
     return NextResponse.json(

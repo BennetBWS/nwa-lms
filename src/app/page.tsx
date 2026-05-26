@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client";
 
-import { useState, useEffect, createContext, useContext } from "react";
+import { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import {
   AreaChart, Area, BarChart, Bar, RadialBarChart, RadialBar, PolarAngleAxis,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
@@ -890,46 +890,137 @@ const LessonView = ({ setCurrentPage, courseId }) => {
   const [courseData, setCourseData] = useState(null);
   const [activeLesson, setActiveLesson] = useState(null);
   const [completing, setCompleting] = useState(false);
+  const [completedIds, setCompletedIds] = useState(new Set());
+  const [toast, setToast] = useState(null);
+  const courseCache = useRef({});
+
+  const loadCourseData = (data) => {
+    courseCache.current[courseId] = data;
+    setCourseData(data);
+    const ids = new Set(
+      (data.sections || []).flatMap(s => (s.lessons || []).filter(l => l.completed).map(l => l.id))
+    );
+    setCompletedIds(ids);
+  };
 
   useEffect(() => {
-    if (courseId) {
-      fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
-        if (!data.error) {
-          setCourseData(data);
-          // Find first incomplete lesson
-          for (const sec of data.sections || []) {
-            for (const l of sec.lessons || []) {
-              if (!l.completed) { setActiveLesson(l); return; }
-            }
-          }
-        }
-      });
+    if (!courseId) return;
+    if (courseCache.current[courseId]) {
+      const cached = courseCache.current[courseId];
+      setCourseData(cached);
+      setCompletedIds(new Set(
+        (cached.sections || []).flatMap(s => (s.lessons || []).filter(l => l.completed).map(l => l.id))
+      ));
+      for (const sec of cached.sections || []) {
+        for (const l of sec.lessons || []) { if (!l.completed) { setActiveLesson(l); return; } }
+      }
+      return;
     }
+    fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
+      if (!data.error) {
+        loadCourseData(data);
+        for (const sec of data.sections || []) {
+          for (const l of sec.lessons || []) { if (!l.completed) { setActiveLesson(l); return; } }
+        }
+        if (data.sections?.[0]?.lessons?.[0]) setActiveLesson(data.sections[0].lessons[0]);
+      }
+    });
   }, [courseId]);
 
+  const allLessons = useMemo(() =>
+    (courseData?.sections || []).flatMap(s => s.lessons || []),
+    [courseData]
+  );
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
+
   const handleComplete = async (lessonId) => {
+    // Optimistic update
+    setCompletedIds(prev => new Set([...prev, lessonId]));
     setCompleting(true);
-    await fetch("/api/progress", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lessonId }) });
-    // Refresh course data
-    if (courseId) {
-      const data = await fetch(`/api/courses/${courseId}`).then(r => r.json());
-      if (!data.error) setCourseData(data);
+    try {
+      await fetch("/api/progress", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lessonId }),
+      });
+      // Auto-navigate to next lesson
+      const idx = allLessons.findIndex(l => l.id === lessonId);
+      const next = allLessons[idx + 1];
+      if (next) {
+        setActiveLesson(next);
+        for (let si = 0; si < (courseData?.sections || []).length; si++) {
+          if (courseData.sections[si].lessons.some(l => l.id === next.id)) { setExpanded(si); break; }
+        }
+      } else {
+        showToast("コース完了！おめでとうございます！");
+      }
+      // Background refresh
+      fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
+        if (!data.error) loadCourseData(data);
+      });
+    } finally {
+      setCompleting(false);
     }
-    setCompleting(false);
   };
+
+  const isCompleted = (id) => completedIds.has(id);
 
   const sections = (courseData?.sections || []).map(sec => ({
     title: sec.title,
     lessons: (sec.lessons || []).map(l => ({
-      id: l.id, title: l.title, dur: l.duration || "", done: l.completed,
-      type: l.type?.toLowerCase() || "video",
-      active: activeLesson?.id === l.id,
+      id: l.id, title: l.title, dur: l.duration || "", done: isCompleted(l.id),
+      type: l.type?.toLowerCase() || "video", active: activeLesson?.id === l.id, raw: l,
     })),
   }));
-  const icons = { video: PlayCircle, quiz: HelpCircle, pdf: FileText };
+  const icons = { video: PlayCircle, quiz: HelpCircle, pdf: FileText, text: FileText };
+
+  const skel = (w, h, extra = {}) => ({
+    width: w, height: h, borderRadius: 8, background: T.borderSubtle,
+    animation: "skeletonPulse 1.6s ease-in-out infinite", ...extra,
+  });
+
+  if (!courseData) return (
+    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+      <style>{`@keyframes skeletonPulse { 0%,100%{opacity:1} 50%{opacity:0.45} }`}</style>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ height: 52, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 28px", gap: 12 }}>
+          <div style={skel(60, 18)} /><div style={{ width: 1, height: 20, background: T.border }} /><div style={skel(140, 18)} />
+        </div>
+        <div style={{ aspectRatio: "16/9", maxHeight: 440, ...skel("100%", "auto", { borderRadius: 0 }) }} />
+        <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={skel("55%", 26)} />
+          <div style={skel("80%", 15)} />
+          <div style={skel("65%", 15)} />
+          <div style={skel(160, 38, { marginTop: 8, borderRadius: 12 })} />
+        </div>
+      </div>
+      <div style={{ width: 340, borderLeft: `1px solid ${T.border}`, background: T.surface }}>
+        <div style={{ padding: "18px 20px", borderBottom: `1px solid ${T.border}` }}><div style={skel(120, 18)} /></div>
+        {[1,2,3,4,5,6].map(i => (
+          <div key={i} style={{ padding: "13px 20px 13px 46px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={skel(16, 16, { borderRadius: "50%", flexShrink: 0 })} />
+            <div style={skel("70%", 13)} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
-    <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100%", overflow: "hidden", position: "relative" }}>
+      {toast && (
+        <div style={{
+          position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)",
+          zIndex: 100, background: T.success, color: "#fff", borderRadius: 12,
+          padding: "12px 24px", fontSize: 14, fontWeight: 600,
+          fontFamily: "var(--font-sora), 'Sora', sans-serif",
+          boxShadow: `0 8px 24px ${T.success}50`, whiteSpace: "nowrap",
+          animation: "slideDown 0.3s cubic-bezier(0.16,1,0.3,1)",
+        }}>
+          🎉 {toast}
+          <style>{`@keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }`}</style>
+        </div>
+      )}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 28px", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
@@ -940,13 +1031,13 @@ const LessonView = ({ setCurrentPage, courseId }) => {
           <span style={{ fontSize: 13, fontWeight: 600, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{courseData?.name || "コース"}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, width: 180 }}>
             <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
-              <div style={{ width: "68%", height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
+              <div style={{ width: `${courseData?.progress || 0}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})`, transition: "width 0.6s cubic-bezier(0.16,1,0.3,1)" }} />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>68%</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{courseData?.progress || 0}%</span>
           </div>
         </div>
 
-        {/* Video */}
+        {/* Lesson hero */}
         <div style={{ aspectRatio: "16/9", maxHeight: 440, background: T.mode === "dark" ? "linear-gradient(135deg, #0F172A, #1E293B)" : T.gradientDark, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", opacity: 0.4, pointerEvents: "none" }} />
           <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at center, rgba(59,130,246,0.08) 0%, transparent 60%)" }} />
@@ -960,13 +1051,13 @@ const LessonView = ({ setCurrentPage, courseId }) => {
               onMouseEnter={e => { e.currentTarget.style.background = "rgba(59,130,246,0.2)"; e.currentTarget.style.transform = "scale(1.1)"; e.currentTarget.style.boxShadow = `0 0 40px ${T.accent}30`; }}
               onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "none"; }}
             >
-              <Play size={34} fill="white" style={{ color: "white", marginLeft: 4 }} />
+              {activeLesson?.type === "TEXT" ? <FileText size={32} style={{ color: "white" }} /> : <Play size={34} fill="white" style={{ color: "white", marginLeft: 4 }} />}
             </div>
-            <div style={{ fontSize: 16, fontWeight: 600, opacity: 0.85, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>レスポンシブ実装</div>
-            <div style={{ fontSize: 12, opacity: 0.35, marginTop: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>22:15</div>
+            <div style={{ fontSize: 16, fontWeight: 600, opacity: 0.85, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeLesson?.title || ""}</div>
+            <div style={{ fontSize: 12, opacity: 0.35, marginTop: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeLesson?.duration || ""}</div>
           </div>
           <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.06)" }}>
-            <div style={{ width: "35%", height: "100%", background: T.accent, boxShadow: `0 0 12px ${T.accent}60` }} />
+            {isCompleted(activeLesson?.id) && <div style={{ width: "100%", height: "100%", background: T.success, boxShadow: `0 0 12px ${T.success}60` }} />}
           </div>
         </div>
 
@@ -979,17 +1070,33 @@ const LessonView = ({ setCurrentPage, courseId }) => {
           </TabsList>
           <div style={{ flex: 1, overflow: "auto", background: T.bg, color: T.textPrimary }}>
             <TabsContent value="content" style={{ padding: 28 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>レスポンシブ実装</h2>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>{activeLesson?.title || ""}</h2>
+              {activeLesson?.content && (
+                <a href={activeLesson.content} target="_blank" rel="noopener noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: T.accent, fontWeight: 600, textDecoration: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif", marginBottom: 16 }}>
+                  <FileText size={14} /> Google Docsで開く →
+                </a>
+              )}
               <p style={{ fontSize: 14, color: T.textSecondary, lineHeight: 1.8, margin: "0 0 24px" }}>
-                AIツールを使ってレスポンシブ対応のサイトを実装します。モバイルファーストの考え方とブレイクポイントの設定方法を実践的に学びます。
+                {activeLesson?.type === "TEXT" ? "テキストレッスンです。上のリンクからGoogle Docsを開いて学習してください。" : "レッスン内容をご確認ください。"}
               </p>
               <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
-                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> 22:15</Badge>
-                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> PDF付き</Badge>
+                {activeLesson?.duration && <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> {activeLesson.duration}</Badge>}
+                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> {activeLesson?.type || "TEXT"}</Badge>
               </div>
-              <Button onClick={() => activeLesson && handleComplete(activeLesson.id)} disabled={completing || activeLesson?.completed}
-                style={{ background: activeLesson?.completed ? T.success : T.accent, borderRadius: 12, fontWeight: 600, gap: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif", boxShadow: `0 4px 16px ${T.accent}30` }}>
-                <CheckCircle2 size={16} /> {completing ? "保存中..." : activeLesson?.completed ? "完了済み" : "レッスン完了にする"}
+              <Button
+                onClick={() => activeLesson && !isCompleted(activeLesson.id) && handleComplete(activeLesson.id)}
+                disabled={completing || isCompleted(activeLesson?.id)}
+                style={{
+                  background: isCompleted(activeLesson?.id) ? T.success : T.accent,
+                  borderRadius: 12, fontWeight: 600, gap: 6,
+                  fontFamily: "var(--font-sora), 'Sora', sans-serif",
+                  boxShadow: `0 4px 16px ${isCompleted(activeLesson?.id) ? T.success : T.accent}30`,
+                  transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
+                  opacity: completing ? 0.7 : 1,
+                }}>
+                <CheckCircle2 size={16} />
+                {completing ? "保存中..." : isCompleted(activeLesson?.id) ? "✓ 完了済み" : "レッスン完了にする"}
               </Button>
             </TabsContent>
             <TabsContent value="resources" style={{ padding: 28 }}>
@@ -1043,16 +1150,20 @@ const LessonView = ({ setCurrentPage, courseId }) => {
               <span style={{ fontSize: 13, fontWeight: 650, color: T.dark, flex: 1, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{sec.title}</span>
               <span style={{ fontSize: 10, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600 }}>{sec.lessons.filter(l => l.done).length}/{sec.lessons.length}</span>
             </button>
-            <div style={{ maxHeight: expanded === si ? 500 : 0, overflow: "hidden", transition: "max-height 0.45s cubic-bezier(0.16,1,0.3,1)" }}>
+            <div style={{ maxHeight: expanded === si ? `${sec.lessons.length * 50 + 8}px` : 0, overflow: "hidden", transition: "max-height 0.45s cubic-bezier(0.16,1,0.3,1)" }}>
               {sec.lessons.map((l, li) => {
                 const Icon = icons[l.type] || PlayCircle;
                 return (
-                  <div key={li} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px 10px 46px", borderBottom: `1px solid ${T.borderSubtle}`, background: l.active ? `${T.accent}06` : "transparent", cursor: "pointer", transition: "background 0.15s" }}
+                  <div key={li}
+                    onClick={() => setActiveLesson(l.raw)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px 10px 46px", borderBottom: `1px solid ${T.borderSubtle}`, background: l.active ? `${T.accent}06` : "transparent", cursor: "pointer", transition: "background 0.15s" }}
                     onMouseEnter={e => { if (!l.active) e.currentTarget.style.background = `${T.accent}03`; }}
                     onMouseLeave={e => { if (!l.active) e.currentTarget.style.background = "transparent"; }}
                   >
-                    {l.done ? <CheckCircle2 size={17} style={{ color: T.success, flexShrink: 0 }} /> : <Icon size={17} style={{ color: l.active ? T.accent : T.textMuted, flexShrink: 0 }} />}
-                    <span style={{ flex: 1, fontSize: 13, fontWeight: l.active ? 600 : 400, color: l.active ? T.accent : T.textPrimary }}>{l.title}</span>
+                    {l.done
+                      ? <CheckCircle2 size={17} style={{ color: T.success, flexShrink: 0 }} />
+                      : <Icon size={17} style={{ color: l.active ? T.accent : T.textMuted, flexShrink: 0 }} />}
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: l.active ? 600 : 400, color: l.active ? T.accent : T.textPrimary, lineHeight: 1.3 }}>{l.title}</span>
                     <span style={{ fontSize: 10, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{l.dur}</span>
                   </div>
                 );

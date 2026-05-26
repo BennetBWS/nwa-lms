@@ -66,7 +66,9 @@ export async function GET(
         ? Math.round((completedLessons / totalLessons) * 100)
         : 0;
 
-    return NextResponse.json({ ...course, sections, progress });
+    return NextResponse.json({ ...course, sections, progress }, {
+      headers: { "Cache-Control": "private, max-age=0, stale-while-revalidate=60" },
+    });
   } catch (error) {
     console.error("GET /api/courses/[courseId] error:", error);
     return NextResponse.json(
