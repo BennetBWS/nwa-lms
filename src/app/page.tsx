@@ -885,7 +885,7 @@ const CourseList = ({ setCurrentPage }) => {
 // ═══════════════════════════════════════════
 // LESSON VIEW
 // ═══════════════════════════════════════════
-const LessonView = ({ setCurrentPage, courseId }) => {
+const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   const [expanded, setExpanded] = useState(0);
   const [courseData, setCourseData] = useState(null);
   const [activeLesson, setActiveLesson] = useState(null);
@@ -1139,8 +1139,9 @@ const LessonView = ({ setCurrentPage, courseId }) => {
 
       {/* Sidebar */}
       <ScrollArea className="nwa-lesson-sidebar" style={{ width: 340, borderLeft: `1px solid ${T.border}`, background: T.surface, flexShrink: 0 }}>
-        <div style={{ padding: "18px 20px", borderBottom: `1px solid ${T.border}` }}>
+        <div style={{ padding: "12px 16px 12px 20px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Course Content</h3>
+          <ThemeToggle isDark={isDark} onToggle={onThemeToggle} />
         </div>
         {sections.map((sec, si) => (
           <div key={si}>
@@ -1931,7 +1932,7 @@ export default function NWALearningPlatform() {
   const pages = {
     "dashboard": <StudentDashboard setCurrentPage={handlePageChange} />,
     "courses": <CourseList setCurrentPage={handlePageChange} />,
-    "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} />,
+    "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} isDark={isDark} onThemeToggle={handleThemeToggle} />,
     "quiz": <QuizPage />,
     "notifications": <Notifications />,
     "questions": <Questions />,
@@ -2045,10 +2046,12 @@ export default function NWALearningPlatform() {
             <ThemeToggle isDark={isDark} onToggle={handleThemeToggle} />
           </div>
 
-          {/* Desktop theme toggle */}
-          <div style={{ position: "absolute", top: 14, right: 20, zIndex: 50 }} className="nwa-desktop-toggle">
-            <ThemeToggle isDark={isDark} onToggle={handleThemeToggle} />
-          </div>
+          {/* Desktop theme toggle — hidden on lesson page (moved into sidebar header) */}
+          {page !== "lesson" && (
+            <div style={{ position: "absolute", top: 14, right: 20, zIndex: 50 }} className="nwa-desktop-toggle">
+              <ThemeToggle isDark={isDark} onToggle={handleThemeToggle} />
+            </div>
+          )}
           {/* Background noise */}
           <div style={{
             position: "absolute", inset: 0,
