@@ -104,10 +104,24 @@ function LoginPage() {
       {/* ═══ LEFT: Brand Visual ═══ */}
       <div className="login-left" style={{
         width: "48%", minHeight: "100vh", position: "relative",
-        background: "linear-gradient(165deg, #0A1628 0%, #0F1D35 40%, #0B1120 100%)",
+        background: "#0A1628",
         flexDirection: "column", justifyContent: "center", alignItems: "center",
         overflow: "hidden",
       }}>
+        {/* Layer 1 (backmost): background photo */}
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 0,
+          backgroundImage: "url('/bg-1.png')",
+          backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
+          pointerEvents: "none",
+        }} />
+        {/* Layer 2: dark navy gradient overlay for text legibility */}
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 0,
+          background: "linear-gradient(135deg, rgba(10,22,40,0.85), rgba(10,22,40,0.75))",
+          pointerEvents: "none",
+        }} />
+        {/* Layer 3+: existing grid / noise / glow texture, stacked above the overlay */}
         <div style={{
           position: "absolute", inset: 0, opacity: 0.03,
           backgroundImage: `linear-gradient(rgba(96,165,250,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(96,165,250,0.5) 1px, transparent 1px)`,
