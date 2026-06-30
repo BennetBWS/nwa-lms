@@ -465,7 +465,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
   // Use API data or fallback
   const courses = dashData?.courses?.map(c => ({
-    name: c.name, progress: c.progress, lessons: c.totalLessons, icon: c.icon, color: c.color,
+    id: c.id, name: c.name, progress: c.progress, lessons: c.totalLessons, icon: c.icon, color: c.color,
   })) || [];
 
   const activeCourse = courses.find(c => c.progress > 0 && c.progress < 100) || courses[0] || { name: "コース", progress: 0 };
@@ -547,7 +547,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           {/* ── Row 2: CTA (8) + ToDo (4) ── */}
           <FadeIn delay={80} style={{ gridColumn: "span 8" }}>
-            <div onClick={() => setCurrentPage("lesson")} style={{
+            <div onClick={() => setCurrentPage("lesson", activeCourse?.id ? { courseId: activeCourse.id } : undefined)} style={{
               background: T.mode === "dark" ? "linear-gradient(135deg, #0F172A, #1E293B)" : T.gradientDark,
               borderRadius: 20, cursor: "pointer", overflow: "hidden", position: "relative",
               transition: "transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s", height: "100%", minHeight: 118,
@@ -871,11 +871,31 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   const [toast, setToast] = useState(null);
   const initialized = useRef(false);
 
+  // The lesson page can be opened without an explicit course (the sidebar "レッスン"
+  // link and the dashboard CTA navigate to "lesson" with no courseId). When that
+  // happens, fall back to the active/first course from the course list so SWR always
+  // has a fetch key — otherwise the key is null, no request is ever made, and neither
+  // `courseData` nor `courseError` is set, leaving the page stuck on the skeleton.
+  const swrOpts = { revalidateOnFocus: false, revalidateOnReconnect: false, shouldRetryOnError: false };
+  const { data: courseList, error: listError } = useSWR(
+    courseId ? null : "/api/courses",
+    swrFetcher,
+    swrOpts
+  );
+  const resolvedCourseId = useMemo(() => {
+    if (courseId) return courseId;
+    const list = Array.isArray(courseList) ? courseList : [];
+    const active = list.find(c => c.progress > 0 && c.progress < 100);
+    return (active || list[0])?.id || null;
+  }, [courseId, courseList]);
+  // No course could be resolved (course list loaded but empty, or it failed to load).
+  const cannotResolve = !resolvedCourseId && (!!listError || Array.isArray(courseList));
+
   // SWR: global cache shared across components, deduplicates concurrent requests
   const { data: courseData, error: courseError, mutate: revalidateCourse } = useSWR(
-    courseId ? `/api/courses/${courseId}` : null,
+    resolvedCourseId ? `/api/courses/${resolvedCourseId}` : null,
     swrFetcher,
-    { revalidateOnFocus: false, revalidateOnReconnect: false, shouldRetryOnError: false }
+    swrOpts
   );
 
   // Reset initialization flag and lesson state when switching courses
@@ -883,7 +903,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     initialized.current = false;
     setActiveLesson(null);
     setCompletedIds(new Set());
-  }, [courseId]);
+  }, [resolvedCourseId]);
 
   // Initialize completedIds and activeLesson from courseData (first load only)
   useEffect(() => {
@@ -954,8 +974,9 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   });
 
   // Surface fetch failures instead of showing the skeleton forever. Auth redirects are
-  // already handled in swrFetcher (browser is sent to /login); this covers other errors.
-  if (courseError) return (
+  // already handled in swrFetcher (browser is sent to /login); this covers other errors
+  // (course fetch failed, or no course could be resolved when none was selected).
+  if (courseError || cannotResolve) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
       <div style={{ fontSize: 15, fontWeight: 600, color: T.dark }}>レッスンを読み込めませんでした</div>
       <div style={{ fontSize: 13, color: T.textMuted }}>通信エラーが発生しました。再読み込みしてください。</div>
