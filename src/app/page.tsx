@@ -185,8 +185,22 @@ const createTheme = (isDark) => isDark ? {
 // Default T for backward compat — will be overridden by context
 let T = createTheme(false);
 
-// SWR fetcher — module-level so the global cache is shared across all components
-const swrFetcher = (url) => fetch(url).then(r => r.json());
+// SWR fetcher — module-level so the global cache is shared across all components.
+// When the auth session is missing/expired, the middleware redirects protected API
+// requests to the /login HTML page (307). Blindly calling .json() on that HTML throws
+// a SyntaxError, which left the lesson page stuck on its skeleton forever. Detect the
+// redirect (and any non-OK response) and send the user to re-authenticate instead.
+const swrFetcher = async (url) => {
+  const res = await fetch(url);
+  if (res.redirected && res.url.includes("/login")) {
+    if (typeof window !== "undefined") window.location.href = res.url;
+    throw new Error("Not authenticated");
+  }
+  if (!res.ok) {
+    throw new Error(`Request failed (${res.status})`);
+  }
+  return res.json();
+};
 
 const ThemeContext = createContext(null);
 const useTheme = () => useContext(ThemeContext) || T;
@@ -409,10 +423,19 @@ const StudentDashboard = ({ setCurrentPage }) => {
   const [calEvents, setCalEvents] = useState([]);
   const [calLoading, setCalLoading] = useState(true);
 
-  // Fetch dashboard data from API
+  // Fetch dashboard data from API.
+  // If the session expired the request is redirected to /login (HTML); send the user
+  // there to re-authenticate rather than silently rendering an empty dashboard.
   useEffect(() => {
-    fetch("/api/dashboard").then(r => r.json()).then(data => {
-      if (!data.error) setDashData(data);
+    fetch("/api/dashboard").then(res => {
+      if (res.redirected && res.url.includes("/login")) {
+        if (typeof window !== "undefined") window.location.href = res.url;
+        return null;
+      }
+      if (!res.ok) return null;
+      return res.json();
+    }).then(data => {
+      if (data && !data.error) setDashData(data);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
@@ -849,10 +872,10 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   const initialized = useRef(false);
 
   // SWR: global cache shared across components, deduplicates concurrent requests
-  const { data: courseData, mutate: revalidateCourse } = useSWR(
+  const { data: courseData, error: courseError, mutate: revalidateCourse } = useSWR(
     courseId ? `/api/courses/${courseId}` : null,
     swrFetcher,
-    { revalidateOnFocus: false, revalidateOnReconnect: false }
+    { revalidateOnFocus: false, revalidateOnReconnect: false, shouldRetryOnError: false }
   );
 
   // Reset initialization flag and lesson state when switching courses
@@ -929,6 +952,19 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     width: w, height: h, borderRadius: 8, background: T.borderSubtle,
     animation: "skeletonPulse 1.6s ease-in-out infinite", ...extra,
   });
+
+  // Surface fetch failures instead of showing the skeleton forever. Auth redirects are
+  // already handled in swrFetcher (browser is sent to /login); this covers other errors.
+  if (courseError) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: T.dark }}>レッスンを読み込めませんでした</div>
+      <div style={{ fontSize: 13, color: T.textMuted }}>通信エラーが発生しました。再読み込みしてください。</div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Button size="sm" onClick={() => revalidateCourse()} style={{ background: T.accent, color: "#fff", borderRadius: 10, fontWeight: 600, gap: 6 }}>再試行</Button>
+        <Button size="sm" variant="ghost" onClick={() => setCurrentPage("courses")} style={{ color: T.textSecondary, borderRadius: 10, fontWeight: 600 }}>コース一覧へ</Button>
+      </div>
+    </div>
+  );
 
   if (!courseData) return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
