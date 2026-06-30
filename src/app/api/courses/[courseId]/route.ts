@@ -15,34 +15,25 @@ export async function GET(
     const { courseId } = await params;
     const userId = session.user.id;
 
-    const course = await prisma.course.findUnique({
-      where: { id: courseId },
-      include: {
-        sections: {
-          orderBy: { order: "asc" },
-          include: {
-            lessons: {
-              orderBy: { order: "asc" },
-            },
+    const [course, progressRecords] = await Promise.all([
+      prisma.course.findUnique({
+        where: { id: courseId },
+        include: {
+          sections: {
+            orderBy: { order: "asc" },
+            include: { lessons: { orderBy: { order: "asc" } } },
           },
         },
-      },
-    });
+      }),
+      prisma.progress.findMany({
+        where: { userId, completed: true, lesson: { section: { courseId } } },
+        select: { lessonId: true },
+      }),
+    ]);
 
     if (!course) {
       return NextResponse.json({ error: "Course not found" }, { status: 404 });
     }
-
-    const progressRecords = await prisma.progress.findMany({
-      where: {
-        userId,
-        completed: true,
-        lesson: {
-          section: { courseId },
-        },
-      },
-      select: { lessonId: true },
-    });
 
     const completedLessonIds = new Set(
       progressRecords.map((p) => p.lessonId)

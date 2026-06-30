@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
+import useSWR, { preload } from "swr";
 import {
   AreaChart, Area, BarChart, Bar, RadialBarChart, RadialBar, PolarAngleAxis,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
@@ -183,6 +184,9 @@ const createTheme = (isDark) => isDark ? {
 
 // Default T for backward compat — will be overridden by context
 let T = createTheme(false);
+
+// SWR fetcher — module-level so the global cache is shared across all components
+const swrFetcher = (url) => fetch(url).then(r => r.json());
 
 const ThemeContext = createContext(null);
 const useTheme = () => useContext(ThemeContext) || T;
@@ -457,20 +461,6 @@ const StudentDashboard = ({ setCurrentPage }) => {
     { text: "質問への返信を確認", icon: MessageSquare, color: T.success },
   ];
 
-  const assigns = [
-    { title: "課題1: カフェLP", st: "approved", dl: "3/1", fb: "合格！" },
-    { title: "課題2: 美容サロン", st: "review", dl: "3/8" },
-    { title: "課題3: IT企業", st: "working", dl: "3/15" },
-    { title: "課題4: レストラン", st: "locked", dl: "3/22" },
-    { title: "課題5: アパレルEC", st: "locked", dl: "3/29" },
-  ];
-  const stCfg = {
-    approved: { l: "合格", c: T.success, i: CheckCircle2 },
-    review: { l: "レビュー中", c: T.warning, i: Clock },
-    working: { l: "作業中", c: T.accent, i: PlayCircle },
-    locked: { l: "未開放", c: T.textMuted, i: Lock },
-  };
-
   const news = dashData?.notifications?.map(n => ({
     from: n.title.split("が")[0] || "NWA", msg: n.message, time: "new", av: n.title.charAt(0), imp: !n.read,
   })) || [
@@ -491,40 +481,40 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
   return (
     <ScrollArea style={{ height: "100%" }}>
-      <div className="nwa-page-content" style={{ padding: "32px 36px 48px", maxWidth: 1200 }}>
+      <div className="nwa-page-content" style={{ padding: "20px 36px 24px", maxWidth: 1200 }}>
         {/* Header */}
         <FadeIn>
-          <div style={{ marginBottom: 24 }}>
+          <div style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
               <Sparkles size={14} style={{ color: T.accent }} />
               <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Dashboard</span>
             </div>
-            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 30, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em" }}>おかえりなさい、Tec さん</h1>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 26, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em" }}>おかえりなさい、Tec さん</h1>
           </div>
         </FadeIn>
 
         {/* ═══ BENTO GRID ═══ */}
-        <div className="nwa-bento" style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 18, gridAutoRows: "minmax(0, auto)" }}>
+        <div className="nwa-bento" style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14, gridAutoRows: "minmax(0, auto)" }}>
 
           {/* ── Row 1: Stats (3 cols each × 4) ── */}
           {stats.map((s, i) => {
             const Icon = s.icon;
             return (
               <FadeIn key={`s${i}`} delay={40 * i} direction="scale" style={{ gridColumn: "span 3" }}>
-                <div style={{ ...glassStyle(), borderRadius: 16, padding: "18px 20px", position: "relative", overflow: "hidden", transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)", cursor: "default" }}
+                <div style={{ ...glassStyle(), borderRadius: 16, padding: "13px 18px", position: "relative", overflow: "hidden", transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)", cursor: "default" }}
                   onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 12px 36px rgba(10,22,40,0.08)"; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = glassStyle().boxShadow; }}>
                   <div style={{ position: "absolute", top: -16, right: -16, width: 60, height: 60, borderRadius: "50%", background: s.gradient, opacity: 0.06, filter: "blur(16px)" }} />
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative", zIndex: 1 }}>
                     <div>
                       <span style={{ fontSize: 10, fontWeight: 600, color: T.textMuted, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.label}</span>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 3, marginTop: 6 }}>
-                        <span style={{ fontSize: 30, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 3, marginTop: 4 }}>
+                        <span style={{ fontSize: 25, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
                         <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.sub}</span>
                       </div>
                     </div>
-                    <div style={{ width: 36, height: 36, borderRadius: 11, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 3px 10px ${s.accent}20` }}>
-                      <Icon size={16} style={{ color: "#fff" }} />
+                    <div style={{ width: 32, height: 32, borderRadius: 10, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 3px 10px ${s.accent}20` }}>
+                      <Icon size={15} style={{ color: "#fff" }} />
                     </div>
                   </div>
                 </div>
@@ -537,25 +527,25 @@ const StudentDashboard = ({ setCurrentPage }) => {
             <div onClick={() => setCurrentPage("lesson")} style={{
               background: T.mode === "dark" ? "linear-gradient(135deg, #0F172A, #1E293B)" : T.gradientDark,
               borderRadius: 20, cursor: "pointer", overflow: "hidden", position: "relative",
-              transition: "transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s", height: "100%", minHeight: 150,
+              transition: "transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s", height: "100%", minHeight: 118,
             }}
               onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 16px 48px rgba(10,22,40,0.18)"; }}
               onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}>
               <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", opacity: 0.5, pointerEvents: "none" }} />
               <div style={{ position: "absolute", top: 0, right: 0, width: "50%", height: "100%", background: "radial-gradient(ellipse at 80% 50%, rgba(59,130,246,0.1) 0%, transparent 65%)", pointerEvents: "none" }} />
-              <div style={{ padding: "26px 28px", position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", height: "100%" }}>
+              <div style={{ padding: "18px 26px", position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", height: "100%" }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                     <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
                     <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
                   </div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{activeCourse.name || "コース"}</div>
+                  <div style={{ fontSize: 19, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{activeCourse.name || "コース"}</div>
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>進捗: {activeCourse.progress}%</div>
-                  <Button size="sm" style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "7px 16px" }}>
+                  <Button size="sm" style={{ marginTop: 10, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "6px 15px" }}>
                     <PlayCircle size={14} /> 開く
                   </Button>
                 </div>
-                <div style={{ width: 96, height: 96, flexShrink: 0 }}>
+                <div style={{ width: 84, height: 84, flexShrink: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <RadialBarChart innerRadius={30} outerRadius={46} data={radial} startAngle={90} endAngle={-270}>
                       <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
@@ -571,15 +561,15 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           <FadeIn delay={120} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Next Up</h3>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.danger, boxShadow: `0 0 6px ${T.danger}40` }} />
               </div>
-              <div style={{ padding: "0 20px 16px", flex: 1 }}>
+              <div style={{ padding: "0 20px 12px", flex: 1 }}>
                 {todos.map((t, i) => {
                   const Icon = t.icon;
                   return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
                       onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
                       <div style={{ width: 26, height: 26, borderRadius: 7, background: `${t.color}0C`, border: `1px solid ${t.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <Icon size={12} style={{ color: t.color }} />
@@ -595,14 +585,14 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           {/* ── Row 3: Curriculum (8) + Calendar (4) ── */}
           <FadeIn delay={160} style={{ gridColumn: "span 8" }}>
-            <div style={{ ...glassStyle(), borderRadius: 20, padding: "20px 24px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ ...glassStyle(), borderRadius: 20, padding: "14px 22px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <h2 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>カリキュラム進度</h2>
                 <Button variant="ghost" size="sm" onClick={() => setCurrentPage("courses")} style={{ color: T.accent, fontWeight: 600, fontSize: 11, fontFamily: "var(--font-sora), 'Sora', sans-serif", gap: 3, padding: "4px 8px" }}>
                   詳細 <ArrowUpRight size={12} />
                 </Button>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {courses.map((c, i) => {
                   const Icon = CourseIcons[c.icon] || null;
                   const isAct = c.progress > 0 && c.progress < 100;
@@ -611,7 +601,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, opacity: isLock ? 0.35 : 1 }}>
                       <div style={{
-                        width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+                        width: 26, height: 26, borderRadius: 8, flexShrink: 0,
                         background: isDone ? `${T.success}12` : isAct ? `${c.color}0C` : `${T.textMuted}08`,
                         border: `1.5px solid ${isDone ? T.success + "30" : isAct ? c.color + "25" : "transparent"}`,
                         display: "flex", alignItems: "center", justifyContent: "center",
@@ -641,18 +631,18 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           <FadeIn delay={200} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>📅 Schedule</h3>
                 <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>Google Cal</span>
               </div>
-              <div style={{ padding: "0 20px 16px", flex: 1 }}>
+              <div style={{ padding: "0 20px 12px", flex: 1 }}>
                 {calLoading ? (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 100 }}>
                     <div style={{ width: 18, height: 18, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
                     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                   </div>
                 ) : calEvents.map((evt, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
                     <div style={{ width: 3, height: 26, borderRadius: 3, flexShrink: 0, marginTop: 1, background: calColors[i % calColors.length] }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 550, color: T.textPrimary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{evt.title}</div>
@@ -667,14 +657,14 @@ const StudentDashboard = ({ setCurrentPage }) => {
           {/* ── Row 4: Weekly (4) + Announcements (4) + Activity (4) ── */}
           <FadeIn delay={240} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20 }}>
-              <div style={{ padding: "16px 20px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ padding: "13px 20px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Weekly</h3>
                 <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${T.purple}12`, color: T.purple, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                   <Flame size={10} style={{ marginRight: 2 }} />4日
                 </Badge>
               </div>
-              <div style={{ padding: "2px 8px 12px" }}>
-                <ResponsiveContainer width="100%" height={130}>
+              <div style={{ padding: "2px 8px 8px" }}>
+                <ResponsiveContainer width="100%" height={104}>
                   <BarChart data={weekly} barCategoryGap="24%">
                     <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
                     <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
@@ -691,13 +681,13 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           <FadeIn delay={280} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
-              <div style={{ padding: "16px 20px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>お知らせ</h3>
                 <Bell size={13} style={{ color: T.textMuted }} />
               </div>
-              <div style={{ padding: "0 20px 16px" }}>
+              <div style={{ padding: "0 20px 12px" }}>
                 {news.map((n, i) => (
-                  <div key={i} style={{ display: "flex", gap: 9, padding: "9px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
+                  <div key={i} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
                     onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
                     <Avatar style={{ width: 28, height: 28, flexShrink: 0 }}>
                       <AvatarFallback style={{
@@ -721,10 +711,10 @@ const StudentDashboard = ({ setCurrentPage }) => {
 
           <FadeIn delay={320} style={{ gridColumn: "span 4" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
-              <div style={{ padding: "16px 20px 10px" }}>
+              <div style={{ padding: "13px 20px 8px" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Activity</h3>
               </div>
-              <div style={{ padding: "0 20px 16px" }}>
+              <div style={{ padding: "0 20px 12px" }}>
                 {[
                   { icon: PlayCircle, color: T.accent, text: "AIコーディング（AG）- レスポンシブ #15", time: "2h" },
                   { icon: Award, color: T.warning, text: "JS クイズ — 90点", time: "1d" },
@@ -732,7 +722,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
                 ].map((a, i) => {
                   const Icon = a.icon;
                   return (
-                    <div key={i} style={{ display: "flex", gap: 9, padding: "9px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
+                    <div key={i} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
                       onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
                       <div style={{ width: 26, height: 26, borderRadius: 7, background: `${a.color}0C`, border: `1px solid ${a.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <Icon size={12} style={{ color: a.color }} />
@@ -741,41 +731,6 @@ const StudentDashboard = ({ setCurrentPage }) => {
                         <div style={{ fontSize: 12, color: T.textPrimary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.text}</div>
                         <div style={{ fontSize: 9, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{a.time}</div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </FadeIn>
-
-          {/* ── Row 5: Assignment Status (full width) ── */}
-          <FadeIn delay={360} style={{ gridColumn: "span 12" }}>
-            <div style={{ ...glassStyle(), borderRadius: 20 }}>
-              <div style={{ padding: "18px 24px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>課題の提出状況</h3>
-                <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP6 模擬案件挑戦</span>
-              </div>
-              <div className="nwa-assign-grid" style={{ padding: "0 24px 18px", display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14 }}>
-                {assigns.map((a, i) => {
-                  const sc = stCfg[a.st]; const Icon = sc.i;
-                  return (
-                    <div key={i} style={{
-                      borderRadius: 14, padding: "16px 14px", textAlign: "center",
-                      background: T.mode === "dark" ? "rgba(255,255,255,0.02)" : "#FAFBFD",
-                      border: `1px solid ${a.st === "working" ? T.accent + "30" : T.borderSubtle}`,
-                      opacity: a.st === "locked" ? 0.4 : 1,
-                      transition: "all 0.2s",
-                    }}
-                      onMouseEnter={e => { if (a.st !== "locked") e.currentTarget.style.transform = "translateY(-2px)"; }}
-                      onMouseLeave={e => e.currentTarget.style.transform = "none"}
-                    >
-                      <div style={{ width: 36, height: 36, borderRadius: 10, background: `${sc.c}0C`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 10px" }}>
-                        <Icon size={16} style={{ color: sc.c }} />
-                      </div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: T.textPrimary, marginBottom: 6 }}>{a.title}</div>
-                      <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${sc.c}12`, color: sc.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{sc.l}</Badge>
-                      <div style={{ fontSize: 9, color: T.textMuted, marginTop: 6, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>〆 {a.dl}</div>
-                      {a.fb && <div style={{ fontSize: 10, color: T.success, marginTop: 4, fontWeight: 600 }}>{a.fb}</div>}
                     </div>
                   );
                 })}
@@ -841,7 +796,7 @@ const CourseList = ({ setCurrentPage }) => {
                   cursor: c.locked ? "default" : "pointer", opacity: c.locked ? 0.45 : 1,
                   transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)", position: "relative",
                 }}
-                onMouseEnter={e => { if (!c.locked) { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 16px 48px rgba(10,22,40,0.1)"; }}}
+                onMouseEnter={e => { if (!c.locked) { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 16px 48px rgba(10,22,40,0.1)"; preload(`/api/courses/${c.id}`, swrFetcher); }}}
                 onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(10,22,40,0.04), 0 8px 32px rgba(10,22,40,0.03)"; }}
               >
                 {/* Top color accent */}
@@ -887,45 +842,43 @@ const CourseList = ({ setCurrentPage }) => {
 // ═══════════════════════════════════════════
 const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   const [expanded, setExpanded] = useState(0);
-  const [courseData, setCourseData] = useState(null);
   const [activeLesson, setActiveLesson] = useState(null);
   const [completing, setCompleting] = useState(false);
   const [completedIds, setCompletedIds] = useState(new Set());
   const [toast, setToast] = useState(null);
-  const courseCache = useRef({});
+  const initialized = useRef(false);
 
-  const loadCourseData = (data) => {
-    courseCache.current[courseId] = data;
-    setCourseData(data);
+  // SWR: global cache shared across components, deduplicates concurrent requests
+  const { data: courseData, mutate: revalidateCourse } = useSWR(
+    courseId ? `/api/courses/${courseId}` : null,
+    swrFetcher,
+    { revalidateOnFocus: false, revalidateOnReconnect: false }
+  );
+
+  // Reset initialization flag and lesson state when switching courses
+  useEffect(() => {
+    initialized.current = false;
+    setActiveLesson(null);
+    setCompletedIds(new Set());
+  }, [courseId]);
+
+  // Initialize completedIds and activeLesson from courseData (first load only)
+  useEffect(() => {
+    if (!courseData || courseData.error || initialized.current) return;
+    initialized.current = true;
     const ids = new Set(
-      (data.sections || []).flatMap(s => (s.lessons || []).filter(l => l.completed).map(l => l.id))
+      (courseData.sections || []).flatMap(s =>
+        (s.lessons || []).filter(l => l.completed).map(l => l.id)
+      )
     );
     setCompletedIds(ids);
-  };
-
-  useEffect(() => {
-    if (!courseId) return;
-    if (courseCache.current[courseId]) {
-      const cached = courseCache.current[courseId];
-      setCourseData(cached);
-      setCompletedIds(new Set(
-        (cached.sections || []).flatMap(s => (s.lessons || []).filter(l => l.completed).map(l => l.id))
-      ));
-      for (const sec of cached.sections || []) {
-        for (const l of sec.lessons || []) { if (!l.completed) { setActiveLesson(l); return; } }
+    for (const sec of courseData.sections || []) {
+      for (const l of sec.lessons || []) {
+        if (!l.completed) { setActiveLesson(l); return; }
       }
-      return;
     }
-    fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
-      if (!data.error) {
-        loadCourseData(data);
-        for (const sec of data.sections || []) {
-          for (const l of sec.lessons || []) { if (!l.completed) { setActiveLesson(l); return; } }
-        }
-        if (data.sections?.[0]?.lessons?.[0]) setActiveLesson(data.sections[0].lessons[0]);
-      }
-    });
-  }, [courseId]);
+    if (courseData.sections?.[0]?.lessons?.[0]) setActiveLesson(courseData.sections[0].lessons[0]);
+  }, [courseData]);
 
   const allLessons = useMemo(() =>
     (courseData?.sections || []).flatMap(s => s.lessons || []),
@@ -954,10 +907,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
       } else {
         showToast("コース完了！おめでとうございます！");
       }
-      // Background refresh
-      fetch(`/api/courses/${courseId}`).then(r => r.json()).then(data => {
-        if (!data.error) loadCourseData(data);
-      });
+      // Revalidate SWR cache in background
+      revalidateCourse();
     } finally {
       setCompleting(false);
     }

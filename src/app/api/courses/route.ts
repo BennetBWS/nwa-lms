@@ -11,24 +11,21 @@ export async function GET() {
 
     const userId = session.user.id;
 
-    const courses = await prisma.course.findMany({
-      orderBy: { order: "asc" },
-      include: {
-        sections: {
-          orderBy: { order: "asc" },
-          include: {
-            lessons: {
-              orderBy: { order: "asc" },
-            },
+    const [courses, progressRecords] = await Promise.all([
+      prisma.course.findMany({
+        orderBy: { order: "asc" },
+        include: {
+          sections: {
+            orderBy: { order: "asc" },
+            include: { lessons: { orderBy: { order: "asc" } } },
           },
         },
-      },
-    });
-
-    const progressRecords = await prisma.progress.findMany({
-      where: { userId, completed: true },
-      select: { lessonId: true },
-    });
+      }),
+      prisma.progress.findMany({
+        where: { userId, completed: true },
+        select: { lessonId: true },
+      }),
+    ]);
 
     const completedLessonIds = new Set(
       progressRecords.map((p) => p.lessonId)
@@ -56,7 +53,9 @@ export async function GET() {
       return { ...course, sections, progress };
     });
 
-    return NextResponse.json(coursesWithProgress);
+    return NextResponse.json(coursesWithProgress, {
+      headers: { "Cache-Control": "private, max-age=0, stale-while-revalidate=60" },
+    });
   } catch (error) {
     console.error("GET /api/courses error:", error);
     return NextResponse.json(
