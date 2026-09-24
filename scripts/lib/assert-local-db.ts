@@ -51,7 +51,7 @@ export function assertLocalDatabase(urls: Array<string | undefined>): void {
     }
 
     // Report only the (normalised) parameter name, never its value.
-    for (const key of parsed.searchParams.keys()) {
+    for (const key of Array.from(parsed.searchParams.keys())) {
       const name = key.toLowerCase();
       if (FORBIDDEN_QUERY_PARAMS.has(name)) {
         throw new Error(
