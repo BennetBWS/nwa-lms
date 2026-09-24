@@ -28,11 +28,13 @@ export async function POST(request: Request) {
         data: { userId: user.id, token, expiresAt },
       });
 
-      const resetUrl = `https://nwa-lms.vercel.app/reset-password?token=${token}`;
-
       if (!resend) {
-        console.log("[RESEND] RESEND_API_KEY not set. Reset URL:", resetUrl);
+        // Do not log the token, reset URL, email address, or user ID.
+        console.warn(
+          "[forgot-password] Mail sending is not configured (RESEND_API_KEY not set). Skipped sending the reset email."
+        );
       } else {
+        const resetUrl = `https://nwa-lms.vercel.app/reset-password?token=${token}`;
         await resend.emails.send({
           from: "onboarding@resend.dev",
           to: user.email,
@@ -60,7 +62,17 @@ export async function POST(request: Request) {
     // Always return success to prevent user enumeration
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("forgot-password error:", error);
+    // Do not pass the error object: its message/meta/stack may contain the email or token.
+    const name = error instanceof Error ? error.name : typeof error;
+    const code =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      typeof error.code === "string" &&
+      /^P\d{4}$/.test(error.code)
+        ? ` (code: ${error.code})`
+        : "";
+    console.error(`[forgot-password] Unexpected error: ${name}${code}`);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
