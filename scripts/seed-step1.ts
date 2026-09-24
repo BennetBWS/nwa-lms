@@ -1,6 +1,19 @@
 import { PrismaClient } from "@prisma/client";
 
+import { assertLocalDatabase } from "./lib/assert-local-db";
+
 const prisma = new PrismaClient();
+
+// Destructive script: refuse to run against anything but a local database.
+// This must stay right after `new PrismaClient()`: the constructor loads .env into
+// process.env (so DATABASE_URL / DIRECT_URL are visible here) but does not connect.
+// No query may run before this check. Only the error message is printed.
+try {
+  assertLocalDatabase([process.env.DATABASE_URL, process.env.DIRECT_URL]);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : "Refusing to run: local database check failed.");
+  process.exit(1);
+}
 
 const section1Lessons = [
   { code: "NWA101", title: "ITリテラシー", url: "https://docs.google.com/document/d/1nGra3kAaHJu0mVNr8gnI2NmJVWrUcbd4tqCO1lr_RDk/edit?usp=sharing" },
@@ -136,5 +149,9 @@ async function main() {
 }
 
 main()
-  .catch(console.error)
+  .catch((err: unknown) => {
+    // Print only the message; never dump the error object (may carry connection details).
+    console.error("STEP1 seed failed:", err instanceof Error ? err.message : "unknown error");
+    process.exitCode = 1;
+  })
   .finally(() => prisma.$disconnect());
