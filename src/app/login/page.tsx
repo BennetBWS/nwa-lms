@@ -313,21 +313,6 @@ function LoginPage() {
                 <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
               </div>
 
-              {/* Test accounts hint (dev only) */}
-              {process.env.NODE_ENV === "development" && (
-              <div style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)" }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: "#475569", fontFamily: sora, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>テストアカウント</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ fontSize: 12, color: "#64748B" }}>
-                    <span style={{ color: "#94A3B8", fontWeight: 600 }}>生徒:</span> student@nwa.com / password123
-                  </div>
-                  <div style={{ fontSize: 12, color: "#64748B" }}>
-                    <span style={{ color: "#94A3B8", fontWeight: 600 }}>講師:</span> instructor@nwa.com / password123
-                  </div>
-                </div>
-              </div>
-              )}
-
               {/* Forgot password */}
               <div style={{ textAlign: "center" }}>
                 <a href="/forgot-password" style={{
