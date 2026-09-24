@@ -18,7 +18,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 ## コマンド
 - 開発: `npm run dev`
 - 型チェック: `npm run typecheck`（`prisma/seed.ts` は tsconfig の exclude により対象外）
-- テスト: `npm test`（現状は seed ガードの単体テストのみ。テスト基盤は未整備）
+- テスト: `npm test`（現状は seed ガードの単体テストと、seed スクリプトをダミー URL で起動する E2E テストのみ。後者は `npm install` と Prisma Client 生成済みが前提。テスト基盤は未整備）
 - マイグレーション（ローカル）: `npm run db:migrate`
 - Prisma Client 生成: `npm run db:generate`
 - seed（ローカル DB のみ）: `npm run db:seed`
