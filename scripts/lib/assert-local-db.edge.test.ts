@@ -217,20 +217,58 @@ describe("assertLocalDatabase (edge cases)", () => {
     });
   });
 
-  describe("known gaps (reported, not fixed here)", () => {
+  describe("host / hostaddr query parameters", () => {
     // Prisma (quaint) honours a `host` query parameter and connects there instead of the
-    // URL authority host. The guard only checks the authority host, so this URL passes
-    // the guard but Prisma would connect to db.example.invalid.
-    // Verified manually: seed-step1.ts with `...@localhost:1/db?host=127.0.0.2`
-    // fails with "Can't reach database server at `127.0.0.2:1`".
-    it(
-      "rejects a local URL whose `host` query parameter points to a remote host",
-      { todo: "guard ignores ?host= query parameter (bug reported to implementer)" },
-      () => {
-        assert.throws(() =>
-          assertLocalDatabase([`postgresql://u:p@localhost:5432/db?host=${REMOTE_HOST}`])
-        );
-      }
-    );
+    // URL authority host (reproduced: `...@localhost:1/db?host=127.0.0.2` connected to
+    // 127.0.0.2). The guard must reject these parameters regardless of their value.
+    it("rejects a local URL whose `host` query parameter points to a remote host", () => {
+      const url = `postgresql://${USER}:${SECRET}@localhost:5432/db?host=${REMOTE_HOST}`;
+      const msg = messageOf(() => assertLocalDatabase([url]));
+      assert.match(msg, /query parameter "host" is not allowed/);
+      assert.ok(!msg.includes(REMOTE_HOST), `message must not contain the parameter value: ${msg}`);
+      assertNoLeak(msg, url);
+    });
+
+    it("rejects `host` even when its value is also local", () => {
+      assert.throws(
+        () => assertLocalDatabase(["postgresql://u:p@localhost:5432/db?host=localhost"]),
+        /query parameter "host" is not allowed/
+      );
+    });
+
+    it("rejects `hostaddr`", () => {
+      const url = `postgresql://${USER}:${SECRET}@localhost:5432/db?sslmode=disable&hostaddr=203.0.113.9`;
+      const msg = messageOf(() => assertLocalDatabase([url]));
+      assert.match(msg, /query parameter "hostaddr" is not allowed/);
+      assert.ok(!msg.includes("203.0.113.9"), `message must not contain the parameter value: ${msg}`);
+      assertNoLeak(msg, url);
+    });
+
+    it("rejects upper/mixed-case parameter names (HOST, HostAddr)", () => {
+      assert.throws(
+        () => assertLocalDatabase([`postgresql://u:p@localhost:5432/db?HOST=${REMOTE_HOST}`]),
+        /query parameter "host" is not allowed/
+      );
+      assert.throws(
+        () => assertLocalDatabase(["postgresql://u:p@localhost:5432/db?HostAddr=203.0.113.9"]),
+        /query parameter "hostaddr" is not allowed/
+      );
+    });
+
+    it("rejects `host` in the second URL (DIRECT_URL)", () => {
+      assert.throws(
+        () => assertLocalDatabase([LOCAL_URL, `postgresql://u:p@localhost:5432/db?host=${REMOTE_HOST}`]),
+        /#2 query parameter "host"/
+      );
+    });
+
+    it("still allows other query parameters on local URLs", () => {
+      assert.doesNotThrow(() =>
+        assertLocalDatabase([
+          "postgresql://u:p@localhost:5432/db?schema=public&sslmode=disable",
+          "postgresql://u:p@localhost:5432/db?hostname_hint=x&pgbouncer=true",
+        ])
+      );
+    });
   });
 });
