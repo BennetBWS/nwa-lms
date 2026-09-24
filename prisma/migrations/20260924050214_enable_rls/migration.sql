@@ -1,12 +1,14 @@
 -- Enable Row Level Security on every table in the public schema.
 --
 -- Intent:
--- - No policies are created, so the Supabase API roles (anon, authenticated)
---   are denied all access to these tables via PostgREST / supabase-js.
+-- - No policies are created, so for the Supabase API roles (anon, authenticated)
+--   reads via PostgREST / supabase-js return zero rows and writes fail with an
+--   RLS violation.
 -- - Prisma connects as "postgres", which owns these tables and has BYPASSRLS,
 --   so application queries are unaffected.
 -- - FORCE ROW LEVEL SECURITY is intentionally NOT used: it would apply RLS to
---   the table owner as well and, with no policies, block Prisma entirely.
+--   the table owner as well, leaving BYPASSRLS as Prisma's only safeguard.
+-- - Rollback policy: never DISABLE RLS; roll forward with policies or GRANTs.
 
 ALTER TABLE "User" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "PasswordReset" ENABLE ROW LEVEL SECURITY;
