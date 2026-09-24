@@ -1,0 +1,34 @@
+# nwa-lms
+
+法人: BWS
+事業: NWA
+Slack報告先: #dev-review
+
+## 概要
+NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース／レッスン、ミニテスト・修了テスト、課題、質問コメント、通知を提供する。
+講師（INSTRUCTOR）は管理画面でコンテンツと受講生を管理する。
+
+## 環境
+- 本番URL: https://nwa-lms.vercel.app
+- DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: <Tecが記入>）。Supabase Auth / Storage は未使用
+- 認証: NextAuth v5（Credentials + bcrypt、JWT セッション）。ユーザーは Prisma の User テーブルで管理
+- メール: Resend（パスワードリセット）
+- デプロイ: Vercel（main マージで本番反映）
+
+## コマンド
+- 開発: `npm run dev`
+- 型チェック: `npm run typecheck`
+- テスト: `npm test`（現状は seed ガードの単体テストのみ。テスト基盤は未整備）
+- マイグレーション（ローカル）: `npm run db:migrate`
+- Prisma Client 生成: `npm run db:generate`
+- seed（ローカル DB のみ）: `npm run db:seed`
+- ※ Supabase 型生成（supabase gen types）は使わない。型は Prisma Client から生成される
+
+## このリポジトリ固有のルール
+- ユーザー・ロールは Prisma の `User` テーブルに集約する（Supabase Auth は使わない）
+- スキーマ変更は `prisma/schema.prisma` → `prisma migrate dev` で作成し、`prisma/migrations/` をコミットする。本番適用は Tec の承認後
+- `prisma/seed.ts` と `scripts/seed-step1.ts` は既存データを削除する破壊的スクリプト。ローカル DB 以外では起動時に拒否される（`scripts/lib/assert-local-db.ts`）。ガードを外さない
+- テスト用アカウントは seed がローカル DB にのみ作成する（ドメインは example.com）。ログイン画面・README・本ファイルに認証情報を書かない
+- 本番データを含む SQL / CSV は `supabase/private/`（git 管理外）に置く
+- `src/lib/supabase.ts` は現在未使用
+- `/api/admin/students/[id]/deactivate` は論理削除ではなく物理削除である点に注意
