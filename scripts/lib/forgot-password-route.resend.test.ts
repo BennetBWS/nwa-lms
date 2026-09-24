@@ -199,6 +199,38 @@ describe("POST /api/auth/forgot-password (mail config complete)", () => {
     assert.deepEqual(findLeaks(logs, secretsFor(token)), []);
   });
 
+  it("Resend client creation throws: still {success:true} (not 500), logs the error name only", async () => {
+    // The Resend constructor starts with `this.key = key`, so a throwing setter on the
+    // prototype makes `new Resend(...)` throw. Both CJS and ESM builds are patched.
+    const patched: ResendCtor[] = [];
+    try {
+      for (const ResendClass of resendClasses) {
+        Object.defineProperty(ResendClass.prototype, "key", {
+          configurable: true,
+          set() {
+            throw new RangeError(`constructor failed for ${USER_EMAIL} ${API_KEY}`);
+          },
+        });
+        patched.push(ResendClass);
+      }
+
+      const res = await POST(jsonRequest({ email: USER_EMAIL }));
+      const token = fake.createdTokens[0];
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { success: true });
+      assert.equal(sent.length, 0);
+      assert.deepEqual(logs, [
+        { level: "error", text: "[forgot-password] Failed to send the reset email: threw RangeError" },
+      ]);
+      assert.deepEqual(findLeaks(logs, secretsFor(token)), []);
+    } finally {
+      for (const ResendClass of patched) {
+        delete (ResendClass.prototype as unknown as Record<string, unknown>).key;
+      }
+    }
+  });
+
   it("unknown email: no mail is sent, same response", async () => {
     const res = await POST(jsonRequest({ email: "nobody-12@example.com" }));
     assert.equal(res.status, 200);

@@ -43,12 +43,13 @@ export async function POST(request: Request) {
         }
       } else {
         const { config } = mail;
-        // The URL comes from APP_BASE_URL only (never from request.url / Host / X-Forwarded-Host / Origin).
-        const resetUrl = buildResetUrl(config.appBaseUrl, token);
-        const resend = new Resend(config.apiKey);
         // Send failures must not change the response (a 500 only for registered
         // addresses would allow user enumeration), so they are logged and swallowed.
+        // URL building and client creation are inside the try for the same reason.
         try {
+          // The URL comes from APP_BASE_URL only (never from request.url / Host / X-Forwarded-Host / Origin).
+          const resetUrl = buildResetUrl(config.appBaseUrl, token);
+          const resend = new Resend(config.apiKey);
           const { error } = await resend.emails.send({
             from: config.from,
             ...(config.replyTo ? { replyTo: config.replyTo } : {}),
