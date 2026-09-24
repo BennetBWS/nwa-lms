@@ -13,13 +13,15 @@ import {
 } from "./forgot-password-route.test-helpers";
 
 // #12: POST /api/auth/forgot-password must never log the reset token, the reset URL,
-// the email address or the user ID. This file covers the RESEND_API_KEY-unset path.
+// the email address or the user ID. This file covers the path where no mail variable is set (#9).
 // No DB (fake prisma on globalThis) and no network (fetch is replaced with a failing stub).
 
-delete process.env.RESEND_API_KEY;
+for (const name of ["RESEND_API_KEY", "MAIL_FROM", "APP_BASE_URL", "MAIL_REPLY_TO", "VERCEL_ENV"]) {
+  delete process.env[name];
+}
 
 const WARN_TEXT =
-  "[forgot-password] Mail sending is not configured (RESEND_API_KEY not set). Skipped sending the reset email.";
+  "[forgot-password] Mail sending is not configured (missing: RESEND_API_KEY, MAIL_FROM, APP_BASE_URL). Skipped sending the reset email.";
 
 let POST: (req: Request) => Promise<Response>;
 let fake: FakePrisma;
@@ -45,9 +47,10 @@ beforeEach(() => {
 
 afterEach(() => {
   mock.restoreAll();
+  delete process.env.VERCEL_ENV;
 });
 
-describe("POST /api/auth/forgot-password (RESEND_API_KEY unset)", () => {
+describe("POST /api/auth/forgot-password (mail variables unset)", () => {
   it("existing user: returns {success:true} and logs only the fixed warning", async () => {
     const res = await POST(jsonRequest({ email: USER_EMAIL }));
 
@@ -60,7 +63,17 @@ describe("POST /api/auth/forgot-password (RESEND_API_KEY unset)", () => {
 
     assert.deepEqual(logs, [{ level: "warn", text: WARN_TEXT }]);
     assert.deepEqual(findLeaks(logs, [token, USER_EMAIL, USER_ID]), []);
-    assert.equal(fetchCalls, 0, "no mail request without RESEND_API_KEY");
+    assert.equal(fetchCalls, 0, "no mail request without the mail config");
+  });
+
+  it("production (VERCEL_ENV=production): the same fixed text is logged as an error", async () => {
+    process.env.VERCEL_ENV = "production";
+    const res = await POST(jsonRequest({ email: USER_EMAIL }));
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { success: true });
+    assert.deepEqual(logs, [{ level: "error", text: WARN_TEXT }]);
+    assert.equal(fetchCalls, 0);
   });
 
   it("unknown email: same response as an existing user (no user enumeration), no token issued", async () => {

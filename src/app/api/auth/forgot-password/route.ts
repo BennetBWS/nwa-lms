@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Resend } from "resend";
-
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+import { buildResetUrl, readMailConfig } from "@/lib/mail-config";
+import { safeErrorSummary, safeResendErrorSummary } from "@/lib/safe-error";
 
 export async function POST(request: Request) {
   try {
@@ -28,18 +28,33 @@ export async function POST(request: Request) {
         data: { userId: user.id, token, expiresAt },
       });
 
-      if (!resend) {
-        // Do not log the token, reset URL, email address, or user ID.
-        console.warn(
-          "[forgot-password] Mail sending is not configured (RESEND_API_KEY not set). Skipped sending the reset email."
-        );
+      // Do not log the token, reset URL, email address, user ID, or any config value.
+      const mail = readMailConfig();
+      // `=== false` (not `!mail.ok`): tsconfig has strict: false, where truthiness does not narrow the union.
+      if (mail.ok === false) {
+        const parts: string[] = [];
+        if (mail.missing.length > 0) parts.push(`missing: ${mail.missing.join(", ")}`);
+        if (mail.invalid.length > 0) parts.push(`invalid: ${mail.invalid.join(", ")}`);
+        const message = `[forgot-password] Mail sending is not configured (${parts.join("; ")}). Skipped sending the reset email.`;
+        if (process.env.VERCEL_ENV === "production") {
+          console.error(message);
+        } else {
+          console.warn(message);
+        }
       } else {
-        const resetUrl = `https://nwa-lms.vercel.app/reset-password?token=${token}`;
-        await resend.emails.send({
-          from: "onboarding@resend.dev",
-          to: user.email,
-          subject: "NWA - パスワードリセット",
-          html: `
+        const { config } = mail;
+        // The URL comes from APP_BASE_URL only (never from request.url / Host / X-Forwarded-Host / Origin).
+        const resetUrl = buildResetUrl(config.appBaseUrl, token);
+        const resend = new Resend(config.apiKey);
+        // Send failures must not change the response (a 500 only for registered
+        // addresses would allow user enumeration), so they are logged and swallowed.
+        try {
+          const { error } = await resend.emails.send({
+            from: config.from,
+            ...(config.replyTo ? { replyTo: config.replyTo } : {}),
+            to: user.email,
+            subject: "NWA - パスワードリセット",
+            html: `
             <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #0B1120; color: #F1F5F9; border-radius: 16px;">
               <img src="https://bennet.global/wp-content/uploads/2026/03/NWA.png" alt="NWA" style="height: 40px; filter: brightness(0) invert(1); margin-bottom: 24px;" />
               <h2 style="margin: 0 0 16px; font-size: 22px; color: #F1F5F9;">パスワードリセット</h2>
@@ -55,7 +70,18 @@ export async function POST(request: Request) {
               </p>
             </div>
           `,
-        });
+          });
+          if (error) {
+            const summary = safeResendErrorSummary(error);
+            console.error(
+              `[forgot-password] Failed to send the reset email: name=${summary.name} status=${summary.statusCode ?? "none"}`
+            );
+          }
+        } catch (sendError) {
+          console.error(
+            `[forgot-password] Failed to send the reset email: threw ${safeErrorSummary(sendError).name}`
+          );
+        }
       }
     }
 
