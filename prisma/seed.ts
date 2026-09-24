@@ -1,7 +1,20 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
+import { assertLocalDatabase } from "../scripts/lib/assert-local-db";
+
 const prisma = new PrismaClient();
+
+// Destructive script: refuse to run against anything but a local database.
+// This must stay right after `new PrismaClient()`: the constructor loads .env into
+// process.env (so DATABASE_URL / DIRECT_URL are visible here) but does not connect.
+// No query may run before this check. Only the error message is printed.
+try {
+  assertLocalDatabase([process.env.DATABASE_URL, process.env.DIRECT_URL]);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : "Refusing to run: local database check failed.");
+  process.exit(1);
+}
 
 async function main() {
   console.log("Seeding database...");
@@ -17,6 +30,7 @@ async function main() {
   await prisma.lesson.deleteMany();
   await prisma.section.deleteMany();
   await prisma.course.deleteMany();
+  await prisma.passwordReset.deleteMany();
   await prisma.user.deleteMany();
 
   // ═══════════════════════════════════════
@@ -25,10 +39,10 @@ async function main() {
   const hashedPassword = await bcrypt.hash("password123", 10);
 
   const student = await prisma.user.create({
-    data: { email: "student@nwa.com", name: "田中 太郎", password: hashedPassword, role: "STUDENT" },
+    data: { email: "student@example.com", name: "田中 太郎", password: hashedPassword, role: "STUDENT" },
   });
   const instructor = await prisma.user.create({
-    data: { email: "instructor@nwa.com", name: "山田 先生", password: hashedPassword, role: "INSTRUCTOR" },
+    data: { email: "instructor@example.com", name: "山田 先生", password: hashedPassword, role: "INSTRUCTOR" },
   });
   console.log("Users created");
 
@@ -373,5 +387,9 @@ async function main() {
 }
 
 main()
-  .catch(console.error)
+  .catch((err: unknown) => {
+    // Print only the message; never dump the error object (may carry connection details).
+    console.error("Seed failed:", err instanceof Error ? err.message : "unknown error");
+    process.exitCode = 1;
+  })
   .finally(() => prisma.$disconnect());
