@@ -10,7 +10,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 
 ## 環境
 - 本番URL: https://nwa-lms.vercel.app
-- DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: <Tecが記入>）。Supabase Auth / Storage は未使用
+- DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: nwa-lms）。Supabase Auth / Storage は未使用
 - 認証: NextAuth v5（Credentials + bcrypt、JWT セッション）。ユーザーは Prisma の User テーブルで管理
 - メール: Resend（パスワードリセット）
 - デプロイ: Vercel（main マージで本番反映）
