@@ -207,3 +207,157 @@ describe("buildResetUrl", () => {
     );
   });
 });
+
+// #9 追加: 境界値の補強
+describe("readMailConfig 境界値（追加）", () => {
+  describe("MAIL_FROM", () => {
+    it("本番想定の表示名付きアドレスがそのまま通る", () => {
+      const from = "Next World Academy <no-reply@mail.bws-bennet.com>";
+      assert.equal(expectOk(readMailConfig(env({ MAIL_FROM: from }))).from, from);
+      const ja = "ネクストワールド　アカデミー 事務局 <no-reply@mail.bws-bennet.com>";
+      assert.equal(expectOk(readMailConfig(env({ MAIL_FROM: ja }))).from, ja);
+    });
+
+    it("\\r 単独・先頭の改行・表示名内の改行も拒否する", () => {
+      for (const from of [
+        "no-reply@mail.example.test\r",
+        "\nno-reply@mail.example.test",
+        "\r\nNext World Academy <no-reply@mail.example.test>",
+        "Next World\r\nAcademy <no-reply@mail.example.test>",
+        "Next World Academy <no-reply@mail.example.test>\r\n",
+      ]) {
+        assert.deepEqual(
+          expectNg(readMailConfig(env({ MAIL_FROM: from }))).invalid,
+          ["MAIL_FROM"],
+          JSON.stringify(from)
+        );
+      }
+    });
+
+    it("山括弧が複数・入れ子・閉じ忘れなら拒否する", () => {
+      for (const from of [
+        "A <a@example.test> <b@example.test>",
+        "A <<a@example.test>>",
+        "A <a@example.test> trailing",
+        "a@example.test>",
+        "<>",
+      ]) {
+        assert.deepEqual(expectNg(readMailConfig(env({ MAIL_FROM: from }))).invalid, ["MAIL_FROM"], from);
+      }
+    });
+  });
+
+  describe("APP_BASE_URL", () => {
+    it("大文字ホスト・:443・末尾スラッシュを origin に正規化する", () => {
+      for (const url of [
+        "HTTPS://LMS.EXAMPLE.TEST",
+        "https://lms.example.test:443",
+        "https://Lms.Example.Test:443/",
+        "  https://lms.example.test/  ",
+      ]) {
+        assert.equal(expectOk(readMailConfig(env({ APP_BASE_URL: url }))).appBaseUrl, BASE, url);
+      }
+    });
+
+    it("標準以外のポートは保持する", () => {
+      assert.equal(
+        expectOk(readMailConfig(env({ APP_BASE_URL: "https://lms.example.test:8443/" }))).appBaseUrl,
+        "https://lms.example.test:8443"
+      );
+    });
+
+    it("非本番の http://localhost:3000 は許可、本番の http は全て拒否", () => {
+      assert.equal(
+        expectOk(readMailConfig(env({ APP_BASE_URL: "http://localhost:3000/" }))).appBaseUrl,
+        "http://localhost:3000"
+      );
+      assert.equal(
+        expectOk(readMailConfig(env({ APP_BASE_URL: "http://LOCALHOST:3000" }))).appBaseUrl,
+        "http://localhost:3000"
+      );
+      for (const url of ["http://localhost:3000", "http://127.0.0.1:3000", "http://lms.example.test"]) {
+        assert.deepEqual(
+          expectNg(readMailConfig(env({ APP_BASE_URL: url, VERCEL_ENV: "production" }))).invalid,
+          ["APP_BASE_URL"],
+          url
+        );
+      }
+    });
+
+    it("localhost に似た別ホストの http は拒否する", () => {
+      for (const url of [
+        "http://localhost.example.test",
+        "http://127.0.0.1.example.test",
+        "http://localhost@lms.example.test",
+        "http://0.0.0.0:3000",
+        "http://127.0.0.2:3000",
+      ]) {
+        assert.deepEqual(expectNg(readMailConfig(env({ APP_BASE_URL: url }))).invalid, ["APP_BASE_URL"], url);
+      }
+    });
+
+    it("http://[::1] は現状拒否（IPv6 ループバックは localhost 扱いしない）", () => {
+      for (const url of ["http://[::1]", "http://[::1]:3000/"]) {
+        assert.deepEqual(expectNg(readMailConfig(env({ APP_BASE_URL: url }))).invalid, ["APP_BASE_URL"], url);
+      }
+      // https なら IPv6 リテラルでも通る（プロトコル条件のみで判定しているため）
+      assert.equal(
+        expectOk(readMailConfig(env({ APP_BASE_URL: "https://[::1]:3000" }))).appBaseUrl,
+        "https://[::1]:3000"
+      );
+    });
+
+    it("javascript: / 認証情報 / パス / クエリ / フラグメント / 改行付きは拒否する", () => {
+      for (const url of [
+        "javascript:alert(1)",
+        "JavaScript://lms.example.test/%0aalert(1)",
+        "https://:pw@lms.example.test",
+        "https://user:@lms.example.test",
+        "https://lms.example.test/reset-password?token=x",
+        "https://lms.example.test/?",
+        "https://lms.example.test/#",
+        "https://lms.example.test/a/",
+        "https://lms.example.test\r\n.evil.example",
+        "https://lms.example.test\n/evil",
+      ]) {
+        assert.deepEqual(
+          expectNg(readMailConfig(env({ APP_BASE_URL: url }))).invalid,
+          ["APP_BASE_URL"],
+          JSON.stringify(url)
+        );
+      }
+    });
+
+    it("前後の改行・空白は trim され、結果の origin に制御文字は残らない（現状仕様）", () => {
+      // MAIL_FROM は前後の改行も拒否するが、APP_BASE_URL は trim 後に判定するため通る。
+      // 出力は URL.origin なのでヘッダーや HTML に改行が混入することはない。
+      for (const url of ["https://lms.example.test/\n", "\r\nhttps://lms.example.test", "https://lms.exa\tmple.test"]) {
+        const base = expectOk(readMailConfig(env({ APP_BASE_URL: url }))).appBaseUrl;
+        assert.equal(base, BASE, JSON.stringify(url));
+        assert.ok(!/[\u0000-\u001f]/.test(base));
+      }
+    });
+
+    it("不正時の結果に値（ホスト名・認証情報）が含まれない", () => {
+      const r = expectNg(
+        readMailConfig(env({ APP_BASE_URL: "https://someone:hunter2@lms.example.test/path?q=1#f" }))
+      );
+      const json = JSON.stringify(r);
+      for (const v of ["someone", "hunter2", "lms.example.test", "path", "q=1"]) {
+        assert.ok(!json.includes(v), v);
+      }
+    });
+  });
+});
+
+describe("buildResetUrl（追加）", () => {
+  it("正規化済みの origin から作った URL は APP_BASE_URL のホストだけを指す", () => {
+    const token = "0f0e0d0c-0b0a-4908-8706-050403020100";
+    const base = expectOk(readMailConfig(env({ APP_BASE_URL: "https://LMS.Example.Test:443/" }))).appBaseUrl;
+    const url = new URL(buildResetUrl(base, token));
+    assert.equal(url.origin, BASE);
+    assert.equal(url.pathname, "/reset-password");
+    assert.equal(url.searchParams.get("token"), token);
+    assert.equal(Array.from(url.searchParams.keys()).length, 1);
+  });
+});
