@@ -9,6 +9,10 @@ import path from "node:path";
 // - `auth` (src/lib/auth.ts, NextAuth) is replaced in the CommonJS module cache
 //   with a stub whose session is controlled by the test, so NextAuth is never loaded.
 // All data are dummies (example.com).
+//
+// LIMITATION: the fake `$transaction` only runs the callback (or awaits the array).
+// It does NOT reproduce rollback on error or isolation levels, so these tests do
+// not guarantee atomicity; they only check which calls are made and the results.
 
 export type Role = "STUDENT" | "INSTRUCTOR";
 
