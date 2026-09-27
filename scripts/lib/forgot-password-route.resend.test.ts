@@ -217,6 +217,7 @@ describe("POST /api/auth/forgot-password (mail config complete)", () => {
       const res = await POST(jsonRequest({ email: USER_EMAIL }));
       const token = fake.createdTokens[0];
 
+      assert.ok(token);
       assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), { success: true });
       assert.equal(sent.length, 0);
