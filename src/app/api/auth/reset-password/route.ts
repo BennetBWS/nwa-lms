@@ -14,29 +14,44 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
-    const record = await prisma.passwordReset.findUnique({
-      where: { token },
-      include: { user: { select: { deactivatedAt: true } } },
-    });
+    const findRecord = () =>
+      prisma.passwordReset.findUnique({
+        where: { token },
+        include: { user: { select: { deactivatedAt: true } } },
+      });
 
     // A deactivated user's token is answered like an unknown token (#7).
-    const check = checkResetToken(record);
+    const check = checkResetToken(await findRecord());
     if (check.valid === false) {
       return NextResponse.json({ error: check.reason }, { status: 400 });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const now = new Date();
 
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { id: check.record.userId },
-        data: { password: hashedPassword },
-      }),
-      prisma.passwordReset.update({
-        where: { token },
+    // The token is consumed with a conditional update, so a token used, expired or
+    // whose user was deactivated after the check above cannot change the password
+    // (e.g. two concurrent requests with the same token: only one succeeds).
+    // Bumping sessionVersion signs out every device (#11).
+    const consumed = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.passwordReset.updateMany({
+        where: { token, used: false, expiresAt: { gt: now }, user: { deactivatedAt: null } },
         data: { used: true },
-      }),
-    ]);
+      });
+      if (count !== 1) return false;
+      await tx.user.update({
+        where: { id: check.record.userId },
+        data: { password: hashedPassword, sessionVersion: { increment: 1 } },
+      });
+      return true;
+    });
+
+    if (!consumed) {
+      // Answer exactly as the check above would now.
+      const recheck = checkResetToken(await findRecord());
+      const reason = recheck.valid === false ? recheck.reason : "Invalid token";
+      return NextResponse.json({ error: reason }, { status: 400 });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
