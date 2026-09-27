@@ -77,20 +77,28 @@ export async function deactivateStudent(
  * Reactivate a student. Idempotent.
  *
  * Only clears `deactivatedAt`. `sessionVersion` and the password are unchanged.
+ * The response is built from the row read back after the update (in the same
+ * transaction), not from assumed values.
  */
 export async function reactivateStudent(
   db: StudentStatusDb,
   id: string
 ): Promise<StudentStatusResult> {
-  const user = await db.user.findUnique({ where: { id }, select: STATUS_SELECT });
-  if (!user || user.role !== "STUDENT") return { kind: "not_found" };
+  return db.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id }, select: STATUS_SELECT });
+    if (!user || user.role !== "STUDENT") return { kind: "not_found" };
 
-  const { count } = await db.user.updateMany({
-    where: { id, role: "STUDENT", deactivatedAt: { not: null } },
-    data: { deactivatedAt: null },
+    // Conditional update: only a deactivated student is changed.
+    const { count } = await tx.user.updateMany({
+      where: { id, role: "STUDENT", deactivatedAt: { not: null } },
+      data: { deactivatedAt: null },
+    });
+
+    const current = await tx.user.findUnique({ where: { id }, select: STATUS_SELECT });
+    if (!current || current.role !== "STUDENT") return { kind: "not_found" };
+
+    return { kind: "ok", student: studentStatusOf(current), changed: count > 0 };
   });
-
-  return { kind: "ok", student: studentStatusOf({ id, deactivatedAt: null }), changed: count > 0 };
 }
 
 export type StudentStatusFilter = "active" | "deactivated" | "all";

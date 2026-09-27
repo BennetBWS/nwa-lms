@@ -24,7 +24,11 @@ function matches(row: Row, where: Where): boolean {
   return true;
 }
 
-function makeFake(rows: Row[], tokens: Token[] = []) {
+function makeFake(
+  rows: Row[],
+  tokens: Token[] = [],
+  hooks: { afterUserUpdateMany?: () => void } = {}
+) {
   const calls: string[] = [];
   let transactions = 0;
   const user = {
@@ -43,6 +47,8 @@ function makeFake(rows: Row[], tokens: Token[] = []) {
         if ("deactivatedAt" in args.data) r.deactivatedAt = args.data.deactivatedAt ?? null;
         if (args.data.sessionVersion) r.sessionVersion += args.data.sessionVersion.increment;
       }
+      // Lets a test change the row between the update and the read-back.
+      hooks.afterUserUpdateMany?.();
       return { count: hit.length };
     },
     // Destructive methods must never be called; they record the call and throw.
@@ -192,7 +198,39 @@ describe("reactivateStudent", () => {
     });
     assert.equal(rows[1].deactivatedAt, null);
     assert.equal(rows[1].sessionVersion, 5);
+    assert.equal(fake.transactions, 1, "runs in one transaction");
+    assert.deepEqual(fake.calls, [
+      "$transaction",
+      "user.findUnique",
+      "user.updateMany",
+      "user.findUnique",
+    ]);
     assert.ok(!fake.calls.some((c) => /delete|passwordReset/i.test(c)));
+  });
+
+  it("answers from the row read back after the update, not from assumed values", async () => {
+    // Simulates the row changing between the update and the read-back
+    // (e.g. a concurrent deactivation): the response must reflect the DB.
+    const fake = makeFake(rows, tokens, {
+      afterUserUpdateMany: () => {
+        rows[1].deactivatedAt = NOW;
+      },
+    });
+    const result = await reactivateStudent(fake.db, "stu_off");
+    assert.deepEqual(result, {
+      kind: "ok",
+      changed: true,
+      student: { id: "stu_off", status: "deactivated", deactivatedAt: NOW.toISOString() },
+    });
+  });
+
+  it("not_found when the user is no longer a student on read-back", async () => {
+    const fake = makeFake(rows, tokens, {
+      afterUserUpdateMany: () => {
+        rows[1].role = "INSTRUCTOR";
+      },
+    });
+    assert.deepEqual(await reactivateStudent(fake.db, "stu_off"), { kind: "not_found" });
   });
 
   it("is idempotent for an active student", async () => {
@@ -219,6 +257,7 @@ describe("reactivateStudent", () => {
     assert.deepEqual(await reactivateStudent(fake.db, "ins_1"), { kind: "not_found" });
     assert.deepEqual(await reactivateStudent(fake.db, "nope"), { kind: "not_found" });
     assert.ok(!fake.calls.includes("user.updateMany"));
+    assert.equal(fake.transactions, 2);
   });
 });
 
