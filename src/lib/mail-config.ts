@@ -18,7 +18,8 @@ export type MailConfigResult =
   | { ok: true; config: MailConfig }
   | { ok: false; missing: MailEnvName[]; invalid: MailEnvName[] };
 
-const LINE_BREAK = /[\r\n]/;
+// C0 control characters (including CR / LF / TAB) and DEL.
+const CONTROL_CHAR = /[\u0000-\u001f\u007f]/;
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
 
 /** Returns the trimmed value, or undefined when unset or blank. */
@@ -29,24 +30,40 @@ function readValue(env: NodeJS.ProcessEnv, name: MailEnvName): string | undefine
   return trimmed === "" ? undefined : trimmed;
 }
 
+/**
+ * True when a (trimmed) value contains a control character. Leading/trailing
+ * line breaks are removed by trim before this check, so only ones that would
+ * remain in the value actually used are rejected.
+ */
+function hasControlChar(value: string): boolean {
+  return CONTROL_CHAR.test(value);
+}
+
+/**
+ * Minimal address check (not a full RFC 5322 validation): exactly one `@`,
+ * non-empty local part and domain, no whitespace and no angle brackets.
+ */
 function isSimpleAddress(addr: string): boolean {
-  return addr.includes("@") && !/[\s<>]/.test(addr);
+  if (/[\s<>]/.test(addr)) return false;
+  const parts = addr.split("@");
+  return parts.length === 2 && parts[0] !== "" && parts[1] !== "";
 }
 
 /**
  * Accepts `addr` or `Display Name <addr>`. The display name may contain
- * spaces and non-ASCII characters. Line breaks are never allowed.
+ * spaces and non-ASCII characters. Control characters are never allowed.
+ * The part inside the angle brackets is not trimmed (`Name < a@b >` is invalid).
  */
-function isValidMailbox(raw: string, value: string): boolean {
-  if (LINE_BREAK.test(raw)) return false;
+function isValidMailbox(value: string): boolean {
+  if (hasControlChar(value)) return false;
   const named = /^([^<>]*)<([^<>]+)>$/.exec(value);
-  if (named) return isSimpleAddress(named[2].trim());
+  if (named) return isSimpleAddress(named[2]);
   return isSimpleAddress(value);
 }
 
 /** Returns the normalized origin, or undefined when the value is not acceptable. */
 function normalizeAppBaseUrl(value: string, env: NodeJS.ProcessEnv): string | undefined {
-  if (LINE_BREAK.test(value) || value.includes("?") || value.includes("#")) return undefined;
+  if (hasControlChar(value) || value.includes("?") || value.includes("#")) return undefined;
 
   let url: URL;
   try {
@@ -78,7 +95,7 @@ export function readMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
 
   const from = readValue(env, "MAIL_FROM");
   if (from === undefined) missing.push("MAIL_FROM");
-  else if (!isValidMailbox(env.MAIL_FROM ?? "", from)) invalid.push("MAIL_FROM");
+  else if (!isValidMailbox(from)) invalid.push("MAIL_FROM");
 
   const baseUrlValue = readValue(env, "APP_BASE_URL");
   let appBaseUrl: string | undefined;
@@ -90,7 +107,7 @@ export function readMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
 
   // Optional: unset is fine, but a set value must be valid.
   const replyTo = readValue(env, "MAIL_REPLY_TO");
-  if (replyTo !== undefined && !isValidMailbox(env.MAIL_REPLY_TO ?? "", replyTo)) {
+  if (replyTo !== undefined && !isValidMailbox(replyTo)) {
     invalid.push("MAIL_REPLY_TO");
   }
 

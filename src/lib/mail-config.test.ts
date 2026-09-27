@@ -85,7 +85,6 @@ describe("readMailConfig", () => {
       for (const from of [
         "no-reply@mail.example.test\r\nBcc: x@example.test",
         "Name\n <no-reply@mail.example.test>",
-        "no-reply@mail.example.test\n",
         "no-reply.example.test",
         "Name <no-reply.example.test>",
         "Name <a@example.test",
@@ -218,13 +217,26 @@ describe("readMailConfig 境界値（追加）", () => {
       assert.equal(expectOk(readMailConfig(env({ MAIL_FROM: ja }))).from, ja);
     });
 
-    it("\\r 単独・先頭の改行・表示名内の改行も拒否する", () => {
+    it("前後の改行は trim され、trim 後の値が送信に使われる", () => {
+      for (const [from, expected] of [
+        ["no-reply@mail.example.test\r", "no-reply@mail.example.test"],
+        ["no-reply@mail.example.test\n", "no-reply@mail.example.test"],
+        ["\nno-reply@mail.example.test", "no-reply@mail.example.test"],
+        ["\r\nNext World Academy <no-reply@mail.example.test>", "Next World Academy <no-reply@mail.example.test>"],
+        ["Next World Academy <no-reply@mail.example.test>\r\n", "Next World Academy <no-reply@mail.example.test>"],
+      ]) {
+        assert.equal(expectOk(readMailConfig(env({ MAIL_FROM: from }))).from, expected, JSON.stringify(from));
+      }
+    });
+
+    it("trim 後に残る制御文字（改行・タブ・NUL・DEL）は拒否する", () => {
       for (const from of [
-        "no-reply@mail.example.test\r",
-        "\nno-reply@mail.example.test",
-        "\r\nNext World Academy <no-reply@mail.example.test>",
         "Next World\r\nAcademy <no-reply@mail.example.test>",
-        "Next World Academy <no-reply@mail.example.test>\r\n",
+        "Next World\rAcademy <no-reply@mail.example.test>",
+        "Next\tWorld Academy <no-reply@mail.example.test>",
+        "Name <no-reply@mail.example.test>\nBcc: x@example.test",
+        "no-reply@mail.exa\u0000mple.test",
+        "Name\u007f <no-reply@mail.example.test>",
       ]) {
         assert.deepEqual(
           expectNg(readMailConfig(env({ MAIL_FROM: from }))).invalid,
@@ -328,13 +340,29 @@ describe("readMailConfig 境界値（追加）", () => {
       }
     });
 
-    it("前後の改行・空白は trim され、結果の origin に制御文字は残らない（現状仕様）", () => {
-      // MAIL_FROM は前後の改行も拒否するが、APP_BASE_URL は trim 後に判定するため通る。
-      // 出力は URL.origin なのでヘッダーや HTML に改行が混入することはない。
-      for (const url of ["https://lms.example.test/\n", "\r\nhttps://lms.example.test", "https://lms.exa\tmple.test"]) {
+    it("前後の改行・空白は trim され、結果の origin に制御文字は残らない", () => {
+      // MAIL_FROM と同じく trim 後の値で判定する。出力は URL.origin。
+      for (const url of ["https://lms.example.test/\n", "\r\nhttps://lms.example.test", "\thttps://lms.example.test\t"]) {
         const base = expectOk(readMailConfig(env({ APP_BASE_URL: url }))).appBaseUrl;
         assert.equal(base, BASE, JSON.stringify(url));
-        assert.ok(!/[\u0000-\u001f]/.test(base));
+        assert.ok(!/[\u0000-\u001f\u007f]/.test(base));
+      }
+    });
+
+    it("trim 後の途中に残る制御文字（タブ・改行・NUL・DEL）は拒否する", () => {
+      // URL パーサーはタブ・改行を黙って除去するため、パース前に拒否する。
+      for (const url of [
+        "https://lms.exa\tmple.test",
+        "https://lms.exa\nmple.test",
+        "https://lms.example.test\r/",
+        "https://lms.example.test\u0000",
+        "https://lms.example.test\u007f",
+      ]) {
+        assert.deepEqual(
+          expectNg(readMailConfig(env({ APP_BASE_URL: url }))).invalid,
+          ["APP_BASE_URL"],
+          JSON.stringify(url)
+        );
       }
     });
 
@@ -359,5 +387,65 @@ describe("buildResetUrl（追加）", () => {
     assert.equal(url.pathname, "/reset-password");
     assert.equal(url.searchParams.get("token"), token);
     assert.equal(Array.from(url.searchParams.keys()).length, 1);
+  });
+});
+
+// #9 レビュー指摘: アドレス部の最低限チェック
+describe("readMailConfig アドレス部の最低限チェック", () => {
+  const invalidMailboxes = [
+    "@",
+    "Name <@>",
+    "a@b@c",
+    "Name <a@b@c>",
+    "@example.test",
+    "no-reply@",
+    "Name <@example.test>",
+    "Name <no-reply@>",
+    "Name < a@example.test >",
+    "Name < a@example.test>",
+    "Name <a@example.test >",
+    "Name <a @example.test>",
+    "Name <a@example.test\u3000>",
+  ];
+
+  it("MAIL_FROM: @ が 1 つでない・ローカル部/ドメインが空・アドレス部に空白があれば拒否する", () => {
+    for (const from of invalidMailboxes) {
+      assert.deepEqual(
+        expectNg(readMailConfig(env({ MAIL_FROM: from }))).invalid,
+        ["MAIL_FROM"],
+        JSON.stringify(from)
+      );
+    }
+  });
+
+  it("MAIL_REPLY_TO: 同じ条件で拒否する", () => {
+    for (const replyTo of invalidMailboxes) {
+      assert.deepEqual(
+        expectNg(readMailConfig(env({ MAIL_REPLY_TO: replyTo }))).invalid,
+        ["MAIL_REPLY_TO"],
+        JSON.stringify(replyTo)
+      );
+    }
+  });
+
+  it("不正時の結果に値が含まれない", () => {
+    const r = expectNg(readMailConfig(env({ MAIL_FROM: "Secret Name <a@b@c>", MAIL_REPLY_TO: "Other < x@y >" })));
+    const json = JSON.stringify(r);
+    for (const v of ["Secret", "a@b@c", "Other", "x@y"]) {
+      assert.ok(!json.includes(v), v);
+    }
+  });
+
+  it("本番想定の値は引き続き通る（表示名付き・全角スペース入り日本語表示名・アドレスのみ）", () => {
+    for (const from of [
+      "Next World Academy <no-reply@mail.bws-bennet.com>",
+      "ネクストワールド　アカデミー <no-reply@mail.bws-bennet.com>",
+      "info@bws-bennet.com",
+    ]) {
+      assert.equal(expectOk(readMailConfig(env({ MAIL_FROM: from }))).from, from, from);
+    }
+    for (const replyTo of ["info@bws-bennet.com", "NWA 事務局 <info@bws-bennet.com>"]) {
+      assert.equal(expectOk(readMailConfig(env({ MAIL_REPLY_TO: replyTo }))).replyTo, replyTo, replyTo);
+    }
   });
 });
