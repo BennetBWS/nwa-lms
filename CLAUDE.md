@@ -35,4 +35,4 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - 本番データを含む SQL / CSV は `supabase/private/`（git 管理外）に置く
 - `.env.example` は値を含まない見本ファイルとして、就業規則の「.env 系ファイルの読み取り・コミット禁止」の例外とする（Tec 承認 2026-09-25）。変数名と説明だけを書き、実値・実在のキーは書かない。`.env` / `.env.local` などは従来どおり読み取り・出力・コミット禁止
 - `src/lib/supabase.ts` は現在未使用
-- `/api/admin/students/[id]/deactivate` は論理削除ではなく物理削除である点に注意
+- 受講生の無効化は論理削除（#7）。`PUT /api/admin/students/[id]/deactivate` は `User.deactivatedAt` を設定し、`sessionVersion` を +1、未使用のパスワードリセットトークンを失効させる（データは削除しない）。`PUT /api/admin/students/[id]/reactivate` は `deactivatedAt` を null に戻す。無効化済みの受講生はログインとパスワードリセットができない。受講生一覧 API は既定で有効な受講生だけを返す（`?status=deactivated|all` で切り替え）
