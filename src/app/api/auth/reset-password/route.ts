@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { checkResetToken } from "@/lib/account-access";
 
 export async function POST(request: Request) {
   try {
@@ -13,16 +14,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
 
-    const record = await prisma.passwordReset.findUnique({ where: { token } });
+    const record = await prisma.passwordReset.findUnique({
+      where: { token },
+      include: { user: { select: { deactivatedAt: true } } },
+    });
 
-    if (!record) {
-      return NextResponse.json({ error: "Invalid token" }, { status: 400 });
-    }
-    if (record.used) {
-      return NextResponse.json({ error: "Token already used" }, { status: 400 });
-    }
-    if (record.expiresAt < new Date()) {
-      return NextResponse.json({ error: "Token expired" }, { status: 400 });
+    // A deactivated user's token is answered like an unknown token (#7).
+    const check = checkResetToken(record);
+    if (check.valid === false) {
+      return NextResponse.json({ error: check.reason }, { status: 400 });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);

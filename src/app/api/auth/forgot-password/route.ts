@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Resend } from "resend";
 import { buildResetUrl, readMailConfig } from "@/lib/mail-config";
 import { safeErrorSummary, safeResendErrorSummary } from "@/lib/safe-error";
+import { isDeactivated } from "@/lib/account-access";
 
 export async function POST(request: Request) {
   try {
@@ -14,7 +15,9 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.findUnique({ where: { email } });
 
-    if (user) {
+    // A deactivated account (#7) is handled exactly like an unknown email:
+    // no token, existing tokens untouched, no mail, no log, same response.
+    if (user && !isDeactivated(user)) {
       // Invalidate any existing unused tokens for this user
       await prisma.passwordReset.updateMany({
         where: { userId: user.id, used: false },

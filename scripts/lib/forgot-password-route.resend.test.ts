@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
+  DEACTIVATED_EMAIL,
+  DEACTIVATED_USER_ID,
+  OTHER_EMAIL,
   USER_EMAIL,
   USER_ID,
   captureConsole,
@@ -99,6 +102,20 @@ describe("POST /api/auth/forgot-password (mail config complete)", () => {
 
     assert.deepEqual(logs, [], "nothing is logged on success");
     assert.deepEqual(findLeaks(logs, secretsFor(token)), []);
+  });
+
+  it("deactivated user (#7): no mail, no token, no log; same response as an unknown email", async () => {
+    const res = await POST(jsonRequest({ email: DEACTIVATED_EMAIL }));
+    const unknown = await POST(jsonRequest({ email: OTHER_EMAIL }));
+
+    assert.equal(res.status, 200);
+    assert.equal(res.status, unknown.status);
+    assert.equal(await res.text(), await unknown.text());
+    assert.equal(sent.length, 0, "no mail is sent");
+    assert.equal(fake.createdTokens.length, 0);
+    assert.ok(!fake.calls.some((c) => c.method.startsWith("passwordReset.")));
+    assert.deepEqual(logs, []);
+    assert.deepEqual(findLeaks(logs, [DEACTIVATED_EMAIL, DEACTIVATED_USER_ID]), []);
   });
 
   it("spoofed request URL / Host / X-Forwarded-Host / Origin do not change the reset URL", async () => {

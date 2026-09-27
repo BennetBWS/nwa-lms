@@ -1,6 +1,8 @@
 import { afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEACTIVATED_EMAIL,
+  DEACTIVATED_USER_ID,
   OTHER_EMAIL,
   USER_EMAIL,
   USER_ID,
@@ -84,6 +86,25 @@ describe("POST /api/auth/forgot-password (mail variables unset)", () => {
     assert.equal(fake.createdTokens.length, 0);
     assert.ok(!fake.calls.some((c) => c.method.startsWith("passwordReset.")));
     assert.deepEqual(logs, [], "nothing is logged for an unknown email");
+  });
+
+  it("deactivated user (#7): same response as an unknown email; no token, no token update, no log", async () => {
+    const res = await POST(jsonRequest({ email: DEACTIVATED_EMAIL }));
+    const unknown = await POST(jsonRequest({ email: OTHER_EMAIL }));
+
+    assert.equal(res.status, 200);
+    assert.equal(res.status, unknown.status);
+    assert.equal(res.headers.get("content-type"), unknown.headers.get("content-type"));
+    assert.equal(await res.text(), await unknown.text());
+
+    assert.equal(fake.createdTokens.length, 0);
+    assert.ok(
+      !fake.calls.some((c) => c.method.startsWith("passwordReset.")),
+      "existing tokens are not touched"
+    );
+    assert.deepEqual(logs, [], "nothing is logged for a deactivated user");
+    assert.deepEqual(findLeaks(logs, [DEACTIVATED_EMAIL, DEACTIVATED_USER_ID]), []);
+    assert.equal(fetchCalls, 0);
   });
 
   it("invalidates only the requesting user's unused tokens", async () => {
