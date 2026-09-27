@@ -9,7 +9,7 @@ export async function GET(
 ) {
   try {
     const session = await auth();
-    if ((session?.user as any)?.role !== "INSTRUCTOR") {
+    if (session?.user?.role !== "INSTRUCTOR") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
