@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 export async function POST(request: Request) {
   try {
     const session = await auth();
-    const userId = (session?.user as any)?.id;
+    const userId = session?.user?.id;
     const userEmail = session?.user?.email;
     if (!userId && !userEmail) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -14,6 +14,11 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { currentPassword, newPassword } = body;
+
+    // Same minimum length as reset-password.
+    if (typeof newPassword !== "string" || newPassword.length < 8) {
+      return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
 
     const user = userId
       ? await prisma.user.findUnique({ where: { id: userId } })
@@ -35,7 +40,8 @@ export async function POST(request: Request) {
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: hashedPassword },
+      // Bumping sessionVersion signs out every device, including this one (#11).
+      data: { password: hashedPassword, sessionVersion: { increment: 1 } },
     });
 
     return NextResponse.json({ success: true });
