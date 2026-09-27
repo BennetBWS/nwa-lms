@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { authConfig } from "./auth.config";
+import { checkCredentials } from "./account-access";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
@@ -20,14 +21,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: { email: credentials.email as string },
         });
 
-        if (!user) return null;
-
-        const isValid = await bcrypt.compare(
+        // Wrong password and deactivated account (#7) both return null (same error).
+        const allowed = await checkCredentials(
+          user,
           credentials.password as string,
-          user.password
+          bcrypt.compare
         );
 
-        if (!isValid) return null;
+        if (!allowed) return null;
 
         return {
           id: user.id,

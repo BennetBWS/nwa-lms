@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { studentStatusOf } from "@/lib/student-status";
 
 export async function GET(
   _request: Request,
@@ -8,20 +9,22 @@ export async function GET(
 ) {
   try {
     const session = await auth();
-    if ((session?.user as any)?.role !== "INSTRUCTOR") {
+    if (session?.user?.role !== "INSTRUCTOR") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const { id } = await params;
 
-    const student = await prisma.user.findUnique({
-      where: { id },
+    // Students only (#7): other roles are answered with 404.
+    const student = await prisma.user.findFirst({
+      where: { id, role: "STUDENT" },
       select: {
         id: true,
         email: true,
         name: true,
         avatar: true,
         createdAt: true,
+        deactivatedAt: true,
       },
     });
 
@@ -80,6 +83,7 @@ export async function GET(
 
     return NextResponse.json({
       ...student,
+      ...studentStatusOf(student),
       courseProgress,
       quizAttempts,
       assignments,

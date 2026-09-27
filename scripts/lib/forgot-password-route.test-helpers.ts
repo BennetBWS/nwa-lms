@@ -10,6 +10,9 @@ import { mock } from "node:test";
 export const USER_EMAIL = "student-12@example.com";
 export const USER_ID = "user_dummy_12";
 export const OTHER_EMAIL = "nobody-12@example.com";
+// #7: a deactivated student (deactivatedAt set).
+export const DEACTIVATED_EMAIL = "deactivated-7@example.com";
+export const DEACTIVATED_USER_ID = "user_dummy_7_deactivated";
 
 export const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
@@ -35,9 +38,18 @@ export function installFakePrisma(): FakePrisma {
       async findUnique(args) {
         fake.calls.push({ method: "user.findUnique", args: [args] });
         if (fake.failWith !== undefined) throw fake.failWith;
-        return args.where.email === USER_EMAIL
-          ? { id: USER_ID, email: USER_EMAIL, name: "Dummy Student" }
-          : null;
+        if (args.where.email === USER_EMAIL) {
+          return { id: USER_ID, email: USER_EMAIL, name: "Dummy Student", deactivatedAt: null };
+        }
+        if (args.where.email === DEACTIVATED_EMAIL) {
+          return {
+            id: DEACTIVATED_USER_ID,
+            email: DEACTIVATED_EMAIL,
+            name: "Dummy Deactivated Student",
+            deactivatedAt: new Date("2026-09-01T00:00:00.000Z"),
+          };
+        }
+        return null;
       },
     },
     passwordReset: {

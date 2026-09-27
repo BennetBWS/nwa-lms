@@ -40,6 +40,8 @@ model User {
   role           Role            @default(STUDENT)
   avatar         String?
   createdAt      DateTime        @default(now())
+  deactivatedAt  DateTime?
+  sessionVersion Int             @default(0)
   progress       Progress[]
   quizAttempts   QuizAttempt[]
   comments       Comment[]
