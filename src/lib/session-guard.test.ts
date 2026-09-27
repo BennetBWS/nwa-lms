@@ -249,3 +249,130 @@ describe("makeJwtCallback: sign-in", () => {
     assert.equal(next?.sv, 7);
   });
 });
+
+// ---- 追加（tester）：境界・型の揺れ・ログ・キャッシュしないこと ----
+
+describe("evaluateToken: 型の揺れと境界（追加）", () => {
+  it("sv が文字列（\"4\"）なら数値 4 と一致していても失効", () => {
+    assert.deepEqual(evaluateToken(token({ sv: "4" as unknown as number }), row()), {
+      valid: false,
+      reason: "version",
+    });
+  });
+
+  it("sv が NaN / null なら失効", () => {
+    for (const sv of [NaN, null]) {
+      assert.deepEqual(evaluateToken(token({ sv: sv as unknown as number }), row()), {
+        valid: false,
+        reason: "version",
+      });
+    }
+  });
+
+  it("無効化の判定は sv・ロール・メールより先（無効化済みなら reason は deactivated）", () => {
+    const r = evaluateToken(
+      token({ sv: 99, role: "INSTRUCTOR" }),
+      row({ deactivatedAt: new Date("2026-09-01T00:00:00.000Z"), email: "x-11@example.com" })
+    );
+    assert.deepEqual(r, { valid: false, reason: "deactivated" });
+  });
+
+  it("メールの大文字小文字違いも別メールとして失効", () => {
+    assert.deepEqual(evaluateToken(token(), row({ email: EMAIL.toUpperCase() })), {
+      valid: false,
+      reason: "email",
+    });
+  });
+
+  it("DB 行に余分な項目（password など）があってもトークンには入らない", () => {
+    const withSecret = { ...row(), password: "$2a$04$dummy-hash-must-not-leak" } as SessionUserRow;
+    const r = evaluateToken(token(), withSecret);
+    assert.equal(r.valid, true);
+    assert.ok(r.valid && !("password" in r.token));
+    assert.ok(!JSON.stringify(r).includes("dummy-hash-must-not-leak"));
+  });
+});
+
+describe("makeJwtCallback: 追加の分岐", () => {
+  it("SESSION_USER_SELECT に password が含まれない", () => {
+    assert.ok(!("password" in SESSION_USER_SELECT));
+  });
+
+  it("baseJwt が null を返したら null、DB は読まない", async () => {
+    const { db, calls } = fakeDb(row());
+    const nullBase = (async () => null) as unknown as JwtCallback;
+    assert.equal(await makeJwtCallback(db, nullBase)(access(token())), null);
+    assert.equal(calls.length, 0);
+  });
+
+  it("id が文字列以外のトークンは null、DB は読まない", async () => {
+    const { db, calls } = fakeDb(row());
+    assert.equal(await makeJwtCallback(db, baseJwt)(access(token({ id: 123 as unknown as string }))), null);
+    assert.equal(calls.length, 0);
+  });
+
+  it("サインイン：sessionVersion が数値以外（文字列・null）なら null", async () => {
+    for (const sessionVersion of ["4", null]) {
+      const { db, calls } = fakeDb(row());
+      const params = {
+        token: { email: EMAIL } as JWT,
+        user: { id: ID, role: "STUDENT", sessionVersion },
+        trigger: "signIn",
+      } as unknown as JwtParams;
+      assert.equal(await makeJwtCallback(db, baseJwt)(params), null, String(sessionVersion));
+      assert.equal(calls.length, 0);
+    }
+  });
+
+  it("サインイン：user.id が空なら null（sv があっても）", async () => {
+    const { db } = fakeDb(row());
+    const params = {
+      token: { email: EMAIL } as JWT,
+      user: { id: "", role: "STUDENT", sessionVersion: 1 },
+      trigger: "signIn",
+    } as unknown as JwtParams;
+    assert.equal(await makeJwtCallback(db, baseJwt)(params), null);
+  });
+
+  it("結果をキャッシュしない：同じトークンでも sessionVersion が変われば次のアクセスで null", async () => {
+    const current = row();
+    const { db, calls } = fakeDb(current);
+    const cb = makeJwtCallback(db, baseJwt);
+    const t = token();
+    assert.ok(await cb(access(t)));
+    current.sessionVersion += 1;
+    assert.equal(await cb(access(t)), null);
+    assert.equal(calls.length, 2);
+  });
+
+  it("DB 例外が Error 以外（メール入りの文字列）でもログは固定文言と型名のみ", async () => {
+    const db = {
+      user: {
+        async findUnique() {
+          throw `connection failed for ${EMAIL} ${ID}`;
+        },
+      },
+    } as unknown as SessionGuardDb;
+    assert.equal(await makeJwtCallback(db, baseJwt)(access(token())), null);
+    assert.deepEqual(logs, ["[auth] session check failed: string"]);
+    assertNoSecretsInLogs();
+  });
+
+  it("Prisma 風の例外（meta・message にメール）でもログにメール・id・コード以外の情報を出さない", async () => {
+    const err = Object.assign(new Error(`Unique constraint failed on ${EMAIL}`), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2025",
+      meta: { target: EMAIL, id: ID },
+    });
+    const { db } = fakeDb(err);
+    assert.equal(await makeJwtCallback(db, baseJwt)(access(token())), null);
+    assert.deepEqual(logs, ["[auth] session check failed: PrismaClientKnownRequestError"]);
+    assertNoSecretsInLogs();
+  });
+
+  it("有効なアクセスでもログを出さない（id・メール・トークンが出ない）", async () => {
+    const { db } = fakeDb(row({ name: "Renamed" }));
+    await makeJwtCallback(db, baseJwt)(access(token()));
+    assert.deepEqual(logs, []);
+  });
+});
