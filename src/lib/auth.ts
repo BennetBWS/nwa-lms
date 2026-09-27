@@ -4,9 +4,15 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { authConfig } from "./auth.config";
 import { checkCredentials } from "./account-access";
+import { makeJwtCallback } from "./session-guard";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
+  callbacks: {
+    ...authConfig.callbacks,
+    // Node only: checks the DB on every access and revokes the session (#11).
+    jwt: makeJwtCallback(prisma, authConfig.callbacks.jwt),
+  },
   providers: [
     Credentials({
       name: "credentials",
@@ -36,6 +42,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: user.name,
           role: user.role,
           image: user.avatar,
+          sessionVersion: user.sessionVersion,
         };
       },
     }),
