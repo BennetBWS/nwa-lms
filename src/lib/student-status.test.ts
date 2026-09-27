@@ -257,3 +257,45 @@ describe("student list status filter", () => {
     assert.deepEqual(studentListWhere("all"), { role: "STUDENT" });
   });
 });
+
+describe("deactivate / reactivate round trips (#7)", () => {
+  it("deactivate -> deactivate -> reactivate -> deactivate: +1 per effective deactivation, first deactivatedAt kept", async () => {
+    const fake = makeFake(rows, tokens);
+    const t1 = new Date("2026-09-27T10:00:00.000Z");
+    const t2 = new Date("2026-09-27T11:00:00.000Z");
+    const t3 = new Date("2026-09-27T12:00:00.000Z");
+
+    const a = await deactivateStudent(fake.db, "stu_active", t1);
+    const b = await deactivateStudent(fake.db, "stu_active", t2);
+    assert.ok(a.kind === "ok" && a.changed && b.kind === "ok" && !b.changed);
+    assert.equal(rows[0].sessionVersion, 4);
+    assert.equal(rows[0].deactivatedAt, t1, "second deactivation keeps the first time");
+
+    const r = await reactivateStudent(fake.db, "stu_active");
+    assert.ok(r.kind === "ok" && r.changed);
+    assert.equal(rows[0].sessionVersion, 4);
+
+    const c = await deactivateStudent(fake.db, "stu_active", t3);
+    assert.deepEqual(c, {
+      kind: "ok",
+      changed: true,
+      student: { id: "stu_active", status: "deactivated", deactivatedAt: t3.toISOString() },
+    });
+    assert.equal(rows[0].sessionVersion, 5);
+    assert.ok(!fake.calls.some((x) => /delete/i.test(x)));
+  });
+
+  it("concurrent deactivations bump sessionVersion only once", async () => {
+    const fake = makeFake(rows, tokens);
+    const results = await Promise.all([
+      deactivateStudent(fake.db, "stu_active", NOW),
+      deactivateStudent(fake.db, "stu_active", new Date(NOW.getTime() + 1)),
+    ]);
+    assert.equal(rows[0].sessionVersion, 4);
+    assert.equal(rows[0].deactivatedAt, NOW);
+    assert.deepEqual(
+      results.map((x) => x.kind === "ok" && x.changed),
+      [true, false]
+    );
+  });
+});
