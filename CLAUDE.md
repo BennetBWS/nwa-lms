@@ -12,13 +12,13 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - 本番URL: https://nwa-lms.vercel.app
 - DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: nwa-lms）。Supabase Auth / Storage は未使用
 - 認証: NextAuth v5（Credentials + bcrypt、JWT セッション）。ユーザーは Prisma の User テーブルで管理
-- メール: Resend（パスワードリセット）
+- メール: Resend（パスワードリセット）。送信元ドメインは `mail.bws-bennet.com`（例: `Next World Academy <no-reply@mail.bws-bennet.com>`）。環境変数 `RESEND_API_KEY` / `MAIL_FROM` / `APP_BASE_URL` / `MAIL_REPLY_TO`（任意）は Vercel の Production にだけ設定する（開発用 DB と本番 DB が同じため。#8）。必須変数が未設定・不正ならメール送信はスキップされ、変数名だけがログに出る（`src/lib/mail-config.ts`）。変数の説明は `.env.example`
 - デプロイ: Vercel（main マージで本番反映）
 
 ## コマンド
 - 開発: `npm run dev`
 - 型チェック: `npm run typecheck`（`prisma/seed.ts` は tsconfig の exclude により対象外）
-- テスト: `npm test`（現状は seed ガードの単体テストと、seed スクリプトをダミー URL で起動する E2E テストのみ。後者は `npm install` と Prisma Client 生成済みが前提。テスト基盤は未整備）
+- テスト: `npm test`（node:test + `tsx --test`。seed ガードの単体テストと seed スクリプトをダミー URL で起動する E2E テスト、forgot-password ルートのテスト（偽 prisma・fetch モックでネットワーク / DB に接続しない）、`src/lib` の単体テスト（mail-config / safe-error / initial-password）。seed の E2E は `npm install` と Prisma Client 生成済みが前提）
 - マイグレーション（ローカル）: `npm run db:migrate`
 - Prisma Client 生成: `npm run db:generate`
 - seed（ローカル DB のみ）: `npm run db:seed`
@@ -33,5 +33,6 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - `prisma/seed.ts` と `scripts/seed-step1.ts` は既存データを削除する破壊的スクリプト。ローカル DB 以外では起動時に拒否される（`scripts/lib/assert-local-db.ts`）。ガードを外さない
 - テスト用アカウントは seed がローカル DB にのみ作成する（ドメインは example.com）。ログイン画面・README・本ファイルに認証情報を書かない
 - 本番データを含む SQL / CSV は `supabase/private/`（git 管理外）に置く
+- `.env.example` は値を含まない見本ファイルとして、就業規則の「.env 系ファイルの読み取り・コミット禁止」の例外とする（Tec 承認 2026-09-25）。変数名と説明だけを書き、実値・実在のキーは書かない。`.env` / `.env.local` などは従来どおり読み取り・出力・コミット禁止
 - `src/lib/supabase.ts` は現在未使用
 - `/api/admin/students/[id]/deactivate` は論理削除ではなく物理削除である点に注意

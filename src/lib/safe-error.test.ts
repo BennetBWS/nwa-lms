@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { safeErrorSummary } from "./safe-error";
+import { safeErrorSummary, safeResendErrorSummary } from "./safe-error";
 
 // Dummy values only. Never put real personal data or secrets here.
 const DUMMY_EMAIL = "taro.dummy@example.com";
@@ -88,5 +88,75 @@ describe("safeErrorSummary", () => {
     assert.deepEqual(safeErrorSummary(undefined), { name: "undefined" });
     assert.deepEqual(safeErrorSummary(null), { name: "object" });
     assert.deepEqual(safeErrorSummary({}), { name: "object" });
+  });
+});
+
+describe("safeResendErrorSummary", () => {
+  const resendError = (overrides: Record<string, unknown> = {}) => ({
+    name: "validation_error",
+    statusCode: 422,
+    message: `Invalid \`to\` field: ${DUMMY_EMAIL} ${DUMMY_SECRET}`,
+    ...overrides,
+  });
+
+  it("returns only name and statusCode for a Resend v6 error object", () => {
+    const summary = safeResendErrorSummary(resendError());
+    assertOnlyKeys(summary, ["name", "statusCode"]);
+    assert.deepEqual(summary, { name: "validation_error", statusCode: 422 });
+  });
+
+  it("never includes the message", () => {
+    const json = JSON.stringify(safeResendErrorSummary(resendError()));
+    assert.ok(!json.includes(DUMMY_EMAIL));
+    assert.ok(!json.includes(DUMMY_SECRET));
+    assert.ok(!json.includes("Invalid"));
+  });
+
+  it("accepts only lowercase/underscore names up to 64 chars; others become unknown", () => {
+    for (const name of ["application_error", "rate_limit_exceeded", "a".repeat(64)]) {
+      assert.equal(safeResendErrorSummary(resendError({ name })).name, name);
+    }
+    for (const name of [
+      DUMMY_EMAIL,
+      "Validation_Error",
+      "validation-error",
+      "validation error",
+      "validation_error\n",
+      "a".repeat(65),
+      "",
+      42,
+      null,
+      undefined,
+    ]) {
+      assert.equal(
+        safeResendErrorSummary(resendError({ name })).name,
+        "unknown",
+        `name ${JSON.stringify(name)} must not be returned`
+      );
+    }
+  });
+
+  it("returns statusCode only for integers in 100..599", () => {
+    for (const statusCode of [100, 200, 422, 500, 599]) {
+      assert.equal(safeResendErrorSummary(resendError({ statusCode })).statusCode, statusCode);
+    }
+    for (const statusCode of [null, undefined, 99, 600, 422.5, "422", NaN, Infinity, -1]) {
+      const summary = safeResendErrorSummary(resendError({ statusCode }));
+      assert.equal(summary.statusCode, undefined, `statusCode ${String(statusCode)} must not be returned`);
+      assertOnlyKeys(summary, ["name"]);
+    }
+  });
+
+  it("does not throw for non-object inputs", () => {
+    for (const input of [undefined, null, DUMMY_EMAIL, 42, Symbol("x")]) {
+      assert.deepEqual(safeResendErrorSummary(input), { name: "unknown" });
+    }
+    assert.deepEqual(safeResendErrorSummary({}), { name: "unknown" });
+  });
+
+  it("an Error instance with a Resend-like name is summarized by the same rules", () => {
+    const err = Object.assign(new Error(DUMMY_EMAIL), { name: "application_error", statusCode: 500 });
+    assert.deepEqual(safeResendErrorSummary(err), { name: "application_error", statusCode: 500 });
+    assert.deepEqual(safeResendErrorSummary(new TypeError(DUMMY_EMAIL)), { name: "unknown" });
   });
 });
