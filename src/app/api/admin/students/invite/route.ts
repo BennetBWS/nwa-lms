@@ -3,6 +3,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { generateInitialPassword } from "@/lib/initial-password";
 import { safeErrorSummary } from "@/lib/safe-error";
+import {
+  INVITE_EXISTS_MESSAGE,
+  inviteConflictFor,
+  isUniqueConstraintError,
+} from "@/lib/student-invite";
 import bcrypt from "bcryptjs";
 
 export async function POST(request: Request) {
@@ -14,6 +19,17 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { email, name } = body;
+
+    // Existing email (#7): 409 instead of a P2002 500. A deactivated student is
+    // pointed to reactivation instead of being re-created.
+    const existing = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, role: true, deactivatedAt: true },
+    });
+    const conflict = inviteConflictFor(existing);
+    if (conflict) {
+      return NextResponse.json(conflict, { status: 409 });
+    }
 
     const password = generateInitialPassword();
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -33,6 +49,13 @@ export async function POST(request: Request) {
       { status: 201, headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
+    // A concurrent invite of the same email can still hit the unique constraint.
+    if (isUniqueConstraintError(error)) {
+      return NextResponse.json(
+        { error: INVITE_EXISTS_MESSAGE, code: "EXISTS" },
+        { status: 409 }
+      );
+    }
     console.error("Failed to invite student", safeErrorSummary(error));
     return NextResponse.json(
       { error: "Internal server error" },
