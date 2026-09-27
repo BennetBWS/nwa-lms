@@ -40,8 +40,12 @@ export type ResetTokenRecord = {
   user: { deactivatedAt: Date | null } | null;
 };
 
-export type ResetTokenCheck =
-  | { valid: true }
+/**
+ * Result of checkResetToken. When valid, `record` is the same (non-null) record
+ * that was passed in, so callers can use its fields (e.g. `userId`) type-safely.
+ */
+export type ResetTokenCheck<T extends ResetTokenRecord = ResetTokenRecord> =
+  | { valid: true; record: T }
   | { valid: false; reason: "Invalid token" | "Token already used" | "Token expired" };
 
 /**
@@ -49,11 +53,14 @@ export type ResetTokenCheck =
  * A token that belongs to a deactivated user is reported as "Invalid token",
  * before the used / expired checks, so it is indistinguishable from an unknown token.
  */
-export function checkResetToken(record: ResetTokenRecord | null, now: Date = new Date()): ResetTokenCheck {
+export function checkResetToken<T extends ResetTokenRecord>(
+  record: T | null,
+  now: Date = new Date()
+): ResetTokenCheck<T> {
   if (!record || !record.user || isDeactivated(record.user)) {
     return { valid: false, reason: "Invalid token" };
   }
   if (record.used) return { valid: false, reason: "Token already used" };
   if (record.expiresAt < now) return { valid: false, reason: "Token expired" };
-  return { valid: true };
+  return { valid: true, record };
 }

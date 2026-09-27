@@ -48,11 +48,13 @@ describe("checkResetToken", () => {
   const future = new Date(now.getTime() + 30 * 60 * 1000);
   const past = new Date(now.getTime() - 1000);
 
-  it("valid token of an active user", () => {
-    assert.deepEqual(
-      checkResetToken({ used: false, expiresAt: future, user: { deactivatedAt: null } }, now),
-      { valid: true }
-    );
+  it("valid token of an active user: returns the same record", () => {
+    const record = { userId: "stu_1", used: false, expiresAt: future, user: { deactivatedAt: null } };
+    const check = checkResetToken(record, now);
+    assert.deepEqual(check, { valid: true, record });
+    assert.ok(check.valid);
+    assert.equal(check.record, record, "the passed record itself (not a copy)");
+    assert.equal(check.record.userId, "stu_1");
   });
 
   it("deactivated user: Invalid token, even when the token is also used or expired", () => {
