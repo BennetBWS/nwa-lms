@@ -17,8 +17,7 @@ export function displayName(name: unknown): string | null {
 function firstGrapheme(text: string): string {
   if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
     const segmenter = new Intl.Segmenter("ja", { granularity: "grapheme" });
-    for (const { segment } of segmenter.segment(text)) return segment;
-    return "";
+    return segmenter.segment(text).containing(0)?.segment ?? "";
   }
   return Array.from(text)[0] ?? "";
 }
