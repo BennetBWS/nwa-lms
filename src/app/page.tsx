@@ -1213,6 +1213,8 @@ const AdminDashboard = () => {
   const [statusDialog, setStatusDialog] = useState(null);
   const [statusSaving, setStatusSaving] = useState(false);
   const [statusError, setStatusError] = useState("");
+  // 確認ダイアログを開いたボタン。閉じたらここにフォーカスを戻す（招待モーダルから開いた場合は null）
+  const statusDialogTriggerRef = useRef(null);
 
   useEffect(() => {
     Promise.all([
@@ -1253,7 +1255,9 @@ const AdminDashboard = () => {
     }
   };
 
-  const openStatusDialog = (action, student) => {
+  // trigger: ダイアログを開いたボタン（閉じたときのフォーカスの戻り先）。なければ null
+  const openStatusDialog = (action, student, trigger = null) => {
+    statusDialogTriggerRef.current = trigger;
     setStatusError("");
     setStatusDialog({ action, id: student.id, name: student.name });
   };
@@ -1262,6 +1266,28 @@ const AdminDashboard = () => {
     if (statusSaving) return;
     setStatusDialog(null);
   };
+
+  // 確認ダイアログが開いている間だけ Esc で閉じる（処理中は closeStatusDialog が閉じない）
+  useEffect(() => {
+    if (!statusDialog) return;
+    const onKeyDown = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeStatusDialog();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [statusDialog, statusSaving]);
+
+  // 確認ダイアログが閉じたら、開いたボタンにフォーカスを戻す。
+  // 成功してタブから行が消えた場合などボタンが画面にないときは何もしない
+  const statusDialogOpen = statusDialog !== null;
+  useEffect(() => {
+    if (statusDialogOpen) return;
+    const trigger = statusDialogTriggerRef.current;
+    statusDialogTriggerRef.current = null;
+    if (trigger && trigger.isConnected) trigger.focus();
+  }, [statusDialogOpen]);
 
   const handleStatusAction = async () => {
     if (!statusDialog) return;
@@ -1496,7 +1522,7 @@ const AdminDashboard = () => {
                     </p>
                     {statusError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{statusError}</div>}
                     <div style={{ display: "flex", gap: 8 }}>
-                      <Button variant="outline" onClick={closeStatusDialog} disabled={statusSaving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                      <Button variant="outline" autoFocus onClick={closeStatusDialog} disabled={statusSaving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
                       <Button onClick={handleStatusAction} disabled={statusSaving} style={{ flex: 1, background: statusDialog.action === "deactivate" ? T.danger : T.accent, borderRadius: 10 }}>
                         {statusSaving ? "処理中..." : statusDialog.action === "deactivate" ? "無効化する" : "再有効化する"}
                       </Button>
@@ -1544,9 +1570,9 @@ const AdminDashboard = () => {
                 </div>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   {deactivated ? (
-                    <Button size="sm" variant="outline" onClick={() => openStatusDialog("reactivate", s)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
+                    <Button size="sm" variant="outline" onClick={e => openStatusDialog("reactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
                   ) : (
-                    <Button size="sm" variant="outline" onClick={() => openStatusDialog("deactivate", s)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
+                    <Button size="sm" variant="outline" onClick={e => openStatusDialog("deactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
                   )}
                 </div>
               </div>
