@@ -12,7 +12,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - 本番URL: https://nwa-lms.vercel.app
 - DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: nwa-lms）。Supabase Auth / Storage は未使用
 - 認証: NextAuth v5（Credentials + bcrypt、JWT セッション）。ユーザーは Prisma の User テーブルで管理
-- セッションの即時失効（#11）: API（`@/lib/auth` の `auth()`）は毎回 jwt コールバックで User を主キーで 1 回読んで照合し、無効化・ロール変更・メール変更・パスワード変更（`User.sessionVersion` とトークンの `sv` の不一致）で即座に失効する（`src/lib/session-guard.ts`。DB エラー時も失効）。パスワード変更・リセットは `sessionVersion` を +1 し、全端末をログアウトさせる。middleware（Edge）は DB を見ない（`auth.config.ts` の jwt）ため古い JWT のまま通るが、データは API から取るので実害はない。`auth.config.ts` に prisma を import しない
+- セッションの即時失効（#11）: API（`@/lib/auth` の `auth()`）は毎回 jwt コールバックで User を主キーで 1 回読んで照合し、無効化・ロール変更・メール変更・パスワード変更（`User.sessionVersion` とトークンの `sv` の不一致）で即座に失効する（`src/lib/session-guard.ts`。DB エラー時も失効）。パスワード変更・リセットは `sessionVersion` を +1 し、全端末をログアウトさせる。middleware（Edge）は DB を見ない（`auth.config.ts` の jwt）ため古い JWT のまま通るが、データは API から取るので実害はない。middleware が古い JWT の Cookie を再発行し続けるため、失効した端末の Cookie は消えずに残ることがある（API は常に 401。ログアウトボタンで抜けられる。#30）。`auth.config.ts` に prisma を import しない
 - メール: Resend（パスワードリセット）。送信元ドメインは `mail.bws-bennet.com`（例: `Next World Academy <no-reply@mail.bws-bennet.com>`）。環境変数 `RESEND_API_KEY` / `MAIL_FROM` / `APP_BASE_URL` / `MAIL_REPLY_TO`（任意）は Vercel の Production にだけ設定する（開発用 DB と本番 DB が同じため。#8）。必須変数が未設定・不正ならメール送信はスキップされ、変数名だけがログに出る（`src/lib/mail-config.ts`）。変数の説明は `.env.example`
 - デプロイ: Vercel（main マージで本番反映）
 
