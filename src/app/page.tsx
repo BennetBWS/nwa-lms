@@ -2069,9 +2069,15 @@ const SettingsPage = () => {
       // Signs out once (falls back to clearing the cookie and going to /login if that fails)
       await handleSessionExpired();
     } catch {
-      // The request, res.json() or the move to /login failed
+      // leaving: the password was changed but the move to /login failed.
+      // Otherwise the request or res.json() failed, so we cannot tell whether it changed.
+      setMsg({
+        type: "error",
+        text: leaving
+          ? "パスワードは変更されました。ログイン画面に移動できなかったため、ページを再読み込みしてください"
+          : "パスワードを変更できたか確認できませんでした。ページを再読み込みして、新しいパスワードでログインできるか確認してください",
+      });
       leaving = false;
-      setMsg({ type: "error", text: "ログイン画面に移動できませんでした。ページを再読み込みしてください" });
     } finally {
       if (!leaving) setSaving(false);
     }
