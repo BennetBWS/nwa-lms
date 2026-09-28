@@ -52,6 +52,8 @@ export type ResetTokenCheck<T extends ResetTokenRecord = ResetTokenRecord> =
  * Validate a password reset token record (with its user).
  * A token that belongs to a deactivated user is reported as "Invalid token",
  * before the used / expired checks, so it is indistinguishable from an unknown token.
+ * A token whose `expiresAt` is at or before `now` is expired (the same boundary as
+ * the `expiresAt: { gt: now }` condition used when the token is consumed).
  */
 export function checkResetToken<T extends ResetTokenRecord>(
   record: T | null,
@@ -61,6 +63,6 @@ export function checkResetToken<T extends ResetTokenRecord>(
     return { valid: false, reason: "Invalid token" };
   }
   if (record.used) return { valid: false, reason: "Token already used" };
-  if (record.expiresAt < now) return { valid: false, reason: "Token expired" };
+  if (record.expiresAt.getTime() <= now.getTime()) return { valid: false, reason: "Token expired" };
   return { valid: true, record };
 }

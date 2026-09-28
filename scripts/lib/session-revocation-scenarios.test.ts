@@ -352,17 +352,13 @@ describe("reset-password の期限境界（Date を固定）", () => {
     assert.ok(!db.calls.some((c) => c.method === "$transaction"));
   });
 
-  it("期限ちょうど（expiresAt === now）：400 でパスワード・sessionVersion・トークンとも不変", async () => {
-    // 事前判定（expiresAt < now で期限切れ）は通過し、条件付き更新（expiresAt > now）で弾かれる。
-    // 応答文言は現状 "Invalid token"（読み直し後の判定も有効扱いになり、フォールバックに落ちる）。
-    // 安全性（変更されないこと）のみを固定し、文言は報告事項とする。
+  it("期限ちょうど（expiresAt === now）：400 Token expired、パスワード・sessionVersion・トークンとも不変", async () => {
+    // 事前判定（expiresAt <= now で期限切れ）と条件付き更新（expiresAt > now）の境界はそろっている。
     const { res, body, snapshot } = await run(NOW);
     assert.equal(res.status, 400);
-    assert.ok(
-      body.error === "Token expired" || body.error === "Invalid token",
-      `unexpected error: ${JSON.stringify(body)}`
-    );
+    assert.deepEqual(body, { error: "Token expired" });
     assert.deepEqual(user("stu_active"), snapshot);
     assert.equal(db.resets[0].used, false);
+    assert.ok(!db.calls.some((c) => c.method === "$transaction"));
   });
 });

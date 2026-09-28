@@ -20,14 +20,17 @@ export async function POST(request: Request) {
         include: { user: { select: { deactivatedAt: true } } },
       });
 
+    // One `now` for the check and the conditional update below, so both use the
+    // same expiry boundary (expiresAt <= now is expired).
+    const now = new Date();
+
     // A deactivated user's token is answered like an unknown token (#7).
-    const check = checkResetToken(await findRecord());
+    const check = checkResetToken(await findRecord(), now);
     if (check.valid === false) {
       return NextResponse.json({ error: check.reason }, { status: 400 });
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const now = new Date();
 
     // The token is consumed with a conditional update, so a token used, expired or
     // whose user was deactivated after the check above cannot change the password
@@ -48,7 +51,7 @@ export async function POST(request: Request) {
 
     if (!consumed) {
       // Answer exactly as the check above would now.
-      const recheck = checkResetToken(await findRecord());
+      const recheck = checkResetToken(await findRecord(), now);
       const reason = recheck.valid === false ? recheck.reason : "Invalid token";
       return NextResponse.json({ error: reason }, { status: 400 });
     }
