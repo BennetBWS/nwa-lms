@@ -1290,6 +1290,8 @@ const AdminDashboard = () => {
   }, [statusDialogOpen]);
 
   const handleStatusAction = async () => {
+    // 処理中の二重送信を防ぐ（ボタンの disabled が反映される前の連打に備える）
+    if (statusSaving) return;
     if (!statusDialog) return;
     const { action, id } = statusDialog;
     setStatusSaving(true);
