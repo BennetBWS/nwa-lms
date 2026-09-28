@@ -30,6 +30,7 @@ import {
   confirmMessage,
   countStudentsByTab,
   formatDeactivatedDate,
+  interpretStatusActionResponse,
   inviteErrorView,
   statusActionErrorMessage,
   studentsForTab,
@@ -1274,19 +1275,17 @@ const AdminDashboard = () => {
         setStatusError(statusActionErrorMessage(null));
         return;
       }
-      if (!res.ok) {
-        setStatusError(statusActionErrorMessage(res.status));
+      // セッション切れで /login にリダイレクトされると、ログイン画面の HTML を 200 で受け取る。
+      // 成功は「ok・リダイレクトなし・本文が対象の受講生の状態」のときだけ（判定は interpretStatusActionResponse）
+      const body = await res.json().catch(() => null);
+      const outcome = interpretStatusActionResponse({ ok: res.ok, redirected: res.redirected, status: res.status, body, targetId: id });
+      if (outcome.kind !== "success") {
+        setStatusError(outcome.message);
         return;
       }
       // レスポンスの状態をまず反映し、そのあと一覧を取り直す
-      try {
-        const updated = await res.json();
-        if (updated && updated.id === id) {
-          setAdminData(prev => prev ? { ...prev, students: prev.students.map(s => s.id === id ? { ...s, status: updated.status, deactivatedAt: updated.deactivatedAt } : s) } : prev);
-        }
-      } catch {
-        // 本文が読めなくても再取得で反映される
-      }
+      const { updated } = outcome;
+      setAdminData(prev => prev ? { ...prev, students: prev.students.map(s => s.id === id ? { ...s, status: updated.status, deactivatedAt: updated.deactivatedAt } : s) } : prev);
       await reloadStudents();
       setStatusDialog(null);
     } finally {

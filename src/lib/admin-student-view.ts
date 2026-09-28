@@ -105,6 +105,49 @@ export function statusActionErrorMessage(httpStatus: number | null): string {
   return "サーバーでエラーが発生しました。時間をおいて、もう一度お試しください。";
 }
 
+/**
+ * Shown when the session has expired: the middleware redirected the request
+ * to /login (fetch follows it and gets the login page), or the API returned 401.
+ */
+export const SESSION_EXPIRED_MESSAGE = "ログインの有効期限が切れました。再度ログインしてください。";
+
+/** The student state returned by PUT /api/admin/students/[id]/(deactivate|reactivate). */
+export type StudentStatusUpdate = Pick<AdminStudentRow, "id" | "status" | "deactivatedAt">;
+
+export type StatusActionOutcome =
+  | { kind: "success"; updated: StudentStatusUpdate }
+  | { kind: "error"; message: string };
+
+/**
+ * Decides whether a deactivate / reactivate response is a success.
+ * Success only when the response is ok, was not redirected, and the body
+ * (parsed JSON, null when it could not be parsed) is the state of `targetId`.
+ * - redirected or 401: SESSION_EXPIRED_MESSAGE
+ * - anything else: statusActionErrorMessage(status)
+ */
+export function interpretStatusActionResponse(input: {
+  ok: boolean;
+  redirected: boolean;
+  status: number;
+  body: unknown;
+  targetId: string;
+}): StatusActionOutcome {
+  const { ok, redirected, status, body, targetId } = input;
+  if (redirected || status === 401) return { kind: "error", message: SESSION_EXPIRED_MESSAGE };
+  if (ok && typeof body === "object" && body !== null) {
+    const { id, status: accountStatus, deactivatedAt } = body as {
+      id?: unknown;
+      status?: unknown;
+      deactivatedAt?: unknown;
+    };
+    const at = deactivatedAt === null ? null : typeof deactivatedAt === "string" ? deactivatedAt : undefined;
+    if (id === targetId && (accountStatus === "active" || accountStatus === "deactivated") && at !== undefined) {
+      return { kind: "success", updated: { id: targetId, status: accountStatus, deactivatedAt: at } };
+    }
+  }
+  return { kind: "error", message: statusActionErrorMessage(status) };
+}
+
 export const INVITE_DEACTIVATED_UI_MESSAGE =
   "このメールアドレスは無効化済みの受講生です。再有効化してください。";
 

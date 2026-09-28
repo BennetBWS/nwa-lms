@@ -4,10 +4,12 @@ import {
   DEFAULT_STUDENT_TAB,
   INVITE_BAD_REQUEST_MESSAGE,
   INVITE_DEACTIVATED_UI_MESSAGE,
+  SESSION_EXPIRED_MESSAGE,
   STUDENT_TABS,
   confirmMessage,
   countStudentsByTab,
   formatDeactivatedDate,
+  interpretStatusActionResponse,
   inviteErrorView,
   statusActionErrorMessage,
   studentsForTab,
@@ -189,6 +191,76 @@ describe("statusActionErrorMessage（境界）", () => {
       assert.doesNotMatch(m, NO_ASCII_WORDS, `status=${code}`);
       assert.ok(!m.includes("Forbidden") && !m.includes("not found") && !m.includes("Internal"));
     }
+  });
+});
+
+describe("interpretStatusActionResponse（無効化・再有効化の応答判定）", () => {
+  const targetId = "stu_dummy_10";
+  const okBody = { id: targetId, status: "deactivated", deactivatedAt: "2026-09-01T00:00:00.000Z" };
+  const base = { ok: true, redirected: false, status: 200, body: okBody as unknown, targetId };
+
+  it("ok・リダイレクトなし・本文が対象の状態なら成功で、状態を返す", () => {
+    assert.deepEqual(interpretStatusActionResponse(base), { kind: "success", updated: okBody });
+    const on = { id: targetId, status: "active", deactivatedAt: null };
+    assert.deepEqual(interpretStatusActionResponse({ ...base, body: on }), { kind: "success", updated: on });
+  });
+
+  it("余分なフィールドは返さない", () => {
+    const outcome = interpretStatusActionResponse({ ...base, body: { ...okBody, email: "dummy@example.com" } });
+    assert.equal(outcome.kind, "success");
+    if (outcome.kind === "success") assert.deepEqual(Object.keys(outcome.updated).sort(), ["deactivatedAt", "id", "status"]);
+  });
+
+  it("/login へのリダイレクト（ログイン画面を 200 で受け取る）は成功にせず、再ログインの文言", () => {
+    for (const body of [null, "<html>", okBody]) {
+      assert.deepEqual(
+        interpretStatusActionResponse({ ...base, redirected: true, body }),
+        { kind: "error", message: SESSION_EXPIRED_MESSAGE },
+        JSON.stringify(body)
+      );
+    }
+  });
+
+  it("401 は再ログインの文言", () => {
+    assert.deepEqual(interpretStatusActionResponse({ ...base, ok: false, status: 401, body: { error: "Unauthorized" } }), {
+      kind: "error",
+      message: SESSION_EXPIRED_MESSAGE,
+    });
+  });
+
+  it("ok でない応答は statusActionErrorMessage(status)", () => {
+    for (const status of [400, 403, 404, 409, 500, 502]) {
+      assert.deepEqual(
+        interpretStatusActionResponse({ ...base, ok: false, status, body: { error: "English text" } }),
+        { kind: "error", message: statusActionErrorMessage(status) },
+        `status=${status}`
+      );
+    }
+  });
+
+  it("ok でも本文が読めない・形が違う・別の受講生なら成功にしない", () => {
+    for (const body of [
+      null,
+      "<html>",
+      [],
+      {},
+      { ...okBody, id: "stu_dummy_other" },
+      { ...okBody, id: undefined },
+      { ...okBody, status: "unknown" },
+      { ...okBody, status: undefined },
+      { ...okBody, deactivatedAt: 0 },
+      { id: targetId, status: "active" },
+    ]) {
+      assert.deepEqual(
+        interpretStatusActionResponse({ ...base, body }),
+        { kind: "error", message: statusActionErrorMessage(200) },
+        JSON.stringify(body)
+      );
+    }
+  });
+
+  it("再ログインの文言は日本語", () => {
+    assert.doesNotMatch(SESSION_EXPIRED_MESSAGE, NO_ASCII_WORDS);
   });
 });
 
