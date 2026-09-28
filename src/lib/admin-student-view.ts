@@ -99,24 +99,39 @@ export function statusActionErrorMessage(httpStatus: number | null): string {
 export const INVITE_DEACTIVATED_UI_MESSAGE =
   "このメールアドレスは無効化済みの受講生です。再有効化してください。";
 
+export const INVITE_BAD_REQUEST_MESSAGE = "入力内容を確認してください。名前とメールアドレスを正しく入力して、もう一度お試しください。";
+
+export type InviteErrorView = { message: string; deactivatedUserId: string | null };
+
 /**
- * Error shown in the invite modal, or null when the response is not an error.
+ * Error shown in the invite modal, or null when the request succeeded (2xx).
+ * `httpStatus` is null for a network error (fetch threw). `body` is the parsed
+ * JSON (null when it could not be parsed).
  * - 409 DEACTIVATED: fixed message, plus the student id for the reactivate button.
- * - anything else with `error`: the API text as is (e.g. EXISTS).
+ * - 409 EXISTS: the API text as is (Japanese, see student-invite.ts).
+ * - anything else: a fixed Japanese message chosen by the status. The server's
+ *   (English) error text is never shown.
  */
-export function inviteErrorView(body: unknown): { message: string; deactivatedUserId: string | null } | null {
-  if (typeof body !== "object" || body === null) return null;
-  const { error, code, userId } = body as { error?: unknown; code?: unknown; userId?: unknown };
-  if (code === "DEACTIVATED") {
-    return {
-      message: INVITE_DEACTIVATED_UI_MESSAGE,
-      deactivatedUserId: typeof userId === "string" && userId !== "" ? userId : null,
-    };
+export function inviteErrorView(httpStatus: number | null, body: unknown): InviteErrorView | null {
+  if (httpStatus !== null && httpStatus >= 200 && httpStatus < 300) return null;
+  const fixed = (message: string): InviteErrorView => ({ message, deactivatedUserId: null });
+  if (httpStatus === 409 && typeof body === "object" && body !== null) {
+    const { error, code, userId } = body as { error?: unknown; code?: unknown; userId?: unknown };
+    if (code === "DEACTIVATED") {
+      return {
+        message: INVITE_DEACTIVATED_UI_MESSAGE,
+        deactivatedUserId: typeof userId === "string" && userId !== "" ? userId : null,
+      };
+    }
+    if (code === "EXISTS" && typeof error === "string" && error !== "") {
+      return fixed(error);
+    }
   }
-  if (typeof error === "string" && error !== "") {
-    return { message: error, deactivatedUserId: null };
-  }
-  return null;
+  if (httpStatus === 400) return fixed(INVITE_BAD_REQUEST_MESSAGE);
+  // Network error and 403 share the wording of the deactivate / reactivate actions.
+  if (httpStatus === null || httpStatus === 403) return fixed(statusActionErrorMessage(httpStatus));
+  // 404 ("student not found" does not fit an invite), 409 without a known code, 5xx, unknown
+  return fixed(statusActionErrorMessage(500));
 }
 
 export function confirmMessage(action: StatusAction, name: string): string {

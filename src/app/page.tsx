@@ -1203,7 +1203,8 @@ const AdminDashboard = () => {
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
-  const [inviteResult, setInviteResult] = useState(null);
+  // { httpStatus: number | null（通信エラーは null）, body } | null（未送信）
+  const [inviteResponse, setInviteResponse] = useState(null);
   const [inviting, setInviting] = useState(false);
   // #7: 一覧は ?status=all で取得し、タブで絞り込む
   const [studentTab, setStudentTab] = useState(DEFAULT_STUDENT_TAB);
@@ -1234,12 +1235,17 @@ const AdminDashboard = () => {
   const handleInvite = async () => {
     setInviting(true);
     try {
-      const res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
-      const data = await res.json();
-      setInviteResult(data);
-      if (!data.error) await reloadStudents();
-    } catch {
-      setInviteResult({ error: "通信エラーが発生しました。接続を確認して、もう一度お試しください。" });
+      let res;
+      try {
+        res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
+      } catch {
+        setInviteResponse({ httpStatus: null, body: null });
+        return;
+      }
+      // 本文が JSON でない（ゲートウェイのエラーページなど）ときは body を null とし、ステータスだけで文言を決める
+      const data = await res.json().catch(() => null);
+      setInviteResponse({ httpStatus: res.status, body: data });
+      if (res.ok) await reloadStudents();
     } finally {
       setInviting(false);
     }
@@ -1301,7 +1307,9 @@ const AdminDashboard = () => {
   const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
   const studentCounts = countStudentsByTab(students);
   const visibleStudents = studentsForTab(students, studentTab);
-  const inviteError = inviteErrorView(inviteResult);
+  const inviteError = inviteResponse ? inviteErrorView(inviteResponse.httpStatus, inviteResponse.body) : null;
+  // 成功（2xx）のときだけ本文（初期パスワード入り）を表示に使う
+  const inviteResult = inviteResponse && !inviteError ? inviteResponse.body : null;
   const inviteDeactivatedStudent = inviteError?.deactivatedUserId ? students.find(s => s.id === inviteError.deactivatedUserId && s.status === "deactivated") : null;
   const adminFont = "var(--font-sora), 'Sora', sans-serif";
 
@@ -1426,7 +1434,7 @@ const AdminDashboard = () => {
                   <Search size={14} style={{ color: T.textMuted }} />
                   <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
                 </div>
-                <Button size="sm" onClick={() => { setInviteModal(true); setInviteResult(null); setInviteEmail(""); setInviteName(""); }} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
+                <Button size="sm" onClick={() => { setInviteModal(true); setInviteResponse(null); setInviteEmail(""); setInviteName(""); }} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
                   <Plus size={14} /> 招待
                 </Button>
               </div>

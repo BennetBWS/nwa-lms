@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  INVITE_BAD_REQUEST_MESSAGE,
   INVITE_DEACTIVATED_UI_MESSAGE,
   confirmMessage,
   countStudentsByTab,
@@ -88,31 +89,40 @@ describe("statusActionErrorMessage", () => {
 });
 
 describe("inviteErrorView", () => {
-  it("DEACTIVATED: fixed message and the student id", () => {
+  it("409 DEACTIVATED: fixed message and the student id", () => {
     assert.deepEqual(
-      inviteErrorView({ error: "server text", code: "DEACTIVATED", userId: "u1" }),
+      inviteErrorView(409, { error: "server text", code: "DEACTIVATED", userId: "u1" }),
       { message: INVITE_DEACTIVATED_UI_MESSAGE, deactivatedUserId: "u1" }
     );
   });
 
-  it("DEACTIVATED without a userId: message only", () => {
-    assert.deepEqual(inviteErrorView({ error: "x", code: "DEACTIVATED" }), {
+  it("409 DEACTIVATED without a userId: message only", () => {
+    assert.deepEqual(inviteErrorView(409, { error: "x", code: "DEACTIVATED" }), {
       message: INVITE_DEACTIVATED_UI_MESSAGE,
       deactivatedUserId: null,
     });
   });
 
-  it("EXISTS and other errors: the API text as is", () => {
-    assert.deepEqual(inviteErrorView({ error: "このメールアドレスは既に登録されています", code: "EXISTS" }), {
+  it("409 EXISTS: the API text as is", () => {
+    assert.deepEqual(inviteErrorView(409, { error: "このメールアドレスは既に登録されています", code: "EXISTS" }), {
       message: "このメールアドレスは既に登録されています",
       deactivatedUserId: null,
     });
   });
 
-  it("success bodies and non-objects are not errors", () => {
-    assert.equal(inviteErrorView({ id: "u1", email: "a@example.com", name: "a", password: "p" }), null);
-    assert.equal(inviteErrorView(null), null);
-    assert.equal(inviteErrorView("error"), null);
+  it("other statuses: fixed Japanese messages, never the server text", () => {
+    assert.deepEqual(inviteErrorView(400, { error: "Bad Request" }), {
+      message: INVITE_BAD_REQUEST_MESSAGE,
+      deactivatedUserId: null,
+    });
+    assert.equal(inviteErrorView(403, { error: "Forbidden" })?.message, statusActionErrorMessage(403));
+    assert.equal(inviteErrorView(500, { error: "Internal server error" })?.message, statusActionErrorMessage(500));
+    assert.equal(inviteErrorView(null, null)?.message, statusActionErrorMessage(null));
+  });
+
+  it("2xx is not an error", () => {
+    assert.equal(inviteErrorView(201, { id: "u1", email: "a@example.com", name: "a", password: "p" }), null);
+    assert.equal(inviteErrorView(200, null), null);
   });
 });
 

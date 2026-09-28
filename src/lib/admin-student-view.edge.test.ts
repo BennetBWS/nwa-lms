@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_STUDENT_TAB,
+  INVITE_BAD_REQUEST_MESSAGE,
   INVITE_DEACTIVATED_UI_MESSAGE,
   STUDENT_TABS,
   confirmMessage,
@@ -163,7 +164,7 @@ describe("statusActionErrorMessage（境界）", () => {
 describe("inviteErrorView（境界・API との対応）", () => {
   it("API の 409 DEACTIVATED 本文 → 固定文言と userId（サーバー文言や id は文言に入らない）", () => {
     const body = inviteConflictFor({ id: "stu_dummy_1", role: "STUDENT", deactivatedAt: new Date("2026-09-01T00:00:00Z") });
-    const view = inviteErrorView(JSON.parse(JSON.stringify(body)));
+    const view = inviteErrorView(409, JSON.parse(JSON.stringify(body)));
     assert.deepEqual(view, { message: INVITE_DEACTIVATED_UI_MESSAGE, deactivatedUserId: "stu_dummy_1" });
     assert.ok(!view!.message.includes("stu_dummy_1"));
     assert.ok(!view!.message.includes(INVITE_DEACTIVATED_MESSAGE));
@@ -176,41 +177,93 @@ describe("inviteErrorView（境界・API との対応）", () => {
       { id: "ins_dummy_1", role: "INSTRUCTOR", deactivatedAt: null },
       { id: "ins_dummy_2", role: "INSTRUCTOR", deactivatedAt: new Date("2026-09-01T00:00:00Z") },
     ]) {
-      const view = inviteErrorView(JSON.parse(JSON.stringify(inviteConflictFor(existing))));
+      const view = inviteErrorView(409, JSON.parse(JSON.stringify(inviteConflictFor(existing))));
       assert.deepEqual(view, { message: INVITE_EXISTS_MESSAGE, deactivatedUserId: null }, existing.role);
       assert.ok(!view!.message.includes(existing.id));
     }
   });
 
-  it("DEACTIVATED で userId が文字列でない・空なら再有効化の対象なし", () => {
+  it("409 DEACTIVATED で userId が文字列でない・空なら再有効化の対象なし", () => {
     for (const userId of [123, "", null, undefined, { id: "x" }]) {
-      assert.deepEqual(inviteErrorView({ code: "DEACTIVATED", userId }), {
+      assert.deepEqual(inviteErrorView(409, { code: "DEACTIVATED", userId }), {
         message: INVITE_DEACTIVATED_UI_MESSAGE,
         deactivatedUserId: null,
       });
     }
   });
 
-  it("error が空文字・文字列以外ならエラー扱いしない", () => {
-    assert.equal(inviteErrorView({ error: "" }), null);
-    assert.equal(inviteErrorView({ error: 500 }), null);
-    assert.equal(inviteErrorView({ error: { message: "x" } }), null);
-    assert.equal(inviteErrorView({}), null);
-    assert.equal(inviteErrorView([]), null);
-    assert.equal(inviteErrorView(undefined), null);
-    assert.equal(inviteErrorView(409), null);
+  it("API の実際の 400 / 403 / 500 本文（英語）は出さず、日本語の固定文言にする", () => {
+    const cases: Array<[number, unknown, string]> = [
+      [400, { error: "Bad Request" }, INVITE_BAD_REQUEST_MESSAGE],
+      [403, { error: "Forbidden" }, statusActionErrorMessage(403)],
+      [500, { error: "Internal server error" }, statusActionErrorMessage(500)],
+    ];
+    for (const [code, body, expected] of cases) {
+      const view = inviteErrorView(code, body);
+      assert.deepEqual(view, { message: expected, deactivatedUserId: null }, `status=${code}`);
+      assert.doesNotMatch(view!.message, NO_ASCII_WORDS, `status=${code}`);
+    }
   });
 
-  it("成功時の本文（パスワード入り）はエラーにならない", () => {
+  it("通信エラー（null）は通信エラーの文言", () => {
+    assert.deepEqual(inviteErrorView(null, null), {
+      message: statusActionErrorMessage(null),
+      deactivatedUserId: null,
+    });
+  });
+
+  it("未知のステータス・本文が読めない・404 はサーバーエラーの固定文言（英語の本文も出さない）", () => {
+    for (const code of [401, 404, 418, 502, 503, 504, 0, 302]) {
+      for (const body of [null, { error: "Gateway Timeout" }, "<html>", {}]) {
+        const view = inviteErrorView(code, body);
+        assert.deepEqual(view, { message: statusActionErrorMessage(500), deactivatedUserId: null }, `status=${code}`);
+      }
+    }
+  });
+
+  it("409 でも code が DEACTIVATED / EXISTS 以外、または EXISTS の error が空・文字列以外なら固定文言", () => {
+    for (const body of [
+      { error: "Conflict" },
+      { error: "Conflict", code: "OTHER" },
+      { code: "EXISTS" },
+      { code: "EXISTS", error: "" },
+      { code: "EXISTS", error: 409 },
+      null,
+      "Conflict",
+      [],
+    ]) {
+      assert.deepEqual(
+        inviteErrorView(409, body),
+        { message: statusActionErrorMessage(500), deactivatedUserId: null },
+        JSON.stringify(body)
+      );
+    }
+  });
+
+  it("409 以外で code が DEACTIVATED / EXISTS でも API 文言や再有効化は出さない", () => {
+    assert.deepEqual(inviteErrorView(500, { error: "Internal server error", code: "EXISTS" }), {
+      message: statusActionErrorMessage(500),
+      deactivatedUserId: null,
+    });
+    assert.deepEqual(inviteErrorView(400, { error: "x", code: "DEACTIVATED", userId: "stu_dummy_9" }), {
+      message: INVITE_BAD_REQUEST_MESSAGE,
+      deactivatedUserId: null,
+    });
+  });
+
+  it("2xx はエラーにならない（成功時の本文はパスワード入り、本文が読めなくても）", () => {
     assert.equal(
-      inviteErrorView({ id: "stu_dummy_3", email: "dummy@example.com", name: "だみー", password: "dummy-pass" }),
+      inviteErrorView(201, { id: "stu_dummy_3", email: "dummy@example.com", name: "だみー", password: "dummy-pass" }),
       null
     );
+    assert.equal(inviteErrorView(200, null), null);
+    assert.equal(inviteErrorView(201, { error: "ignored" }), null);
   });
 
-  it("画面側の通信エラー文言はそのまま表示される", () => {
-    const m = "通信エラーが発生しました。接続を確認して、もう一度お試しください。";
-    assert.deepEqual(inviteErrorView({ error: m }), { message: m, deactivatedUserId: null });
+  it("固定文言はすべて日本語", () => {
+    for (const code of [null, 400, 403, 404, 409, 500]) {
+      assert.doesNotMatch(inviteErrorView(code, { error: "English text" })!.message, NO_ASCII_WORDS, `status=${code}`);
+    }
   });
 });
 
