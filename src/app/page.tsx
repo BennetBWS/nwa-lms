@@ -35,6 +35,12 @@ import {
   statusActionErrorMessage,
   studentsForTab,
 } from "@/lib/admin-student-view";
+import {
+  classifyAuthFailure,
+  createSessionExpiryHandler,
+  fetchSessionView,
+  makeAuthFetch,
+} from "@/lib/client-session";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -196,15 +202,45 @@ const createTheme = (isDark) => isDark ? {
 // Default T for backward compat — will be overridden by context
 let T = createTheme(false);
 
+// ── Session expiry (#30) ──
+// The logic lives in src/lib/client-session.ts; this only wires it to the browser.
+// window.fetch must be called with the window as `this`, hence the arrow wrappers.
+const browserFetch = (input, init) => fetch(input, init);
+const checkSession = () => fetchSessionView(browserFetch);
+
+// Signs out once and goes to /login. If signOut (or loading next-auth/react) fails,
+// clear the cookie through /api/auth/session and go to /login anyway.
+const expireSession = createSessionExpiryHandler({
+  signOut: async () => {
+    const { signOut } = await import("next-auth/react");
+    await signOut({ callbackUrl: "/login" });
+  },
+  fallback: () => {
+    fetch("/api/auth/session", { cache: "no-store" })
+      .catch(() => {})
+      .finally(() => window.location.assign("/login"));
+  },
+});
+
+// NWALearningPlatform registers here to switch to the loading screen as soon as
+// any API call finds the session revoked (no empty data while signing out).
+let sessionExpiredListener = null;
+const handleSessionExpired = () => {
+  if (sessionExpiredListener) sessionExpiredListener();
+  return expireSession();
+};
+
+// fetch for the page's API calls: 401 / redirect to /login -> sign out;
+// 403 -> ask /api/auth/session whether the session is revoked or it is a real "forbidden".
+const authFetch = makeAuthFetch({ fetch: browserFetch, onExpired: handleSessionExpired, checkSession });
+
 // SWR fetcher — module-level so the global cache is shared across all components.
-// When the auth session is missing/expired, the middleware redirects protected API
-// requests to the /login HTML page (307). Blindly calling .json() on that HTML throws
-// a SyntaxError, which left the lesson page stuck on its skeleton forever. Detect the
-// redirect (and any non-OK response) and send the user to re-authenticate instead.
+// An expired session (401, or a redirect to /login) is handled by authFetch (sign out
+// and go to /login; the page shows the loading screen meanwhile), so it is not shown
+// as a network error. Any other non-OK response throws.
 const swrFetcher = async (url) => {
-  const res = await fetch(url);
-  if (res.redirected && res.url.includes("/login")) {
-    if (typeof window !== "undefined") window.location.href = res.url;
+  const res = await authFetch(url);
+  if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") {
     throw new Error("Not authenticated");
   }
   if (!res.ok) {
@@ -435,15 +471,11 @@ const StudentDashboard = ({ setCurrentPage }) => {
   const [calLoading, setCalLoading] = useState(true);
 
   // Fetch dashboard data from API.
-  // If the session expired the request is redirected to /login (HTML); send the user
-  // there to re-authenticate rather than silently rendering an empty dashboard.
+  // An expired session is handled by authFetch (sign out and go to /login) rather
+  // than silently rendering an empty dashboard.
   useEffect(() => {
-    fetch("/api/dashboard").then(res => {
-      if (res.redirected && res.url.includes("/login")) {
-        if (typeof window !== "undefined") window.location.href = res.url;
-        return null;
-      }
-      if (!res.ok) return null;
+    authFetch("/api/dashboard").then(res => {
+      if (!res.ok || res.redirected) return null;
       return res.json();
     }).then(data => {
       if (data && !data.error) setDashData(data);
@@ -786,7 +818,7 @@ const CourseList = ({ setCurrentPage }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/courses").then(r => r.json()).then(data => {
+    authFetch("/api/courses").then(r => r.json()).then(data => {
       if (Array.isArray(data)) setApiCourses(data);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
@@ -946,7 +978,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     setCompletedIds(prev => new Set([...prev, lessonId]));
     setCompleting(true);
     try {
-      await fetch("/api/progress", {
+      await authFetch("/api/progress", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lessonId }),
       });
@@ -984,8 +1016,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     animation: "skeletonPulse 1.6s ease-in-out infinite", ...extra,
   });
 
-  // Surface fetch failures instead of showing the skeleton forever. Auth redirects are
-  // already handled in swrFetcher (browser is sent to /login); this covers other errors
+  // Surface fetch failures instead of showing the skeleton forever. An expired session
+  // is already handled by authFetch (sign out, loading screen, /login); this covers other errors
   // (course fetch failed, or no course could be resolved when none was selected).
   if (courseError || cannotResolve) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
@@ -1218,8 +1250,8 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/admin/students?status=all").then(r => r.json()),
-      fetch("/api/admin/courses").then(r => r.json()),
+      authFetch("/api/admin/students?status=all").then(r => r.json()),
+      authFetch("/api/admin/courses").then(r => r.json()),
     ]).then(([studentsData, coursesData]) => {
       setAdminData({ students: Array.isArray(studentsData) ? studentsData : [], courses: Array.isArray(coursesData) ? coursesData : [] });
     }).catch(() => {});
@@ -1228,7 +1260,7 @@ const AdminDashboard = () => {
   // 受講生一覧を再取得する。失敗しても例外は投げず、現在の一覧を残す
   const reloadStudents = async () => {
     try {
-      const s = await fetch("/api/admin/students?status=all").then(r => r.json());
+      const s = await authFetch("/api/admin/students?status=all").then(r => r.json());
       if (Array.isArray(s)) setAdminData(prev => prev ? { ...prev, students: s } : prev);
     } catch {
       // 一覧の再取得に失敗しても操作自体は完了しているため、ここでは何もしない
@@ -1240,7 +1272,7 @@ const AdminDashboard = () => {
     try {
       let res;
       try {
-        res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
+        res = await authFetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
       } catch {
         setInviteResponse({ httpStatus: null, body: null, redirected: false });
         return;
@@ -1299,7 +1331,7 @@ const AdminDashboard = () => {
     try {
       let res;
       try {
-        res = await fetch(`/api/admin/students/${encodeURIComponent(id)}/${action}`, { method: "PUT" });
+        res = await authFetch(`/api/admin/students/${encodeURIComponent(id)}/${action}`, { method: "PUT" });
       } catch {
         setStatusError(statusActionErrorMessage(null));
         return;
@@ -1873,7 +1905,7 @@ const QuizPage = () => {
 const Notifications = () => {
   const [apiNotifs, setApiNotifs] = useState([]);
   useEffect(() => {
-    fetch("/api/notifications").then(r => r.json()).then(data => {
+    authFetch("/api/notifications").then(r => r.json()).then(data => {
       if (Array.isArray(data)) setApiNotifs(data);
     }).catch(() => {});
   }, []);
@@ -1959,7 +1991,7 @@ const Questions = () => {
 const AdminCourses = () => {
   const [apiCourses, setApiCourses] = useState([]);
   useEffect(() => {
-    fetch("/api/admin/courses").then(r => r.json()).then(data => {
+    authFetch("/api/admin/courses").then(r => r.json()).then(data => {
       if (Array.isArray(data)) setApiCourses(data);
     }).catch(() => {});
   }, []);
@@ -2017,17 +2049,37 @@ const SettingsPage = () => {
     if (newPw !== confirmPw) { setMsg({ type: "error", text: "新しいパスワードが一致しません" }); return; }
     if (newPw.length < 8) { setMsg({ type: "error", text: "パスワードは8文字以上で入力してください" }); return; }
     setSaving(true);
-    const res = await fetch("/api/user/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
-    const data = await res.json();
-    setSaving(false);
-    if (data.error) setMsg({ type: "error", text: data.error });
-    else {
+    // true while moving to /login after a successful change: the button stays disabled
+    let leaving = false;
+    try {
+      const res = await authFetch("/api/user/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
+      if (!res.ok) {
+        // 400 (wrong current password etc.) / 5xx. A 401 is handled by authFetch (sign out)
+        const errBody = await res.json().catch(() => null);
+        setMsg({ type: "error", text: errBody?.error || `パスワードを変更できませんでした（${res.status}）` });
+        return;
+      }
+      const data = await res.json();
+      if (data?.error) { setMsg({ type: "error", text: data.error }); return; }
       // The server revoked every session, including this one (#11): sign out and go to /login.
       setMsg({ type: "success", text: "パスワードを変更しました。すべての端末からログアウトしました。ログイン画面に移動します…" });
       setCurrentPw(""); setNewPw(""); setConfirmPw("");
-      setSaving(true);
-      const { signOut } = await import("next-auth/react");
-      setTimeout(() => signOut({ callbackUrl: "/login" }), 2000);
+      leaving = true;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Signs out once (falls back to clearing the cookie and going to /login if that fails)
+      await handleSessionExpired();
+    } catch {
+      // leaving: the password was changed but the move to /login failed.
+      // Otherwise the request or res.json() failed, so we cannot tell whether it changed.
+      setMsg({
+        type: "error",
+        text: leaving
+          ? "パスワードは変更されました。ログイン画面に移動できなかったため、ページを再読み込みしてください"
+          : "パスワードを変更できたか確認できませんでした。ページを再読み込みして、新しいパスワードでログインできるか確認してください",
+      });
+      leaving = false;
+    } finally {
+      if (!leaving) setSaving(false);
     }
   };
 
@@ -2084,21 +2136,37 @@ const Placeholder = ({ title, desc }) => (
 // ═══════════════════════════════════════════
 export default function NWALearningPlatform() {
   const [page, setPage] = useState("dashboard");
-  const [admin, setAdmin] = useState(false);
+  // #30: who is signed in, from /api/auth/session (see src/lib/client-session.ts).
+  // Nothing is rendered until the role is known, so a revoked instructor is never
+  // shown the student screens with empty data.
+  const [sessionView, setSessionView] = useState({ kind: "loading" });
   const [isDark, setIsDark] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
 
-  // Load role from session on mount
+  // Load the session on mount. Any API call that finds the session revoked
+  // switches to "expired" through sessionExpiredListener.
   useEffect(() => {
-    fetch("/api/auth/session").then(r => r.json()).then(session => {
-      if (session?.user?.role === "INSTRUCTOR") {
-        setAdmin(true);
-        setPage("admin-dashboard");
-      }
-    }).catch(() => {});
+    let cancelled = false;
+    sessionExpiredListener = () => setSessionView({ kind: "expired" });
+    checkSession().then(view => {
+      if (cancelled) return;
+      setSessionView(prev => prev.kind === "expired" ? prev : view);
+      if (view.kind === "authenticated" && view.role === "INSTRUCTOR") setPage("admin-dashboard");
+    });
+    return () => {
+      cancelled = true;
+      sessionExpiredListener = null;
+    };
   }, []);
+
+  // Revoked: sign out once and go to /login (the loading screen stays meanwhile)
+  useEffect(() => {
+    if (sessionView.kind === "expired") expireSession();
+  }, [sessionView.kind]);
+
+  const admin = sessionView.kind === "authenticated" && sessionView.role === "INSTRUCTOR";
 
   const handleLogout = async () => {
     const { signOut } = await import("next-auth/react");
@@ -2138,6 +2206,30 @@ export default function NWALearningPlatform() {
     "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定（管理APIは実装済み）" />,
     "settings": <SettingsPage />,
   };
+
+  // Loading / signing out / connection error: no sidebar and no page content
+  if (sessionView.kind !== "authenticated") {
+    const failed = sessionView.kind === "error";
+    return (
+      <ThemeContext.Provider value={T}>
+        <div style={{
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14,
+          height: "100vh", width: "100%", backgroundColor: T.bg, color: T.textSecondary,
+          fontFamily: "var(--font-sora), 'Sora', sans-serif",
+        }}>
+          {failed ? (
+            <>
+              <div style={{ fontSize: 15, fontWeight: 600, color: T.dark }}>接続できませんでした</div>
+              <div style={{ fontSize: 13, color: T.textMuted }}>通信状態を確認して、ページを再読み込みしてください。</div>
+              <Button size="sm" onClick={() => window.location.reload()} style={{ background: T.accent, color: "#fff", borderRadius: 10, fontWeight: 600 }}>再読み込み</Button>
+            </>
+          ) : (
+            <div role="status" aria-live="polite" style={{ fontSize: 13, color: T.textMuted }}>読み込み中…</div>
+          )}
+        </div>
+      </ThemeContext.Provider>
+    );
+  }
 
   return (
     <ThemeContext.Provider value={T}>

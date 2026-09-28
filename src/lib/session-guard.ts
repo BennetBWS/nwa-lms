@@ -15,7 +15,11 @@ import { safeErrorSummary } from "./safe-error";
  * since NextAuth re-issues the JWT (new `iat`) on every access.
  *
  * The middleware (Edge runtime) keeps using the DB-less jwt of auth.config.ts,
- * so it still lets an old JWT through; all data come from the API, which checks.
+ * so it still lets an old JWT through and re-issues its cookie. Since #30 it only
+ * runs on pages, not on /api/* (src/middleware.ts): all data come from the API,
+ * which checks here, and a revoked cookie is no longer brought back by API calls.
+ * The page asks /api/auth/session first and, when the session is revoked, signs
+ * out and goes to /login (src/lib/client-session.ts).
  */
 
 export type SessionUserRow = Pick<
