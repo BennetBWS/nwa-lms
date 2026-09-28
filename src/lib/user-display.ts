@@ -7,10 +7,27 @@
  * which may be missing, so every function accepts `unknown`.
  */
 
-/** Trimmed name with runs of whitespace collapsed to one space, or null when there is none. */
+// Control and format characters (zero-width space, bidi overrides such as U+202E, ...),
+// except the ones emoji need: ZWJ (U+200D) joins sequences and tag characters
+// (U+E0020–U+E007F) make subdivision flags. Built with RegExp so the `u` flag and
+// \p{...} do not depend on the TypeScript target.
+const INVISIBLE_EXCEPT_ZWJ = new RegExp("(?![\\u200D\\u{E0020}-\\u{E007F}])[\\p{Cc}\\p{Cf}]", "gu");
+const EDGE_ZWJ = new RegExp("^\\u200D+|\\u200D+$", "g");
+
+/**
+ * Name as shown: whitespace runs collapsed to one space, invisible control / format
+ * characters removed (they could garble the layout or disguise the name), trimmed.
+ * Null when nothing visible is left.
+ */
 export function displayName(name: unknown): string | null {
   if (typeof name !== "string") return null;
-  const normalized = name.trim().replace(/\s+/g, " ");
+  const normalized = name
+    .replace(/\s+/g, " ")
+    .replace(INVISIBLE_EXCEPT_ZWJ, "")
+    .trim()
+    .replace(EDGE_ZWJ, "")
+    .trim()
+    .replace(/ {2,}/g, " ");
   return normalized === "" ? null : normalized;
 }
 
@@ -31,7 +48,10 @@ export function avatarInitial(name: unknown): string | null {
   const shown = displayName(name);
   if (shown === null) return null;
   const initial = firstGrapheme(shown);
-  return initial === "" ? null : initial.toLocaleUpperCase("en");
+  if (initial === "") return null;
+  const upper = initial.toLocaleUpperCase("en");
+  // Keep one character in the avatar: e.g. "ß" would become "SS".
+  return Array.from(upper).length === Array.from(initial).length ? upper : initial;
 }
 
 /** Dashboard heading. */

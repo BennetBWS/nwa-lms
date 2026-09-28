@@ -90,28 +90,39 @@ describe("avatarInitial：文字の種類", () => {
     assert.equal(avatarInitial("ichiro"), "I");
   });
 
-  // 現状仕様の記録：ß は en の大文字化で 2 文字の "SS" になる（アバター内に 2 文字出る）
-  it("ß は SS になる（現状の挙動の記録）", () => {
-    assert.equal(avatarInitial("ßtraße"), "SS");
+  // 大文字化で文字数が変わる文字（ß → SS）は元の文字のままにして、アバターを 1 文字に保つ
+  it("ß は SS にせず ß のまま", () => {
+    assert.equal(avatarInitial("ßtraße"), "ß");
   });
 });
 
-describe("ゼロ幅文字（期待と異なる挙動・報告済み）", () => {
-  // \s にゼロ幅スペース（U+200B）や ZWJ（U+200D）は含まれないため、
-  // 見えない文字だけの名前が「名前あり」と扱われ、アバターも空に見える。
-  it("ゼロ幅スペースだけの名前は null（名前なし）であってほしい", { todo: "user-display.ts がゼロ幅文字を空白として扱わない" }, () => {
-    assert.equal(displayName("​"), null);
-    assert.equal(avatarInitial("​‍"), null);
-    assert.equal(greetingTitle("​"), "おかえりなさい");
+describe("見えない文字（制御文字・書式文字）", () => {
+  it("ゼロ幅スペースや ZWJ だけの名前は null（名前なし）", () => {
+    assert.equal(displayName("\u200B"), null);
+    assert.equal(displayName("\u200B\u200D"), null);
+    assert.equal(avatarInitial("\u200B\u200D"), null);
+    assert.equal(greetingTitle("\u200B"), "おかえりなさい");
   });
 
-  it("先頭のゼロ幅スペースを飛ばして頭文字を取ってほしい", { todo: "user-display.ts がゼロ幅文字を空白として扱わない" }, () => {
-    assert.equal(avatarInitial("​山田"), "山");
+  it("先頭のゼロ幅スペースを飛ばして頭文字を取る", () => {
+    assert.equal(avatarInitial("\u200B山田"), "山");
+    assert.equal(displayName("\u200B山田\u200B 太郎"), "山田 太郎");
   });
 
-  it("現状：ゼロ幅スペースで始まる名前の頭文字はゼロ幅スペースになる（挙動の記録）", () => {
-    assert.equal(displayName("​"), "​");
-    assert.equal(avatarInitial("​山田"), "​");
+  it("双方向制御文字（U+202E など）とその他の制御文字を取り除く", () => {
+    assert.equal(displayName("山田\u202E太郎"), "山田太郎");
+    assert.equal(displayName("\u2066山田\u2069"), "山田");
+    assert.equal(displayName("山\u0000田"), "山田");
+  });
+
+  it("名前の中の ZWJ は残し、絵文字の組み合わせを壊さない", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    assert.equal(displayName(family + " 家"), family + " 家");
+    assert.equal(avatarInitial(family + " 家"), family);
+  });
+
+  it("前後の ZWJ は取り除く", () => {
+    assert.equal(displayName("\u200D山田\u200D"), "山田");
   });
 });
 
