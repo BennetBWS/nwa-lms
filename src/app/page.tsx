@@ -1539,14 +1539,14 @@ const AdminDashboard = () => {
             )}
             {visibleStudents.map((s, i) => {
               const deactivated = s.status === "deactivated";
-              // 無効の行は薄く表示する（操作ボタンは押せることが分かるよう薄くしない）
+              // 無効の行は値（名前・進捗など）だけ薄く表示する。「無効」バッジ・無効化日・操作ボタンは読みやすさのため薄くしない
               const dim = deactivated ? 0.5 : 1;
               return (
               <div key={s.id} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "14px 24px", borderBottom: i < visibleStudents.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", transition: "background 0.2s" }}
                 onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, opacity: dim }}>
-                  <Avatar style={{ width: 32, height: 32, flexShrink: 0 }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                  <Avatar style={{ width: 32, height: 32, flexShrink: 0, opacity: dim }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: dim }}>{s.name}</span>
                   {deactivated && (
                     <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.textMuted}20`, color: T.textMuted, border: "none", flexShrink: 0 }}>無効</Badge>
                   )}
@@ -1559,7 +1559,7 @@ const AdminDashboard = () => {
                   <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.progress}%</span>
                 </div>
                 <span className="nwa-admin-col-last" style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", opacity: dim }}>{s.last}</span>
-                <div className="nwa-admin-col-status" style={{ opacity: dim }}>
+                <div className="nwa-admin-col-status">
                   {deactivated ? (
                     <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, whiteSpace: "nowrap" }}>無効化日 {formatDeactivatedDate(s.deactivatedAt)}</span>
                   ) : (
