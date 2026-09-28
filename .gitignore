@@ -38,3 +38,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# auto-generated copy of CLAUDE.md by another tool (#37). CLAUDE.md is the single source of rules.
+/AGENTS.md
