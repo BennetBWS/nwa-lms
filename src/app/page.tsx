@@ -449,7 +449,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) =
           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
           onMouseLeave={e => e.currentTarget.style.background = "transparent"}
         >
-          <Avatar style={{ width: 34, height: 34, boxShadow: "0 0 0 2px rgba(59,130,246,0.3)" }}>
+          <Avatar aria-hidden="true" style={{ width: 34, height: 34, boxShadow: "0 0 0 2px rgba(59,130,246,0.3)" }}>
             <AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{initial ?? <User size={16} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
           </Avatar>
           <div style={{ flex: 1, minWidth: 0 }}>
