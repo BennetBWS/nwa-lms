@@ -19,6 +19,10 @@ export async function POST(request: Request) {
     if (typeof newPassword !== "string" || newPassword.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
     }
+    // A non-string current password can never match: same answer as a wrong one, without reading the DB.
+    if (typeof currentPassword !== "string") {
+      return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
+    }
 
     const user = userId
       ? await prisma.user.findUnique({ where: { id: userId } })

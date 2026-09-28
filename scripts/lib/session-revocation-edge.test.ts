@@ -139,13 +139,16 @@ describe("change-password: 異常系・権限（追加）", () => {
     assert.equal(user("ins_1").sessionVersion, 0);
   });
 
-  it("currentPassword が文字列以外：成功しない・何も更新しない", async () => {
-    // 現状は bcrypt.compare が例外を投げて 500 になる（報告事項。400 が望ましい）。
+  it("currentPassword が文字列以外（数値・配列・オブジェクト・null・欠落）：400、何も更新しない", async () => {
     const before = snapshotUsers();
-    const res = await changePassword(changeReq({ currentPassword: 12345678, newPassword: NEW_PASSWORD }));
-    assert.notEqual(res.status, 200);
-    assert.ok(res.status >= 400);
+    for (const currentPassword of [12345678, [CURRENT_PASSWORD], { value: CURRENT_PASSWORD }, null, undefined]) {
+      const res = await changePassword(changeReq({ currentPassword, newPassword: NEW_PASSWORD }));
+      assert.equal(res.status, 400, JSON.stringify(currentPassword));
+      assert.deepEqual(await res.json(), { error: "Current password is incorrect" });
+    }
     assert.deepEqual(snapshotUsers(), before);
+    assert.ok(!db.calls.some((c) => c.method === "user.findUnique" || c.method === "user.update"));
+    assert.deepEqual(logs, []);
   });
 });
 
