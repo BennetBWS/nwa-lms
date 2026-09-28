@@ -24,6 +24,16 @@ import {
 } from "lucide-react";
 import ChatSidebar from "@/components/ChatSidebar";
 import ChatMobile from "@/components/ChatMobile";
+import {
+  DEFAULT_STUDENT_TAB,
+  STUDENT_TABS,
+  confirmMessage,
+  countStudentsByTab,
+  formatDeactivatedDate,
+  inviteErrorView,
+  statusActionErrorMessage,
+  studentsForTab,
+} from "@/lib/admin-student-view";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -1195,26 +1205,86 @@ const AdminDashboard = () => {
   const [inviteName, setInviteName] = useState("");
   const [inviteResult, setInviteResult] = useState(null);
   const [inviting, setInviting] = useState(false);
+  // #7: 一覧は ?status=all で取得し、タブで絞り込む
+  const [studentTab, setStudentTab] = useState(DEFAULT_STUDENT_TAB);
+  // { action: "deactivate" | "reactivate", id, name } | null
+  const [statusDialog, setStatusDialog] = useState(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState("");
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/admin/students").then(r => r.json()),
+      fetch("/api/admin/students?status=all").then(r => r.json()),
       fetch("/api/admin/courses").then(r => r.json()),
     ]).then(([studentsData, coursesData]) => {
       setAdminData({ students: Array.isArray(studentsData) ? studentsData : [], courses: Array.isArray(coursesData) ? coursesData : [] });
     }).catch(() => {});
   }, []);
 
+  // 受講生一覧を再取得する。失敗しても例外は投げず、現在の一覧を残す
+  const reloadStudents = async () => {
+    try {
+      const s = await fetch("/api/admin/students?status=all").then(r => r.json());
+      if (Array.isArray(s)) setAdminData(prev => prev ? { ...prev, students: s } : prev);
+    } catch {
+      // 一覧の再取得に失敗しても操作自体は完了しているため、ここでは何もしない
+    }
+  };
+
   const handleInvite = async () => {
     setInviting(true);
-    const res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
-    const data = await res.json();
-    setInviteResult(data);
-    setInviting(false);
-    if (!data.error) {
-      // Refresh students
-      const s = await fetch("/api/admin/students").then(r => r.json());
-      if (adminData) setAdminData({ ...adminData, students: Array.isArray(s) ? s : adminData.students });
+    try {
+      const res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
+      const data = await res.json();
+      setInviteResult(data);
+      if (!data.error) await reloadStudents();
+    } catch {
+      setInviteResult({ error: "通信エラーが発生しました。接続を確認して、もう一度お試しください。" });
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const openStatusDialog = (action, student) => {
+    setStatusError("");
+    setStatusDialog({ action, id: student.id, name: student.name });
+  };
+
+  const closeStatusDialog = () => {
+    if (statusSaving) return;
+    setStatusDialog(null);
+  };
+
+  const handleStatusAction = async () => {
+    if (!statusDialog) return;
+    const { action, id } = statusDialog;
+    setStatusSaving(true);
+    setStatusError("");
+    try {
+      let res;
+      try {
+        res = await fetch(`/api/admin/students/${encodeURIComponent(id)}/${action}`, { method: "PUT" });
+      } catch {
+        setStatusError(statusActionErrorMessage(null));
+        return;
+      }
+      if (!res.ok) {
+        setStatusError(statusActionErrorMessage(res.status));
+        return;
+      }
+      // レスポンスの状態をまず反映し、そのあと一覧を取り直す
+      try {
+        const updated = await res.json();
+        if (updated && updated.id === id) {
+          setAdminData(prev => prev ? { ...prev, students: prev.students.map(s => s.id === id ? { ...s, status: updated.status, deactivatedAt: updated.deactivatedAt } : s) } : prev);
+        }
+      } catch {
+        // 本文が読めなくても再取得で反映される
+      }
+      await reloadStudents();
+      setStatusDialog(null);
+    } finally {
+      setStatusSaving(false);
     }
   };
 
@@ -1224,10 +1294,16 @@ const AdminDashboard = () => {
 
   const students = (adminData?.students || []).map(s => {
     const progress = s.totalLessons > 0 ? Math.round((s.completedLessons / s.totalLessons) * 100) : 0;
-    const status = progress >= 50 ? "good" : progress >= 20 ? "warn" : "alert";
-    return { id: s.id, name: s.name, course: "", progress, last: s.lastActive ? new Date(s.lastActive).toLocaleDateString() : "N/A", status };
+    const progressStatus = progress >= 50 ? "good" : progress >= 20 ? "warn" : "alert";
+    // status はアカウントの状態（active / deactivated）。進捗の評価は progressStatus
+    return { id: s.id, name: s.name, course: "", progress, last: s.lastActive ? new Date(s.lastActive).toLocaleDateString() : "N/A", progressStatus, status: s.status === "deactivated" ? "deactivated" : "active", deactivatedAt: s.deactivatedAt ?? null };
   });
   const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
+  const studentCounts = countStudentsByTab(students);
+  const visibleStudents = studentsForTab(students, studentTab);
+  const inviteError = inviteErrorView(inviteResult);
+  const inviteDeactivatedStudent = inviteError?.deactivatedUserId ? students.find(s => s.id === inviteError.deactivatedUserId && s.status === "deactivated") : null;
+  const adminFont = "var(--font-sora), 'Sora', sans-serif";
 
   return (
     <ScrollArea style={{ height: "100%" }}>
@@ -1331,7 +1407,20 @@ const AdminDashboard = () => {
         <FadeIn delay={320}>
           <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
             <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
+                <div role="tablist" aria-label="受講生の状態" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 10, background: T.borderSubtle }}>
+                  {STUDENT_TABS.map(tab => {
+                    const selected = studentTab === tab.key;
+                    return (
+                      <button key={tab.key} type="button" role="tab" aria-selected={selected} onClick={() => setStudentTab(tab.key)}
+                        style={{ border: "none", cursor: "pointer", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: selected ? 700 : 500, background: selected ? T.glass : "transparent", color: selected ? T.dark : T.textMuted, boxShadow: selected ? "0 1px 3px rgba(10,22,40,0.08)" : "none", fontFamily: adminFont, whiteSpace: "nowrap" }}>
+                        {tab.label}（{studentCounts[tab.key]}）
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: T.glass }}>
                   <Search size={14} style={{ color: T.textMuted }} />
@@ -1358,7 +1447,18 @@ const AdminDashboard = () => {
                       </div>
                     ) : (
                       <div>
-                        {inviteResult?.error && <div style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{inviteResult.error}</div>}
+                        {inviteError && (
+                          <div style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>
+                            {inviteError.message}
+                            {inviteDeactivatedStudent && (
+                              <div style={{ marginTop: 8 }}>
+                                <Button size="sm" variant="outline" onClick={() => { setInviteModal(false); openStatusDialog("reactivate", inviteDeactivatedStudent); }} style={{ borderRadius: 8, fontSize: 12 }}>
+                                  {inviteDeactivatedStudent.name} さんを再有効化する
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div style={{ marginBottom: 12 }}>
                           <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>名前</label>
                           <input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="山田 花子" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
@@ -1376,30 +1476,74 @@ const AdminDashboard = () => {
                   </div>
                 </div>
               )}
-            </div>
-            <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-              <div>Name</div><div>Course</div><div>Progress</div><div>Last Seen</div><div>Status</div>
-            </div>
-            {students.map((s, i) => (
-              <div key={i} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.6fr", padding: "14px 24px", borderBottom: i < students.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", cursor: "pointer", transition: "background 0.2s" }}
-                onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Avatar style={{ width: 32, height: 32 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary }}>{s.name}</span>
+              {/* Deactivate / Reactivate confirm dialog (#7) */}
+              {statusDialog && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={closeStatusDialog}>
+                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw" }}>
+                    <h3 id="nwa-status-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>
+                      {statusDialog.action === "deactivate" ? "受講生を無効化" : "受講生を再有効化"}
+                    </h3>
+                    <p style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 20px", whiteSpace: "pre-wrap" }}>
+                      {confirmMessage(statusDialog.action, statusDialog.name)}
+                    </p>
+                    {statusError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{statusError}</div>}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Button variant="outline" onClick={closeStatusDialog} disabled={statusSaving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                      <Button onClick={handleStatusAction} disabled={statusSaving} style={{ flex: 1, background: statusDialog.action === "deactivate" ? T.danger : T.accent, borderRadius: 10 }}>
+                        {statusSaving ? "処理中..." : statusDialog.action === "deactivate" ? "無効化する" : "再有効化する"}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <span style={{ fontSize: 13, color: T.textSecondary }}>{s.course}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              )}
+            </div>
+            <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+              <div>Name</div><div className="nwa-admin-col-course">Course</div><div>Progress</div><div className="nwa-admin-col-last">Last Seen</div><div className="nwa-admin-col-status">Status</div><div style={{ textAlign: "right" }}>Actions</div>
+            </div>
+            {visibleStudents.length === 0 && (
+              <div style={{ padding: "24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>該当する受講生はいません</div>
+            )}
+            {visibleStudents.map((s, i) => {
+              const deactivated = s.status === "deactivated";
+              // 無効の行は薄く表示する（操作ボタンは押せることが分かるよう薄くしない）
+              const dim = deactivated ? 0.5 : 1;
+              return (
+              <div key={s.id} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "14px 24px", borderBottom: i < visibleStudents.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", transition: "background 0.2s" }}
+                onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, opacity: dim }}>
+                  <Avatar style={{ width: 32, height: 32, flexShrink: 0 }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                  {deactivated && (
+                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.textMuted}20`, color: T.textMuted, border: "none", flexShrink: 0 }}>無効</Badge>
+                  )}
+                </div>
+                <span className="nwa-admin-col-course" style={{ fontSize: 13, color: T.textSecondary, opacity: dim }}>{s.course}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: dim }}>
                   <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
                     <div style={{ width: `${s.progress}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
                   </div>
                   <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.progress}%</span>
                 </div>
-                <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.last}</span>
-                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.status]?.c}12`, color: st[s.status]?.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-                  {st[s.status]?.l}
-                </Badge>
+                <span className="nwa-admin-col-last" style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", opacity: dim }}>{s.last}</span>
+                <div className="nwa-admin-col-status" style={{ opacity: dim }}>
+                  {deactivated ? (
+                    <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, whiteSpace: "nowrap" }}>無効化日 {formatDeactivatedDate(s.deactivatedAt)}</span>
+                  ) : (
+                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.progressStatus]?.c}12`, color: st[s.progressStatus]?.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                      {st[s.progressStatus]?.l}
+                    </Badge>
+                  )}
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  {deactivated ? (
+                    <Button size="sm" variant="outline" onClick={() => openStatusDialog("reactivate", s)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => openStatusDialog("deactivate", s)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
+                  )}
+                </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </FadeIn>
       </div>
@@ -1998,7 +2142,7 @@ export default function NWALearningPlatform() {
           .nwa-mobile-header { display: none !important; }
           .nwa-bento { grid-template-columns: repeat(12, 1fr) !important; }
           .nwa-lesson-sidebar { width: 340px !important; display: flex !important; }
-          .nwa-admin-table-grid { grid-template-columns: 1.5fr 1fr 1.3fr 0.8fr 0.6fr !important; }
+          .nwa-admin-table-grid { grid-template-columns: 1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr !important; }
 
           @media (max-width: 1024px) {
             .nwa-bento { grid-template-columns: repeat(6, 1fr) !important; }
@@ -2008,8 +2152,8 @@ export default function NWALearningPlatform() {
             .nwa-bento > [style*="span 5"] { grid-column: span 6 !important; }
             .nwa-bento > [style*="span 12"] { grid-column: span 6 !important; }
             .nwa-lesson-sidebar { width: 280px !important; }
-            .nwa-admin-table-grid { grid-template-columns: 1.5fr 1fr 1.2fr 0.7fr !important; }
-            .nwa-admin-table-grid > div:nth-child(5n) { display: none; }
+            .nwa-admin-table-grid { grid-template-columns: 1.5fr 1fr 1.2fr 0.7fr 0.9fr !important; }
+            .nwa-admin-table-grid > .nwa-admin-col-status { display: none; }
           }
 
           @media (max-width: 768px) {
@@ -2022,9 +2166,10 @@ export default function NWALearningPlatform() {
             .nwa-bento > * { grid-column: span 1 !important; }
             .nwa-lesson-sidebar { display: none !important; }
             .nwa-lesson-main { min-width: 0 !important; }
-            .nwa-admin-table-grid { grid-template-columns: 1.5fr 1.2fr 0.8fr !important; }
-            .nwa-admin-table-grid > div:nth-child(5n),
-            .nwa-admin-table-grid > div:nth-child(5n-1) { display: none; }
+            .nwa-admin-table-grid { grid-template-columns: 1.5fr 1fr auto !important; }
+            .nwa-admin-table-grid > .nwa-admin-col-course,
+            .nwa-admin-table-grid > .nwa-admin-col-last,
+            .nwa-admin-table-grid > .nwa-admin-col-status { display: none; }
             .nwa-course-grid { grid-template-columns: 1fr !important; }
             .nwa-assign-grid { grid-template-columns: repeat(2, 1fr) !important; }
             .nwa-page-content { padding: 20px 16px 32px !important; margin: 0 auto !important; }
