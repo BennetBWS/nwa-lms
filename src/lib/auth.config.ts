@@ -28,17 +28,21 @@ export const authConfig: NextAuthConfig = {
       if (!isLoggedIn) return false;
       return true;
     },
+    // Edge (middleware) jwt: does NOT read the DB, so a revoked JWT still passes the
+    // middleware. On the Node side (src/lib/auth.ts) this callback is wrapped by
+    // makeJwtCallback (src/lib/session-guard.ts), which checks the DB on every
+    // access (#11). Do not import prisma here: this file is loaded by the middleware.
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as any).role;
+        token.role = user.role;
         token.id = user.id;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as any).role = token.role;
-        (session.user as any).id = token.id;
+        session.user.role = token.role;
+        session.user.id = token.id;
       }
       return session;
     },

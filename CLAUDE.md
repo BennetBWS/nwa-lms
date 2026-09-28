@@ -12,13 +12,14 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - 本番URL: https://nwa-lms.vercel.app
 - DB: Supabase 上の Postgres を Prisma で利用（プロジェクト名: nwa-lms）。Supabase Auth / Storage は未使用
 - 認証: NextAuth v5（Credentials + bcrypt、JWT セッション）。ユーザーは Prisma の User テーブルで管理
+- セッションの即時失効（#11）: API（`@/lib/auth` の `auth()`）は毎回 jwt コールバックで User を主キーで 1 回読んで照合し、無効化・ロール変更・メール変更・パスワード変更（`User.sessionVersion` とトークンの `sv` の不一致）で即座に失効する（`src/lib/session-guard.ts`。DB エラー時も失効）。パスワード変更・リセットは `sessionVersion` を +1 し、全端末をログアウトさせる。middleware（Edge）は DB を見ない（`auth.config.ts` の jwt）ため古い JWT のまま通るが、データは API から取るので実害はない。middleware が古い JWT の Cookie を再発行し続けるため、失効した端末の Cookie は消えずに残ることがある（API は常に 401。ログアウトボタンで抜けられる。#30）。`auth.config.ts` に prisma を import しない
 - メール: Resend（パスワードリセット）。送信元ドメインは `mail.bws-bennet.com`（例: `Next World Academy <no-reply@mail.bws-bennet.com>`）。環境変数 `RESEND_API_KEY` / `MAIL_FROM` / `APP_BASE_URL` / `MAIL_REPLY_TO`（任意）は Vercel の Production にだけ設定する（開発用 DB と本番 DB が同じため。#8）。必須変数が未設定・不正ならメール送信はスキップされ、変数名だけがログに出る（`src/lib/mail-config.ts`）。変数の説明は `.env.example`
 - デプロイ: Vercel（main マージで本番反映）
 
 ## コマンド
 - 開発: `npm run dev`
 - 型チェック: `npm run typecheck`（`prisma/seed.ts` は tsconfig の exclude により対象外）
-- テスト: `npm test`（node:test + `tsx --test`。seed ガードの単体テストと seed スクリプトをダミー URL で起動する E2E テスト、forgot-password・リセットトークン系（verify-reset-token / reset-password）・受講生管理 API のルートテスト（偽 prisma・偽 auth・fetch モックでネットワーク / DB に接続しない。偽 `$transaction` は原子性を再現しない）、`src/lib` の単体テスト（mail-config / safe-error / initial-password / student-status / account-access / student-invite）。seed の E2E は `npm install` と Prisma Client 生成済みが前提）
+- テスト: `npm test`（node:test + `tsx --test`。seed ガードの単体テストと seed スクリプトをダミー URL で起動する E2E テスト、forgot-password・リセットトークン系（verify-reset-token / reset-password）・受講生管理 API・change-password / reset-password のセッション失効（#11）のルートテスト（偽 prisma・偽 auth・fetch モックでネットワーク / DB に接続しない。偽 `$transaction` は原子性を再現しない）、`src/lib` の単体テスト（mail-config / safe-error / initial-password / student-status / account-access / student-invite / session-guard）。seed の E2E は `npm install` と Prisma Client 生成済みが前提）
 - マイグレーション（ローカル）: `npm run db:migrate`
 - Prisma Client 生成: `npm run db:generate`
 - seed（ローカル DB のみ）: `npm run db:seed`
@@ -35,4 +36,4 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - 本番データを含む SQL / CSV は `supabase/private/`（git 管理外）に置く
 - `.env.example` は値を含まない見本ファイルとして、就業規則の「.env 系ファイルの読み取り・コミット禁止」の例外とする（Tec 承認 2026-09-25）。変数名と説明だけを書き、実値・実在のキーは書かない。`.env` / `.env.local` などは従来どおり読み取り・出力・コミット禁止
 - `src/lib/supabase.ts` は現在未使用
-- 受講生の無効化は論理削除（#7）。`PUT /api/admin/students/[id]/deactivate` は `User.deactivatedAt` を設定し、`sessionVersion` を +1、未使用のパスワードリセットトークンを失効させる（データは削除しない）。`PUT /api/admin/students/[id]/reactivate` は `deactivatedAt` を null に戻す。無効化済みの受講生はログインとパスワードリセットができない。ただし既存のログイン（JWT セッション）は #11（PR2）が入るまで失効しない。受講生一覧 API は既定で有効な受講生だけを返す（`?status=deactivated|all` で切り替え）
+- 受講生の無効化は論理削除（#7）。`PUT /api/admin/students/[id]/deactivate` は `User.deactivatedAt` を設定し、`sessionVersion` を +1、未使用のパスワードリセットトークンを失効させる（データは削除しない）。`PUT /api/admin/students/[id]/reactivate` は `deactivatedAt` を null に戻す。無効化済みの受講生はログインとパスワードリセットができず、既存のログイン（JWT セッション）も API では即座に失効する（#11）。受講生一覧 API は既定で有効な受講生だけを返す（`?status=deactivated|all` で切り替え）

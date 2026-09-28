@@ -87,4 +87,14 @@ describe("checkResetToken", () => {
       reason: "Token expired",
     });
   });
+
+  it("expiry boundary: expiresAt === now is expired, 1ms later is still valid", () => {
+    const user = { deactivatedAt: null };
+    assert.deepEqual(checkResetToken({ used: false, expiresAt: new Date(now.getTime()), user }, now), {
+      valid: false,
+      reason: "Token expired",
+    });
+    const justBefore = { used: false, expiresAt: new Date(now.getTime() + 1), user };
+    assert.deepEqual(checkResetToken(justBefore, now), { valid: true, record: justBefore });
+  });
 });

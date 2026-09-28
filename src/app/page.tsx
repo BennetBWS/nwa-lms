@@ -1835,13 +1835,20 @@ const SettingsPage = () => {
 
   const handleChangePw = async () => {
     if (newPw !== confirmPw) { setMsg({ type: "error", text: "新しいパスワードが一致しません" }); return; }
-    if (newPw.length < 6) { setMsg({ type: "error", text: "パスワードは6文字以上にしてください" }); return; }
+    if (newPw.length < 8) { setMsg({ type: "error", text: "パスワードは8文字以上で入力してください" }); return; }
     setSaving(true);
     const res = await fetch("/api/user/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: currentPw, newPassword: newPw }) });
     const data = await res.json();
     setSaving(false);
     if (data.error) setMsg({ type: "error", text: data.error });
-    else { setMsg({ type: "success", text: "パスワードを変更しました" }); setCurrentPw(""); setNewPw(""); setConfirmPw(""); }
+    else {
+      // The server revoked every session, including this one (#11): sign out and go to /login.
+      setMsg({ type: "success", text: "パスワードを変更しました。すべての端末からログアウトしました。ログイン画面に移動します…" });
+      setCurrentPw(""); setNewPw(""); setConfirmPw("");
+      setSaving(true);
+      const { signOut } = await import("next-auth/react");
+      setTimeout(() => signOut({ callbackUrl: "/login" }), 2000);
+    }
   };
 
   return (

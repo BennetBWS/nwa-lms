@@ -66,6 +66,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  mock.timers.reset();
   mock.restoreAll();
 });
 
@@ -88,6 +89,16 @@ describe("GET /api/auth/verify-reset-token", () => {
       reason: "Token already used",
     });
     assert.deepEqual(await (await verify(verifyReq("tok-active-expired"))).json(), {
+      valid: false,
+      reason: "Token expired",
+    });
+  });
+
+  it("expiresAt === now: Token expired (same boundary as reset-password)", async () => {
+    const NOW = Date.parse("2026-09-28T00:00:00.000Z");
+    db.resets.find((r) => r.id === "r1")!.expiresAt = new Date(NOW);
+    mock.timers.enable({ apis: ["Date"], now: NOW });
+    assert.deepEqual(await (await verify(verifyReq("tok-active"))).json(), {
       valid: false,
       reason: "Token expired",
     });

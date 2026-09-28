@@ -46,6 +46,9 @@ function matchValue(actual: unknown, cond: unknown): boolean {
       if (c.not === null) return actual !== null && actual !== undefined;
       return actual !== c.not;
     }
+    if ("gt" in c && c.gt instanceof Date) {
+      return actual instanceof Date && actual.getTime() > c.gt.getTime();
+    }
     throw new Error(`fake prisma: unsupported condition ${JSON.stringify(cond)}`);
   }
   if (cond instanceof Date) return actual instanceof Date && actual.getTime() === cond.getTime();
@@ -88,6 +91,8 @@ export type FakeDb = {
   calls: Call[];
   /** Error thrown by the next user.create (e.g. a P2002 from a concurrent invite). */
   createError: unknown;
+  /** Runs once at the start of the next $transaction (simulates a change made concurrently). */
+  beforeTransaction: (() => void) | undefined;
   client: Record<string, unknown>;
 };
 
@@ -113,6 +118,7 @@ export function createFakeDb(): FakeDb {
     notifications: [],
     calls: [],
     createError: undefined,
+    beforeTransaction: undefined,
     client: {},
   };
   const rec = (method: string, args: unknown) => db.calls.push({ method, args: [args] });
@@ -150,11 +156,16 @@ export function createFakeDb(): FakeDb {
       }
       return { count: hit.length };
     },
-    async update(args: { where: { id: string }; data: { password?: string } }) {
+    async update(args: {
+      where: { id: string };
+      data: { password?: string; sessionVersion?: { increment: number } };
+    }) {
       rec("user.update", args);
       const row = db.users.find((u) => u.id === args.where.id);
       if (!row) throw Object.assign(new Error("Record not found"), { code: "P2025" });
-      Object.assign(row, args.data);
+      const { sessionVersion, ...rest } = args.data;
+      Object.assign(row, rest);
+      if (sessionVersion) row.sessionVersion += sessionVersion.increment;
       return { ...row };
     },
     async create(args: { data: { email: string; name: string; password: string; role: Role } }) {
@@ -190,9 +201,16 @@ export function createFakeDb(): FakeDb {
       }
       return out;
     },
-    async updateMany(args: { where: Where; data: { used: boolean } }) {
+    async updateMany(args: { where: Where & { user?: Where }; data: { used: boolean } }) {
       rec("passwordReset.updateMany", args);
-      const hit = db.resets.filter((r) => matches(r as unknown as Record<string, unknown>, args.where));
+      // `user` is a relation filter (e.g. { user: { deactivatedAt: null } }).
+      const { user: userWhere, ...where } = args.where;
+      const hit = db.resets.filter((r) => {
+        if (!matches(r as unknown as Record<string, unknown>, where)) return false;
+        if (!userWhere) return true;
+        const u = db.users.find((x) => x.id === r.userId);
+        return !!u && matches(u as unknown as Record<string, unknown>, userWhere);
+      });
       for (const r of hit) r.used = args.data.used;
       return { count: hit.length };
     },
@@ -239,6 +257,9 @@ export function createFakeDb(): FakeDb {
     ...tx,
     async $transaction(arg: unknown) {
       rec("$transaction", undefined);
+      const hook = db.beforeTransaction;
+      db.beforeTransaction = undefined;
+      hook?.();
       if (typeof arg === "function") return (arg as (t: typeof tx) => Promise<unknown>)(tx);
       return Promise.all(arg as Promise<unknown>[]);
     },
