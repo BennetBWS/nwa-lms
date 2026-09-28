@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   INVITE_BAD_REQUEST_MESSAGE,
   INVITE_DEACTIVATED_UI_MESSAGE,
+  INVITE_NO_RESULT_MESSAGE,
+  SESSION_EXPIRED_MESSAGE,
   confirmMessage,
   countStudentsByTab,
   formatDeactivatedDate,
@@ -120,9 +122,13 @@ describe("inviteErrorView", () => {
     assert.equal(inviteErrorView(null, null)?.message, statusActionErrorMessage(null));
   });
 
-  it("2xx is not an error", () => {
+  it("2xx with a password is not an error", () => {
     assert.equal(inviteErrorView(201, { id: "u1", email: "a@example.com", name: "a", password: "p" }), null);
-    assert.equal(inviteErrorView(200, null), null);
+  });
+
+  it("2xx without a password, or redirected: fixed messages", () => {
+    assert.equal(inviteErrorView(200, null)?.message, INVITE_NO_RESULT_MESSAGE);
+    assert.equal(inviteErrorView(200, "<html>", true)?.message, SESSION_EXPIRED_MESSAGE);
   });
 });
 

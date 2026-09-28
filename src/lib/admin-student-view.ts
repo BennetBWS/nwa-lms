@@ -156,17 +156,31 @@ export const INVITE_BAD_REQUEST_MESSAGE = "入力内容を確認してくださ�
 export type InviteErrorView = { message: string; deactivatedUserId: string | null };
 
 /**
- * Error shown in the invite modal, or null when the request succeeded (2xx).
+ * Shown when an invite returned 2xx but the body has no initial password (the
+ * account may or may not have been created).
+ */
+export const INVITE_NO_RESULT_MESSAGE =
+  "招待の結果を確認できませんでした。受講生の一覧を確認し、作成されていない場合はもう一度お試しください。";
+
+/**
+ * Error shown in the invite modal, or null when the request succeeded.
  * `httpStatus` is null for a network error (fetch threw). `body` is the parsed
- * JSON (null when it could not be parsed).
+ * JSON (null when it could not be parsed). `redirected` is `Response.redirected`.
+ * - redirected (the middleware sent the request to /login): SESSION_EXPIRED_MESSAGE.
+ * - 2xx: null only when the body has a non-empty `password`; otherwise
+ *   INVITE_NO_RESULT_MESSAGE.
  * - 409 DEACTIVATED: fixed message, plus the student id for the reactivate button.
  * - 409 EXISTS: the API text as is (Japanese, see student-invite.ts).
  * - anything else: a fixed Japanese message chosen by the status. The server's
  *   (English) error text is never shown.
  */
-export function inviteErrorView(httpStatus: number | null, body: unknown): InviteErrorView | null {
-  if (httpStatus !== null && httpStatus >= 200 && httpStatus < 300) return null;
+export function inviteErrorView(httpStatus: number | null, body: unknown, redirected = false): InviteErrorView | null {
   const fixed = (message: string): InviteErrorView => ({ message, deactivatedUserId: null });
+  if (httpStatus !== null && redirected) return fixed(SESSION_EXPIRED_MESSAGE);
+  if (httpStatus !== null && httpStatus >= 200 && httpStatus < 300) {
+    const password = typeof body === "object" && body !== null ? (body as { password?: unknown }).password : undefined;
+    return typeof password === "string" && password !== "" ? null : fixed(INVITE_NO_RESULT_MESSAGE);
+  }
   if (httpStatus === 409 && typeof body === "object" && body !== null) {
     const { error, code, userId } = body as { error?: unknown; code?: unknown; userId?: unknown };
     if (code === "DEACTIVATED") {

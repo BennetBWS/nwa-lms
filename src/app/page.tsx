@@ -1204,7 +1204,7 @@ const AdminDashboard = () => {
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
-  // { httpStatus: number | null（通信エラーは null）, body } | null（未送信）
+  // { httpStatus: number | null（通信エラーは null）, body, redirected: boolean } | null（未送信）
   const [inviteResponse, setInviteResponse] = useState(null);
   const [inviting, setInviting] = useState(false);
   // #7: 一覧は ?status=all で取得し、タブで絞り込む
@@ -1240,13 +1240,14 @@ const AdminDashboard = () => {
       try {
         res = await fetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
       } catch {
-        setInviteResponse({ httpStatus: null, body: null });
+        setInviteResponse({ httpStatus: null, body: null, redirected: false });
         return;
       }
       // 本文が JSON でない（ゲートウェイのエラーページなど）ときは body を null とし、ステータスだけで文言を決める
       const data = await res.json().catch(() => null);
-      setInviteResponse({ httpStatus: res.status, body: data });
-      if (res.ok) await reloadStudents();
+      // redirected: セッション切れで /login にリダイレクトされ、ログイン画面を 200 で受け取った場合
+      setInviteResponse({ httpStatus: res.status, body: data, redirected: res.redirected });
+      if (res.ok && !res.redirected) await reloadStudents();
     } finally {
       setInviting(false);
     }
@@ -1306,8 +1307,8 @@ const AdminDashboard = () => {
   const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
   const studentCounts = countStudentsByTab(students);
   const visibleStudents = studentsForTab(students, studentTab);
-  const inviteError = inviteResponse ? inviteErrorView(inviteResponse.httpStatus, inviteResponse.body) : null;
-  // 成功（2xx）のときだけ本文（初期パスワード入り）を表示に使う
+  const inviteError = inviteResponse ? inviteErrorView(inviteResponse.httpStatus, inviteResponse.body, inviteResponse.redirected) : null;
+  // 成功（2xx・リダイレクトなし・本文に初期パスワードあり）のときだけ本文を表示に使う
   const inviteResult = inviteResponse && !inviteError ? inviteResponse.body : null;
   const inviteDeactivatedStudent = inviteError?.deactivatedUserId ? students.find(s => s.id === inviteError.deactivatedUserId && s.status === "deactivated") : null;
   const adminFont = "var(--font-sora), 'Sora', sans-serif";

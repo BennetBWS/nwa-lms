@@ -4,6 +4,7 @@ import {
   DEFAULT_STUDENT_TAB,
   INVITE_BAD_REQUEST_MESSAGE,
   INVITE_DEACTIVATED_UI_MESSAGE,
+  INVITE_NO_RESULT_MESSAGE,
   SESSION_EXPIRED_MESSAGE,
   STUDENT_TABS,
   confirmMessage,
@@ -354,13 +355,44 @@ describe("inviteErrorView（境界・API との対応）", () => {
     });
   });
 
-  it("2xx はエラーにならない（成功時の本文はパスワード入り、本文が読めなくても）", () => {
+  it("2xx で本文に初期パスワードがあればエラーにならない", () => {
     assert.equal(
       inviteErrorView(201, { id: "stu_dummy_3", email: "dummy@example.com", name: "だみー", password: "dummy-pass" }),
       null
     );
-    assert.equal(inviteErrorView(200, null), null);
-    assert.equal(inviteErrorView(201, { error: "ignored" }), null);
+    assert.equal(inviteErrorView(201, { password: "dummy-pass" }, false), null);
+  });
+
+  it("2xx でも本文が読めない・初期パスワードがない場合は結果を確認できない旨の固定文言", () => {
+    for (const body of [null, "<html>", [], {}, { error: "ignored" }, { password: "" }, { password: 123 }, { password: null }]) {
+      for (const code of [200, 201]) {
+        assert.deepEqual(
+          inviteErrorView(code, body),
+          { message: INVITE_NO_RESULT_MESSAGE, deactivatedUserId: null },
+          `status=${code} body=${JSON.stringify(body)}`
+        );
+      }
+    }
+  });
+
+  it("リダイレクト（/login のログイン画面を 200 で受け取る）は再ログインの文言。本文やステータスによらない", () => {
+    for (const code of [200, 201, 302, 401, 409, 500]) {
+      for (const body of [null, "<html>", { password: "dummy-pass" }, { code: "DEACTIVATED", userId: "stu_dummy_9" }]) {
+        assert.deepEqual(
+          inviteErrorView(code, body, true),
+          { message: SESSION_EXPIRED_MESSAGE, deactivatedUserId: null },
+          `status=${code} body=${JSON.stringify(body)}`
+        );
+      }
+    }
+  });
+
+  it("通信エラー（httpStatus が null）は redirected によらず通信エラーの文言", () => {
+    assert.equal(inviteErrorView(null, null, true)?.message, statusActionErrorMessage(null));
+  });
+
+  it("結果を確認できない旨の文言は日本語", () => {
+    assert.doesNotMatch(INVITE_NO_RESULT_MESSAGE, NO_ASCII_WORDS);
   });
 
   it("固定文言はすべて日本語", () => {
