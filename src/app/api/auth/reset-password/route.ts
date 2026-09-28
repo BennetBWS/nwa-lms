@@ -7,7 +7,8 @@ export async function POST(request: Request) {
   try {
     const { token, newPassword } = await request.json();
 
-    if (!token || !newPassword) {
+    // Non-string values (numbers, arrays, objects) are rejected like missing ones.
+    if (typeof token !== "string" || typeof newPassword !== "string" || !token || !newPassword) {
       return NextResponse.json({ error: "Token and new password are required" }, { status: 400 });
     }
     if (newPassword.length < 8) {

@@ -185,16 +185,30 @@ describe("reset-password: 異常系・他ユーザーへの影響（追加）", 
     assert.deepEqual(logs, []);
   });
 
-  it("newPassword が文字列以外（数値・配列）：成功しない・何も更新しない・トークンを消費しない", async () => {
-    // 現状は length の判定をすり抜け、bcrypt.hash が例外 → 500 になる（報告事項。400 が望ましい）。
-    for (const newPassword of [12345678, ["a", "b", "c", "d", "e", "f", "g", "h"]]) {
+  it("newPassword が文字列以外（数値・配列・オブジェクト・真偽値）：400、何も更新しない・トークンを消費しない", async () => {
+    for (const newPassword of [12345678, ["a", "b", "c", "d", "e", "f", "g", "h"], { length: 8 }, true]) {
       const before = snapshotUsers();
       const res = await reset(resetReq({ token: "tok-e-active", newPassword }));
-      assert.notEqual(res.status, 200, JSON.stringify(newPassword));
-      assert.ok(res.status >= 400);
+      assert.equal(res.status, 400, JSON.stringify(newPassword));
+      assert.deepEqual(await res.json(), { error: "Token and new password are required" });
       assert.deepEqual(snapshotUsers(), before);
       assert.equal(db.resets[0].used, false);
     }
+    assert.ok(!db.calls.some((c) => c.method === "passwordReset.findUnique" || c.method === "$transaction"));
+    assert.deepEqual(logs, []);
+  });
+
+  it("token が文字列以外（数値・配列・オブジェクト）：400、DB を読まず何も更新しない", async () => {
+    const before = snapshotUsers();
+    for (const token of [12345, ["tok-e-active"], { equals: "tok-e-active" }]) {
+      const res = await reset(resetReq({ token, newPassword: NEW_PASSWORD }));
+      assert.equal(res.status, 400, JSON.stringify(token));
+      assert.deepEqual(await res.json(), { error: "Token and new password are required" });
+    }
+    assert.deepEqual(snapshotUsers(), before);
+    assert.equal(db.resets[0].used, false);
+    assert.equal(db.calls.length, 0);
+    assert.deepEqual(logs, []);
   });
 });
 
