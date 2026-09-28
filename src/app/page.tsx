@@ -20,7 +20,7 @@ import {
   Home, BookOpen, Play, Bell, MessageSquare, Settings, Users, BarChart3,
   ChevronRight, Clock, FileText, HelpCircle, Lock, Search, Send, ArrowLeft,
   Plus, TrendingUp, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
-  LogOut, Target, Zap, Sparkles, ArrowUpRight
+  LogOut, Target, Zap, Sparkles, ArrowUpRight, User
 } from "lucide-react";
 import ChatSidebar from "@/components/ChatSidebar";
 import ChatMobile from "@/components/ChatMobile";
@@ -41,6 +41,7 @@ import {
   fetchSessionView,
   makeAuthFetch,
 } from "@/lib/client-session";
+import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -373,13 +374,13 @@ const ThemeToggle = ({ isDark, onToggle }) => {
 // ═══════════════════════════════════════════
 // SIDEBAR
 // ═══════════════════════════════════════════
-const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
+const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) => {
   const studentNav = [
     { id: "dashboard", icon: Home, label: "ダッシュボード" },
     { id: "courses", icon: BookOpen, label: "コース一覧" },
     { id: "lesson", icon: Play, label: "レッスン" },
     { id: "quiz", icon: HelpCircle, label: "確認テスト受講" },
-    { id: "notifications", icon: Bell, label: "通知", badge: 2 },
+    { id: "notifications", icon: Bell, label: "通知" },
     { id: "questions", icon: MessageSquare, label: "質問" },
     { id: "settings", icon: Settings, label: "設定" },
   ];
@@ -391,6 +392,8 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
     { id: "admin-quiz", icon: HelpCircle, label: "クイズ管理" },
   ];
   const nav = isAdmin ? adminNav : studentNav;
+  const shownName = displayName(userName) ?? "ユーザー";
+  const initial = avatarInitial(userName);
 
   return (
     <div style={{
@@ -430,7 +433,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
               {active && <div style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", width: 3, height: 22, borderRadius: "0 6px 6px 0", background: T.accent, boxShadow: `0 0 12px ${T.accent}60` }} />}
               <Icon size={18} strokeWidth={active ? 2 : 1.6} />
               <span style={{ flex: 1 }}>{item.label}</span>
-              {item.badge && (
+              {item.badge != null && item.badge !== 0 && (
                 <span style={{ minWidth: 20, height: 20, borderRadius: 99, background: T.danger, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", boxShadow: `0 0 8px ${T.danger}40` }}>
                   {item.badge}
                 </span>
@@ -447,10 +450,10 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
           onMouseLeave={e => e.currentTarget.style.background = "transparent"}
         >
           <Avatar style={{ width: 34, height: 34, boxShadow: "0 0 0 2px rgba(59,130,246,0.3)" }}>
-            <AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>T</AvatarFallback>
+            <AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{initial ?? <User size={16} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
           </Avatar>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Tec</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div title={shownName} style={{ fontSize: 13, fontWeight: 600, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shownName}</div>
             <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>{isAdmin ? "講師" : "在校生"}</div>
           </div>
           <LogOut size={15} style={{ color: "rgba(255,255,255,0.25)", cursor: "pointer" }} onClick={onLogout} />
@@ -464,7 +467,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout }) => {
 // ═══════════════════════════════════════════
 // STUDENT DASHBOARD — Bento Grid Layout
 // ═══════════════════════════════════════════
-const StudentDashboard = ({ setCurrentPage }) => {
+const StudentDashboard = ({ setCurrentPage, userName }) => {
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [calEvents, setCalEvents] = useState([]);
@@ -555,7 +558,7 @@ const StudentDashboard = ({ setCurrentPage }) => {
               <Sparkles size={14} style={{ color: T.accent }} />
               <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Dashboard</span>
             </div>
-            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 26, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em" }}>おかえりなさい、Tec さん</h1>
+            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 26, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em", overflowWrap: "anywhere" }}>{greetingTitle(userName)}</h1>
           </div>
         </FadeIn>
 
@@ -2193,7 +2196,7 @@ export default function NWALearningPlatform() {
   };
 
   const pages = {
-    "dashboard": <StudentDashboard setCurrentPage={handlePageChange} />,
+    "dashboard": <StudentDashboard setCurrentPage={handlePageChange} userName={sessionView.name} />,
     "courses": <CourseList setCurrentPage={handlePageChange} />,
     "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} isDark={isDark} onThemeToggle={handleThemeToggle} />,
     "quiz": <QuizPage />,
@@ -2313,7 +2316,7 @@ export default function NWALearningPlatform() {
         {mobileMenu && <div className="nwa-sidebar-overlay" onClick={() => setMobileMenu(false)} />}
 
         <div className={`nwa-sidebar ${mobileMenu ? "open" : ""}`}>
-          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} onLogout={handleLogout} />
+          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} onLogout={handleLogout} userName={sessionView.name} />
         </div>
         <main style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
           {/* Mobile header */}
