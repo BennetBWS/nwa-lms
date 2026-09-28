@@ -13,13 +13,13 @@ describe("displayName", () => {
     assert.equal(displayName({ name: "山田" }), null);
     assert.equal(displayName(""), null);
     assert.equal(displayName("   "), null);
-    assert.equal(displayName("　\t\n"), null);
+    assert.equal(displayName("\u3000\t\n"), null);
   });
 
   it("trims and collapses whitespace", () => {
     assert.equal(displayName("  山田 太郎  "), "山田 太郎");
     assert.equal(displayName("山田   太郎"), "山田 太郎");
-    assert.equal(displayName("山田　　太郎"), "山田 太郎");
+    assert.equal(displayName("山田\u3000\u3000太郎"), "山田 太郎");
     assert.equal(displayName("Taro\t\nYamada"), "Taro Yamada");
   });
 
@@ -49,11 +49,11 @@ describe("avatarInitial", () => {
 
   it("skips leading whitespace", () => {
     assert.equal(avatarInitial("   山田"), "山");
-    assert.equal(avatarInitial("　taro"), "T");
+    assert.equal(avatarInitial("\u3000taro"), "T");
   });
 
   it("keeps emoji sequences whole", () => {
-    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}"; // ZWJ sequence
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"; // ZWJ sequence
     assert.equal(avatarInitial(`${family}さん`), family);
     const thumbsUp = "\u{1F44D}\u{1F3FD}"; // skin tone modifier
     assert.equal(avatarInitial(`${thumbsUp}taro`), thumbsUp);
@@ -62,7 +62,7 @@ describe("avatarInitial", () => {
   });
 
   it("keeps combining characters with their base", () => {
-    const ga = "が"; // NFD "が"
+    const ga = "か\u3099"; // NFD "が"
     assert.equal(avatarInitial(`${ga}くと`), ga);
   });
 
