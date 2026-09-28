@@ -68,6 +68,37 @@ describe("countStudentsByTab（境界）", () => {
   });
 });
 
+describe("未知の status（件数と表示の一致）", () => {
+  // 型の上では active / deactivated だけだが、API の応答は実行時に検査されないため未知の値もありうる
+  const unknown = (id: string, name: string, status: unknown): AdminStudentRow =>
+    ({ id, name, status, deactivatedAt: null }) as unknown as AdminStudentRow;
+
+  it("deactivated 以外の値は有効として数え、有効タブに表示する", () => {
+    const list = [
+      unknown("u1", "う", "suspended"),
+      unknown("u2", "い", ""),
+      unknown("u3", "え", "DEACTIVATED"),
+      unknown("u4", "お", undefined),
+      unknown("u5", "か", null),
+      active("a1", "あ"),
+      deactivated("d1", "き"),
+    ];
+    const counts = countStudentsByTab(list);
+    assert.deepEqual(counts, { active: 6, deactivated: 1, all: 7 });
+    for (const tab of TABS) {
+      assert.equal(studentsForTab(list, tab).length, counts[tab], `tab=${tab}`);
+    }
+    assert.deepEqual(studentsForTab(list, "active").map((s) => s.id), ["a1", "u2", "u1", "u3", "u4", "u5"]);
+    assert.deepEqual(studentsForTab(list, "deactivated").map((s) => s.id), ["d1"]);
+  });
+
+  it("有効タブと無効タブの行を合わせると、すべてタブの行と過不足なく一致する", () => {
+    const list = [unknown("u1", "あ", "pending"), deactivated("d1", "い"), active("a1", "う")];
+    const split = [...studentsForTab(list, "active"), ...studentsForTab(list, "deactivated")].map((s) => s.id);
+    assert.deepEqual(split, studentsForTab(list, "all").map((s) => s.id));
+  });
+});
+
 describe("studentsForTab（境界）", () => {
   it("空配列はどのタブでも空", () => {
     for (const tab of TABS) assert.deepEqual(studentsForTab([], tab), []);

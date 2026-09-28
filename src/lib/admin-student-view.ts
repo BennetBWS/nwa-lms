@@ -26,13 +26,22 @@ export const STUDENT_TABS: ReadonlyArray<{ key: StudentTab; label: string }> = [
 
 export const DEFAULT_STUDENT_TAB: StudentTab = "active";
 
+/**
+ * The tab a student belongs to besides "all". Only "deactivated" is
+ * deactivated; any other value (including an unknown one) counts as active.
+ * Shared by countStudentsByTab and studentsForTab so counts and rows agree.
+ */
+function tabOf(status: string): Exclude<StudentTab, "all"> {
+  return status === "deactivated" ? "deactivated" : "active";
+}
+
 export function countStudentsByTab(
   students: ReadonlyArray<Pick<AdminStudentRow, "status">>
 ): Record<StudentTab, number> {
   let active = 0;
   let deactivated = 0;
   for (const s of students) {
-    if (s.status === "deactivated") deactivated += 1;
+    if (tabOf(s.status) === "deactivated") deactivated += 1;
     else active += 1;
   }
   return { active, deactivated, all: active + deactivated };
@@ -50,9 +59,9 @@ export function studentsForTab<T extends Pick<AdminStudentRow, "name" | "status"
   students: ReadonlyArray<T>,
   tab: StudentTab
 ): T[] {
-  const filtered = tab === "all" ? [...students] : students.filter((s) => s.status === tab);
+  const filtered = tab === "all" ? [...students] : students.filter((s) => tabOf(s.status) === tab);
   return filtered.sort((a, b) => {
-    const rank = (s: T) => (s.status === "deactivated" ? 1 : 0);
+    const rank = (s: T) => (tabOf(s.status) === "deactivated" ? 1 : 0);
     const byStatus = rank(a) - rank(b);
     return byStatus !== 0 ? byStatus : compareNames(a.name, b.name);
   });
