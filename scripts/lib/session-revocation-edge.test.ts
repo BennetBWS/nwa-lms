@@ -215,6 +215,70 @@ describe("reset-password: 異常系・他ユーザーへの影響（追加）", 
   });
 });
 
+describe("壊れた JSON・想定外の例外（ボディやエラー内容をログに出さない）", () => {
+  const SECRET = "dummy-secret-fragment-11e";
+  const rawReq = (url: string, body: string) =>
+    new Request(url, { method: "POST", headers: { "content-type": "application/json" }, body });
+  const CHANGE_URL = "http://localhost/api/user/change-password";
+  const RESET_URL = "http://localhost/api/auth/reset-password";
+  const brokenBodies = [`{"token":"${SECRET}","newPassword":`, `${SECRET}`, ""];
+
+  it("reset-password：壊れた JSON は 400 Invalid request body、DB を読まずログも出さない", async () => {
+    for (const body of brokenBodies) {
+      const res = await reset(rawReq(RESET_URL, body));
+      assert.equal(res.status, 400, body);
+      assert.deepEqual(await res.json(), { error: "Invalid request body" });
+    }
+    assert.equal(db.calls.length, 0);
+    assert.deepEqual(logs, []);
+  });
+
+  it("change-password：壊れた JSON は 400 Invalid request body、DB を読まずログも出さない", async () => {
+    for (const body of brokenBodies) {
+      const res = await changePassword(rawReq(CHANGE_URL, body));
+      assert.equal(res.status, 400, body);
+      assert.deepEqual(await res.json(), { error: "Invalid request body" });
+    }
+    assert.equal(db.calls.length, 0);
+    assert.deepEqual(logs, []);
+  });
+
+  it("JSON だがオブジェクトでない（null・配列・文字列・数値）は入力不足と同じ 400", async () => {
+    const before = snapshotUsers();
+    for (const body of ["null", "[]", `"${SECRET}"`, "12345678"]) {
+      const r1 = await reset(rawReq(RESET_URL, body));
+      assert.equal(r1.status, 400, body);
+      assert.deepEqual(await r1.json(), { error: "Token and new password are required" });
+      const r2 = await changePassword(rawReq(CHANGE_URL, body));
+      assert.equal(r2.status, 400, body);
+      assert.deepEqual(await r2.json(), { error: "Password must be at least 8 characters" });
+    }
+    assert.deepEqual(snapshotUsers(), before);
+    assert.equal(db.calls.length, 0);
+    assert.deepEqual(logs, []);
+  });
+
+  it("reset-password の想定外の例外：500、ログはエラー名だけ（トークンやメッセージを含まない）", async () => {
+    db.beforeTransaction = () => {
+      throw new TypeError(`boom tok-e-active ${SECRET}`);
+    };
+    const res = await reset(resetReq({ token: "tok-e-active", newPassword: NEW_PASSWORD }));
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "Internal server error" });
+    assert.deepEqual(logs, ["[reset-password] Unexpected error: TypeError"]);
+  });
+
+  it("change-password の想定外の例外：500、ログはエラー名だけ（メッセージを含まない）", async () => {
+    mock.method(db.client.user as { findUnique: () => Promise<unknown> }, "findUnique", async () => {
+      throw new RangeError(`boom active-7@example.com ${SECRET}`);
+    });
+    const res = await changePassword(changeReq({ currentPassword: CURRENT_PASSWORD, newPassword: NEW_PASSWORD }));
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "Internal server error" });
+    assert.deepEqual(logs, ["[change-password] Unexpected error: RangeError"]);
+  });
+});
+
 describe("依存関係の静的確認（Edge の middleware に DB を持ち込まない）", () => {
   const src = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
   const importsOf = (code: string) =>

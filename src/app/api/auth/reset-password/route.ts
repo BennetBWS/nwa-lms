@@ -2,10 +2,21 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { checkResetToken } from "@/lib/account-access";
+import { safeErrorSummary } from "@/lib/safe-error";
 
 export async function POST(request: Request) {
   try {
-    const { token, newPassword } = await request.json();
+    // A malformed body is a client error; nothing from it is logged.
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+    const { token, newPassword } = (typeof body === "object" && body !== null ? body : {}) as {
+      token?: unknown;
+      newPassword?: unknown;
+    };
 
     // Non-string values (numbers, arrays, objects) are rejected like missing ones.
     if (typeof token !== "string" || typeof newPassword !== "string" || !token || !newPassword) {
@@ -59,7 +70,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("reset-password error:", error);
+    // Do not pass the error object: its message/meta/stack may contain the token.
+    console.error("[reset-password] Unexpected error:", safeErrorSummary(error).name);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
