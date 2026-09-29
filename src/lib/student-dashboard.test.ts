@@ -118,12 +118,19 @@ describe("summarizeCourses", () => {
 });
 
 describe("pickActiveCourse", () => {
-  it("受講中のコースを選ぶ。なければ最初のコース、0 件なら null", () => {
+  it("受講中のコース → なければ最初の未完了コース → すべて完了なら最初のコース、0 件なら null", () => {
     const a = { id: "a", completedLessons: 0, totalLessons: 3 };
     const b = { id: "b", completedLessons: 1, totalLessons: 3 };
     const done = { id: "d", completedLessons: 3, totalLessons: 3 };
+    const done2 = { id: "d2", completedLessons: 2, totalLessons: 2 };
+    const empty = { id: "e", completedLessons: 0, totalLessons: 0 };
     assert.equal(pickActiveCourse([a, b]), b);
-    assert.equal(pickActiveCourse([done, a]), done);
+    // STEP1 完了・STEP2 未着手なら STEP2
+    assert.equal(pickActiveCourse([done, a]), a);
+    // レッスンのないコースは未完了として扱わない
+    assert.equal(pickActiveCourse([done, empty, a]), a);
+    // すべて完了なら最初のコース
+    assert.equal(pickActiveCourse([done, done2]), done);
     assert.equal(pickActiveCourse([]), null);
   });
 
@@ -159,7 +166,7 @@ describe("pickNextLessons", () => {
     );
   });
 
-  it("受講中のコースがなければ最初のコースから", () => {
+  it("受講中のコースがなければ最初の未完了コースから", () => {
     const next = pickNextLessons([C1, C2], new Set());
     assert.deepEqual(
       next.map((n) => n.lessonId),
@@ -175,9 +182,17 @@ describe("pickNextLessons", () => {
     );
   });
 
-  it("選ばれたコースが全部完了なら空（受講中のコースがなく最初のコースが完了済み）", () => {
+  it("最初のコースが完了・次のコースが未着手なら、次のコースのレッスン", () => {
     const next = pickNextLessons([C1, C2], new Set(["c1_a1", "c1_a2", "c1_b1", "c1_b2"]));
-    assert.deepEqual(next, []);
+    assert.deepEqual(
+      next.map((n) => n.lessonId),
+      ["c2_a1", "c2_a2", "c2_a3"]
+    );
+  });
+
+  it("すべてのコースが完了なら空", () => {
+    const all = new Set(["c1_a1", "c1_a2", "c1_b1", "c1_b2", "c2_a1", "c2_a2", "c2_a3", "c2_a4", "c2_a5"]);
+    assert.deepEqual(pickNextLessons([C1, C2], all), []);
   });
 
   it("コース 0 件・レッスン 0 件・limit 0 は空", () => {

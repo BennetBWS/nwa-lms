@@ -124,9 +124,18 @@ export function isInProgress(c: Counts): boolean {
   return c.completedLessons > 0 && c.completedLessons < c.totalLessons;
 }
 
-/** 受講中のコース。なければ最初のコース。コースが 0 件なら null */
+/** 未完了のコース（レッスンがあり、まだ全部は終えていない） */
+function isUnfinished(c: Counts): boolean {
+  return c.completedLessons < c.totalLessons;
+}
+
+/**
+ * 「学習を続ける」と Next Up の対象コース（#32、Tec 決定）：
+ * 受講中のコース → なければ最初の未完了コース（STEP1 完了・STEP2 未着手なら STEP2）→
+ * すべて完了なら最初のコース。コースが 0 件なら null
+ */
 export function pickActiveCourse<C extends Counts>(courses: readonly C[]): C | null {
-  return courses.find(isInProgress) ?? courses[0] ?? null;
+  return courses.find(isInProgress) ?? courses.find(isUnfinished) ?? courses[0] ?? null;
 }
 
 export type NextLesson = { lessonId: string; title: string; courseId: string; courseName: string };
@@ -135,7 +144,7 @@ const byOrderThenId = (a: { order: number; id: string }, b: { order: number; id:
   a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /**
- * Next Up：受講中のコース（なければ最初のコース）の未完了レッスンを、
+ * Next Up：pickActiveCourse で選んだコースの未完了レッスンを、
  * セクション順・レッスン順（order、同順は id）に最大 `limit` 件。
  */
 export function pickNextLessons(
