@@ -13,7 +13,7 @@ export async function GET() {
     const userId = session.user.id;
     const now = new Date();
 
-    const [courses, userProgress, recentActivity, notifications] =
+    const [courses, userProgress, recentActivity, notifications, unreadNotifications] =
       await Promise.all([
         prisma.course.findMany({
           orderBy: { order: "asc" },
@@ -65,11 +65,10 @@ export async function GET() {
           take: 5,
           select: { id: true, title: true, message: true, read: true, createdAt: true },
         }),
+        prisma.notification.count({
+          where: { userId, read: false },
+        }),
       ]);
-
-    const unreadNotifications = await prisma.notification.count({
-      where: { userId, read: false },
-    });
 
     const completedLessonIds = new Set(userProgress.map((p) => p.lessonId));
     const summary = summarizeCourses(courses, completedLessonIds);
