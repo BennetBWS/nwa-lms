@@ -201,21 +201,31 @@ export function nextUpEmptyMessage(c: NextUpEmptyInput): string {
   return "次のレッスンはありません";
 }
 
-/** 配列の要素のうち、オブジェクト（null・配列を除く）だけを残す。API 応答が崩れていても落とさない */
-function onlyObjects<R extends object>(rows: ReadonlyArray<R | null | undefined>): R[] {
-  return rows.filter((r): r is R => typeof r === "object" && r !== null && !Array.isArray(r));
+function isPlainObject(r: unknown): r is Record<string, unknown> {
+  return typeof r === "object" && r !== null && !Array.isArray(r);
+}
+
+/**
+ * 配列の要素のうち、オブジェクト（null・配列を除く）で、`stringKeys` がすべて文字列のものだけを残す。
+ * API 応答が崩れていても落とさない
+ */
+function onlyObjects<R extends object>(rows: ReadonlyArray<R | null | undefined>, stringKeys: ReadonlyArray<keyof R & string>): R[] {
+  return rows.filter((r): r is R => isPlainObject(r) && stringKeys.every((k) => typeof r[k] === "string"));
 }
 
 export type ActivityInput = { lessonTitle: string; courseName: string; completedAt: DateInput };
 export type ActivityItem = { text: string; time: string };
 
-/** Activity の行。テキストは「コース名 - レッスン名」、時刻は相対時刻。null や非オブジェクトの要素は飛ばす */
+/**
+ * Activity の行。テキストは「コース名 - レッスン名」、時刻は相対時刻。
+ * null・非オブジェクト、lessonTitle か courseName が文字列でない要素は飛ばす
+ */
 export function toActivityItems(
   rows: ReadonlyArray<ActivityInput | null | undefined> | null | undefined,
   now: Date
 ): ActivityItem[] {
   if (!Array.isArray(rows)) return [];
-  return onlyObjects(rows).map((r) => ({
+  return onlyObjects(rows, ["lessonTitle", "courseName"]).map((r) => ({
     text: `${r.courseName} - ${r.lessonTitle}`,
     time: relativeTimeJa(r.completedAt, now),
   }));
@@ -224,13 +234,16 @@ export function toActivityItems(
 export type NewsInput = { id: string; title: string; message: string; read: boolean; createdAt: DateInput };
 export type NewsItem = { id: string; title: string; message: string; unread: boolean; time: string };
 
-/** お知らせの行。1 行目 title、2 行目 message、未読フラグ、createdAt からの相対時刻。null や非オブジェクトの要素は飛ばす */
+/**
+ * お知らせの行。1 行目 title、2 行目 message、未読フラグ、createdAt からの相対時刻。
+ * null・非オブジェクト、title が文字列でない要素は飛ばす。message が文字列でなければ空文字
+ */
 export function toNewsItems(rows: ReadonlyArray<NewsInput | null | undefined> | null | undefined, now: Date): NewsItem[] {
   if (!Array.isArray(rows)) return [];
-  return onlyObjects(rows).map((n) => ({
+  return onlyObjects(rows, ["title"]).map((n) => ({
     id: n.id,
     title: n.title,
-    message: n.message,
+    message: typeof n.message === "string" ? n.message : "",
     unread: !n.read,
     time: relativeTimeJa(n.createdAt, now),
   }));

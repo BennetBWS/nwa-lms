@@ -307,6 +307,47 @@ describe("toActivityItems / toNewsItems：不正な入力", () => {
     assert.deepEqual(toNewsItems(allJunk as never, NOW), []);
   });
 
+  it("Activity は lessonTitle と courseName が文字列の要素だけを通す", () => {
+    const rows = [
+      {},
+      { courseName: "C", completedAt: ago(MIN) },
+      { lessonTitle: "L", completedAt: ago(MIN) },
+      { lessonTitle: null, courseName: "C", completedAt: ago(MIN) },
+      { lessonTitle: "L", courseName: 1, completedAt: ago(MIN) },
+      { lessonTitle: ["L"], courseName: "C", completedAt: ago(MIN) },
+      { lessonTitle: "L", courseName: { name: "C" }, completedAt: ago(MIN) },
+      { lessonTitle: "OK", courseName: "C", completedAt: ago(MIN) },
+      // 空文字も文字列なので通す
+      { lessonTitle: "", courseName: "", completedAt: ago(HOUR) },
+    ];
+    assert.deepEqual(toActivityItems(rows as never, NOW), [
+      { text: "C - OK", time: "1分前" },
+      { text: " - ", time: "1時間前" },
+    ]);
+  });
+
+  it("お知らせは title が文字列の要素だけを通し、message が文字列でなければ空文字", () => {
+    const rows = [
+      {},
+      { id: "x1", message: "M", read: false, createdAt: ago(MIN) },
+      { id: "x2", title: null, message: "M", read: false, createdAt: ago(MIN) },
+      { id: "x3", title: 1, message: "M", read: false, createdAt: ago(MIN) },
+      { id: "x4", title: { t: "T" }, message: "M", read: false, createdAt: ago(MIN) },
+      { id: "a", title: "T", message: "M", read: false, createdAt: ago(MIN) },
+      { id: "b", title: "T2", read: true, createdAt: ago(MIN) },
+      { id: "c", title: "T3", message: null, read: true, createdAt: ago(MIN) },
+      { id: "d", title: "T4", message: 42, read: true, createdAt: ago(MIN) },
+      { id: "e", title: "", message: "M5", read: true, createdAt: ago(MIN) },
+    ];
+    assert.deepEqual(toNewsItems(rows as never, NOW), [
+      { id: "a", title: "T", message: "M", unread: true, time: "1分前" },
+      { id: "b", title: "T2", message: "", unread: false, time: "1分前" },
+      { id: "c", title: "T3", message: "", unread: false, time: "1分前" },
+      { id: "d", title: "T4", message: "", unread: false, time: "1分前" },
+      { id: "e", title: "", message: "M5", unread: false, time: "1分前" },
+    ]);
+  });
+
   it("日時が不正・欠けている要素は time が空文字（例外にしない）", () => {
     assert.deepEqual(toActivityItems([{ lessonTitle: "L", courseName: "C", completedAt: "bad" }], NOW), [
       { text: "C - L", time: "" },
