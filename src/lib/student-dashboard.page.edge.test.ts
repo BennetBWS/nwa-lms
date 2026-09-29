@@ -103,16 +103,40 @@ describe("StudentDashboard：state と読み込み", () => {
     }
   });
 
-  it("res.ok でない・res.redirected のときは JSON を読まずに失敗扱い", () => {
-    assert.match(dashboard, /if \(!res\.ok \|\| res\.redirected\) return null;/);
-    assert.match(dashboard, /if \(data && !data\.error\) setDashData\(data\);\s*else setLoadFailed\(true\);/);
+  const load = dashboard.slice(dashboard.indexOf("const loadDashboard"), dashboard.indexOf("useEffect("));
+
+  it("res.ok でないときは JSON を読まずに失敗扱い", () => {
+    assert.match(load, /if \(!res\.ok\) return null;/);
+    assert.ok(load.indexOf("if (!res.ok) return null;") < load.indexOf("res.json()"));
+    assert.match(load, /if \(data && !data\.error\) setDashData\(data\);\s*else setLoadFailed\(true\);/);
+  });
+
+  it("res.redirected（セッション失効で /login へ移動中）は失敗にせず、読み込み中のまま", () => {
+    // redirected を先に見て、JSON を読まない
+    assert.match(load, /if \(res\.redirected\) \{ sessionExpired = true; return null; \}/);
+    assert.ok(load.indexOf("if (res.redirected)") < load.indexOf("if (!res.ok)"));
+    // エラーカードを出さない（setLoadFailed の前で戻る）
+    const then2 = load.slice(load.indexOf("}).then(data => {"), load.indexOf(".catch("));
+    assert.ok(then2.indexOf("if (sessionExpired) return;") >= 0);
+    assert.ok(then2.indexOf("if (sessionExpired) return;") < then2.indexOf("setLoadFailed(true)"));
+    // loading を false に戻さず、多重取得の防止も解かない
+    const fin = load.slice(load.indexOf(".finally("));
+    assert.ok(fin.indexOf("if (sessionExpired) return;") >= 0);
+    assert.ok(fin.indexOf("if (sessionExpired) return;") < fin.indexOf("setLoading(false)"));
+    assert.ok(fin.indexOf("if (sessionExpired) return;") < fin.indexOf("dashInFlight.current = false"));
   });
 
   it("再読み込みは loading を戻し、前回の失敗フラグを消してから読む", () => {
-    const load = dashboard.slice(dashboard.indexOf("const loadDashboard"), dashboard.indexOf("useEffect("));
     assert.ok(load.indexOf("setLoading(true)") < load.indexOf("authFetch("));
     assert.ok(load.indexOf("setLoadFailed(false)") < load.indexOf("authFetch("));
-    assert.match(load, /\.finally\(\(\) => setLoading\(false\)\)/);
+    assert.match(load, /\.finally\(\(\) => \{[\s\S]*setLoading\(false\);[\s\S]*\}\);/);
+  });
+
+  it("読み込み中は並行に取得しない（useRef のフラグ）・再読み込みボタンは読み込み中 disabled", () => {
+    assert.match(dashboard, /const dashInFlight = useRef\(false\);/);
+    assert.match(load, /^const loadDashboard = \(\) => \{\s*if \(dashInFlight\.current\) return;\s*dashInFlight\.current = true;/);
+    assert.ok(load.indexOf("dashInFlight.current = true") < load.indexOf("authFetch("));
+    assert.match(dashboard, /<Button size="sm" onClick=\{loadDashboard\} disabled=\{loading\}/);
   });
 
   it("初回の読み込みは useEffect の空依存で 1 回", () => {

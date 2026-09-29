@@ -473,20 +473,34 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
 
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const dashInFlight = useRef(false);
+
   // Fetch dashboard data from API.
   // An expired session is handled by authFetch (sign out and go to /login) rather
   // than silently rendering an empty dashboard. Any other failure shows an error card
   // instead of a dashboard filled with zeros.
   const loadDashboard = () => {
+    if (dashInFlight.current) return;
+    dashInFlight.current = true;
     setLoading(true);
     setLoadFailed(false);
+    // Redirected (the session expired and authFetch is moving to /login): keep the
+    // loading screen instead of flashing the error card, and do not fetch again.
+    let sessionExpired = false;
     authFetch("/api/dashboard").then(res => {
-      if (!res.ok || res.redirected) return null;
+      if (res.redirected) { sessionExpired = true; return null; }
+      if (!res.ok) return null;
       return res.json();
     }).then(data => {
+      if (sessionExpired) return;
       if (data && !data.error) setDashData(data);
       else setLoadFailed(true);
-    }).catch(() => setLoadFailed(true)).finally(() => setLoading(false));
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      dashInFlight.current = false;
+      setLoading(false);
+    });
   };
 
   useEffect(() => { loadDashboard(); }, []);
@@ -544,7 +558,7 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
           <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>ダッシュボードを読み込めませんでした</div>
             <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
-            <Button size="sm" onClick={loadDashboard} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+            <Button size="sm" onClick={loadDashboard} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
               再読み込み
             </Button>
           </div>
