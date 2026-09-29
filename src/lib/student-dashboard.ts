@@ -201,13 +201,21 @@ export function nextUpEmptyMessage(c: NextUpEmptyInput): string {
   return "次のレッスンはありません";
 }
 
+/** 配列の要素のうち、オブジェクト（null・配列を除く）だけを残す。API 応答が崩れていても落とさない */
+function onlyObjects<R extends object>(rows: ReadonlyArray<R | null | undefined>): R[] {
+  return rows.filter((r): r is R => typeof r === "object" && r !== null && !Array.isArray(r));
+}
+
 export type ActivityInput = { lessonTitle: string; courseName: string; completedAt: DateInput };
 export type ActivityItem = { text: string; time: string };
 
-/** Activity の行。テキストは「コース名 - レッスン名」、時刻は相対時刻 */
-export function toActivityItems(rows: ReadonlyArray<ActivityInput> | null | undefined, now: Date): ActivityItem[] {
+/** Activity の行。テキストは「コース名 - レッスン名」、時刻は相対時刻。null や非オブジェクトの要素は飛ばす */
+export function toActivityItems(
+  rows: ReadonlyArray<ActivityInput | null | undefined> | null | undefined,
+  now: Date
+): ActivityItem[] {
   if (!Array.isArray(rows)) return [];
-  return rows.map((r) => ({
+  return onlyObjects(rows).map((r) => ({
     text: `${r.courseName} - ${r.lessonTitle}`,
     time: relativeTimeJa(r.completedAt, now),
   }));
@@ -216,10 +224,10 @@ export function toActivityItems(rows: ReadonlyArray<ActivityInput> | null | unde
 export type NewsInput = { id: string; title: string; message: string; read: boolean; createdAt: DateInput };
 export type NewsItem = { id: string; title: string; message: string; unread: boolean; time: string };
 
-/** お知らせの行。1 行目 title、2 行目 message、未読フラグ、createdAt からの相対時刻 */
-export function toNewsItems(rows: ReadonlyArray<NewsInput> | null | undefined, now: Date): NewsItem[] {
+/** お知らせの行。1 行目 title、2 行目 message、未読フラグ、createdAt からの相対時刻。null や非オブジェクトの要素は飛ばす */
+export function toNewsItems(rows: ReadonlyArray<NewsInput | null | undefined> | null | undefined, now: Date): NewsItem[] {
   if (!Array.isArray(rows)) return [];
-  return rows.map((n) => ({
+  return onlyObjects(rows).map((n) => ({
     id: n.id,
     title: n.title,
     message: n.message,

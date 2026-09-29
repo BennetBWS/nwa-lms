@@ -274,6 +274,39 @@ describe("toActivityItems / toNewsItems：不正な入力", () => {
     }
   });
 
+  it("配列の中の null・undefined・非オブジェクト（文字列・数値・真偽値・配列）の要素は飛ばし、残りは順番どおり変換する", () => {
+    const junk = [null, undefined, "x", 1, true, []];
+    const activity = [
+      ...junk,
+      { lessonTitle: "L1", courseName: "C", completedAt: ago(MIN) },
+      null,
+      { lessonTitle: "L2", courseName: "C", completedAt: ago(HOUR) },
+      7,
+    ];
+    assert.deepEqual(toActivityItems(activity as never, NOW), [
+      { text: "C - L1", time: "1分前" },
+      { text: "C - L2", time: "1時間前" },
+    ]);
+    const news = [
+      "n",
+      { id: "a", title: "T", message: "M", read: false, createdAt: ago(MIN) },
+      null,
+      [],
+      { id: "b", title: "T2", message: "M2", read: true, createdAt: ago(DAY) },
+      undefined,
+    ];
+    assert.deepEqual(toNewsItems(news as never, NOW), [
+      { id: "a", title: "T", message: "M", unread: true, time: "1分前" },
+      { id: "b", title: "T2", message: "M2", unread: false, time: "1日前" },
+    ]);
+  });
+
+  it("要素がすべて null・非オブジェクトなら空配列（例外にしない）", () => {
+    const allJunk = [null, undefined, 0, "", false, []];
+    assert.deepEqual(toActivityItems(allJunk as never, NOW), []);
+    assert.deepEqual(toNewsItems(allJunk as never, NOW), []);
+  });
+
   it("日時が不正・欠けている要素は time が空文字（例外にしない）", () => {
     assert.deepEqual(toActivityItems([{ lessonTitle: "L", courseName: "C", completedAt: "bad" }], NOW), [
       { text: "C - L", time: "" },
