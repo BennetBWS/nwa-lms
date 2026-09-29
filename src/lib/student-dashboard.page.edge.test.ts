@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { classifyAuthFailure } from "./client-session";
 
 // #32 page.tsx（// @ts-nocheck）の StudentDashboard をソースで追加検査する。
 // @ts-nocheck のため typecheck では未定義の識別子や取り違えを検出できない。ここで文字列として確かめる。
@@ -105,16 +106,78 @@ describe("StudentDashboard：state と読み込み", () => {
 
   const load = dashboard.slice(dashboard.indexOf("const loadDashboard"), dashboard.indexOf("useEffect("));
 
-  it("res.ok でないときは JSON を読まずに失敗扱い", () => {
-    assert.match(load, /if \(!res\.ok\) return null;/);
-    assert.ok(load.indexOf("if (!res.ok) return null;") < load.indexOf("res.json()"));
+  it("失効でない失敗（!res.ok・/login 以外へのリダイレクト）は JSON を読まずに失敗扱い", () => {
+    assert.match(load, /if \(!res\.ok \|\| res\.redirected\) return null;/);
+    assert.ok(load.indexOf("if (!res.ok || res.redirected) return null;") < load.indexOf("res.json()"));
     assert.match(load, /if \(data && !data\.error\) setDashData\(data\);\s*else setLoadFailed\(true\);/);
   });
 
-  it("res.redirected（セッション失効で /login へ移動中）は失敗にせず、読み込み中のまま", () => {
-    // redirected を先に見て、JSON を読まない
-    assert.match(load, /if \(res\.redirected\) \{ sessionExpired = true; return null; \}/);
-    assert.ok(load.indexOf("if (res.redirected)") < load.indexOf("if (!res.ok)"));
+  it("失効の判定は authFetch と同じ classifyAuthFailure で、失敗の判定より先に行う", () => {
+    assert.match(
+      load,
+      /if \(classifyAuthFailure\(\{ status: res\.status, redirected: res\.redirected, url: res\.url \}\) === "expired"\) \{ sessionExpired = true; return null; \}/
+    );
+    assert.ok(load.indexOf("classifyAuthFailure(") < load.indexOf("if (!res.ok || res.redirected)"));
+    // res.redirected だけで失効扱いにしない（/login 以外へのリダイレクトで読み込み中のまま止まるため）
+    assert.doesNotMatch(load, /if \(res\.redirected\) \{ sessionExpired = true/);
+    assert.match(src, /import \{[^}]*\bclassifyAuthFailure\b[^}]*\} from "@\/lib\/client-session";/);
+  });
+
+  // 1 つ目の then のコールバックを取り出し、実際の classifyAuthFailure で動かす
+  const firstThen = (() => {
+    const head = 'authFetch("/api/dashboard").then(res => {';
+    const from = load.indexOf(head);
+    assert.ok(from >= 0, "authFetch の then が見つからない");
+    const body = load.slice(from + head.length, load.indexOf("}).then(data => {"));
+    return (res: { status: number; ok: boolean; redirected: boolean; url: string }) => {
+      const state = { sessionExpired: false, jsonRead: false };
+      const r = { ...res, json: () => { state.jsonRead = true; return "json"; } };
+      const fn = new Function(
+        "classifyAuthFailure",
+        "res",
+        "state",
+        `let sessionExpired = false; const out = (() => {${body}})(); state.sessionExpired = sessionExpired; return out;`
+      );
+      const out = fn(classifyAuthFailure, r, state);
+      return { out, ...state };
+    };
+  })();
+
+  it("失効（/login へのリダイレクト・401）は sessionExpired を立てて JSON を読まない", () => {
+    for (const res of [
+      { status: 200, ok: true, redirected: true, url: "https://nwa-lms.example.com/login?callbackUrl=%2F" },
+      { status: 401, ok: false, redirected: false, url: "https://nwa-lms.example.com/api/dashboard" },
+    ]) {
+      const r = firstThen(res);
+      assert.equal(r.out, null, JSON.stringify(res));
+      assert.equal(r.sessionExpired, true, JSON.stringify(res));
+      assert.equal(r.jsonRead, false, JSON.stringify(res));
+    }
+  });
+
+  it("/login 以外へのリダイレクトと !res.ok は失敗（sessionExpired を立てずに null）", () => {
+    for (const res of [
+      { status: 200, ok: true, redirected: true, url: "https://nwa-lms.example.com/" },
+      { status: 200, ok: true, redirected: true, url: "https://nwa-lms.example.com/maintenance" },
+      { status: 500, ok: false, redirected: false, url: "https://nwa-lms.example.com/api/dashboard" },
+      { status: 403, ok: false, redirected: false, url: "https://nwa-lms.example.com/api/dashboard" },
+      { status: 404, ok: false, redirected: false, url: "https://nwa-lms.example.com/api/dashboard" },
+    ]) {
+      const r = firstThen(res);
+      assert.equal(r.out, null, JSON.stringify(res));
+      assert.equal(r.sessionExpired, false, JSON.stringify(res));
+      assert.equal(r.jsonRead, false, JSON.stringify(res));
+    }
+  });
+
+  it("成功（200・リダイレクトなし）は JSON を読む", () => {
+    const r = firstThen({ status: 200, ok: true, redirected: false, url: "https://nwa-lms.example.com/api/dashboard" });
+    assert.equal(r.out, "json");
+    assert.equal(r.sessionExpired, false);
+    assert.equal(r.jsonRead, true);
+  });
+
+  it("失効時は失敗にせず、読み込み中のまま", () => {
     // エラーカードを出さない（setLoadFailed の前で戻る）
     const then2 = load.slice(load.indexOf("}).then(data => {"), load.indexOf(".catch("));
     assert.ok(then2.indexOf("if (sessionExpired) return;") >= 0);

@@ -485,12 +485,14 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
     dashInFlight.current = true;
     setLoading(true);
     setLoadFailed(false);
-    // Redirected (the session expired and authFetch is moving to /login): keep the
-    // loading screen instead of flashing the error card, and do not fetch again.
+    // Session expired (redirected to /login, or 401), judged by the same rule as
+    // authFetch, which is moving to /login: keep the loading screen instead of
+    // flashing the error card, and do not fetch again. Any other redirect or
+    // non-ok response is a failure (error card).
     let sessionExpired = false;
     authFetch("/api/dashboard").then(res => {
-      if (res.redirected) { sessionExpired = true; return null; }
-      if (!res.ok) return null;
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
       return res.json();
     }).then(data => {
       if (sessionExpired) return;
