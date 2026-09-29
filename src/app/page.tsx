@@ -498,7 +498,8 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
     completedLessons: c.completedLessons, totalLessons: c.totalLessons,
   })) || [];
 
-  // Same rule as nextLessons on the API (in progress, otherwise the first course).
+  // Same rule as nextLessons on the API (in progress, otherwise the first unfinished
+  // course, otherwise the first course).
   const activeCourse = pickActiveCourse(courses);
   const radial = [{ value: activeCourse?.progress || 0, fill: T.accentVivid, max: 100 }];
 
