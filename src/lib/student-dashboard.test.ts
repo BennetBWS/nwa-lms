@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   countCompletedSince,
+  nextUpEmptyMessage,
   pickActiveCourse,
   pickNextLessons,
   relativeTimeJa,
@@ -283,5 +284,30 @@ describe("toNewsItems", () => {
   it("空配列・null は空配列（ようこそのフォールバックを出さない）", () => {
     assert.deepEqual(toNewsItems([], NOW), []);
     assert.deepEqual(toNewsItems(null, NOW), []);
+  });
+});
+
+describe("nextUpEmptyMessage（Next Up が 0 件のときの文言）", () => {
+  it("コース 0 件は「コースはまだありません」", () => {
+    assert.equal(nextUpEmptyMessage({ courseCount: 0, completedLessons: 0, totalLessons: 0 }), "コースはまだありません");
+  });
+
+  it("コースはあるがレッスン 0 件は「レッスンはまだありません」（「すべて完了」にしない）", () => {
+    assert.equal(nextUpEmptyMessage({ courseCount: 2, completedLessons: 0, totalLessons: 0 }), "レッスンはまだありません");
+  });
+
+  it("全レッスン完了（completed === total かつ total > 0）だけ「すべて完了しました」", () => {
+    assert.equal(nextUpEmptyMessage({ courseCount: 1, completedLessons: 1, totalLessons: 1 }), "すべて完了しました");
+    assert.equal(nextUpEmptyMessage({ courseCount: 8, completedLessons: 300, totalLessons: 300 }), "すべて完了しました");
+  });
+
+  it("未完了が残っているのに Next Up が空（食い違い）のときは「すべて完了」にしない", () => {
+    assert.equal(nextUpEmptyMessage({ courseCount: 1, completedLessons: 299, totalLessons: 300 }), "次のレッスンはありません");
+    assert.equal(nextUpEmptyMessage({ courseCount: 1, completedLessons: 0, totalLessons: 3 }), "次のレッスンはありません");
+  });
+
+  it("値が欠けている（古い API 応答）ときも例外を出さない", () => {
+    const bad = { courseCount: 1, completedLessons: undefined, totalLessons: undefined } as unknown as Parameters<typeof nextUpEmptyMessage>[0];
+    assert.equal(nextUpEmptyMessage(bad), "レッスンはまだありません");
   });
 });

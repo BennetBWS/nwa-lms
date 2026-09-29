@@ -42,7 +42,7 @@ import {
   makeAuthFetch,
 } from "@/lib/client-session";
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
-import { pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
+import { nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -637,7 +637,7 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
               </div>
               <div style={{ padding: "0 20px 12px", flex: 1 }}>
                 {nextLessons.length === 0
-                  ? emptyText(courses.length === 0 ? "コースはまだありません" : "すべて完了しました")
+                  ? emptyText(nextUpEmptyMessage({ courseCount: courses.length, completedLessons: dashData.completedLessons, totalLessons: dashData.totalLessons }))
                   : nextLessons.map((l, i) => (
                     <div key={l.lessonId} onClick={() => setCurrentPage("lesson", { courseId: l.courseId })} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
                       onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>

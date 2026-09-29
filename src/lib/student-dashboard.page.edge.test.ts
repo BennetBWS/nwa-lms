@@ -181,11 +181,20 @@ describe("StudentDashboard：変数の取り違えがない", () => {
 });
 
 describe("StudentDashboard：空の状態の分岐", () => {
-  it("コース 0 件：CTA なし・Next Up は全幅で「コースはまだありません」・カリキュラムも同じ文言", () => {
+  it("コース 0 件：CTA なし・Next Up は全幅・カリキュラムは「コースはまだありません」", () => {
     assert.match(dashboard, /\{activeCourse && \(/);
     assert.match(dashboard, /gridColumn: activeCourse \? "span 4" : "span 12"/);
-    assert.match(dashboard, /emptyText\(courses\.length === 0 \? "コースはまだありません" : "すべて完了しました"\)/);
     assert.match(dashboard, /\{courses\.length === 0 && emptyText\("コースはまだありません"\)\}/);
+  });
+
+  it("Next Up の空表示は nextUpEmptyMessage に件数（コース数・API の completedLessons / totalLessons）を渡す", () => {
+    assert.ok(definedNames().has("nextUpEmptyMessage"));
+    assert.match(
+      dashboard,
+      /emptyText\(nextUpEmptyMessage\(\{ courseCount: courses\.length, completedLessons: dashData\.completedLessons, totalLessons: dashData\.totalLessons \}\)\)/
+    );
+    // 固定の「すべて完了しました」をソースに直書きしない
+    assert.doesNotMatch(dashboard, /"すべて完了しました"/);
   });
 
   it("お知らせ 0 件・活動 0 件は、それぞれのカードの中だけで空表示（カードは残す）", () => {

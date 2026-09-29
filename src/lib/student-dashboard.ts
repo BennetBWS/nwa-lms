@@ -186,6 +186,21 @@ export function countCompletedSince(
 
 // ───────────── 画面側の変換 ─────────────
 
+export type NextUpEmptyInput = { courseCount: number; completedLessons: number; totalLessons: number };
+
+/**
+ * Next Up が 0 件のときの文言。
+ * コース 0 件 →「コースはまだありません」、コースはあるがレッスン 0 件 →「レッスンはまだありません」、
+ * 全レッスン完了 →「すべて完了しました」。
+ * それ以外（未完了があるのに Next Up が空という食い違い）は「次のレッスンはありません」。
+ */
+export function nextUpEmptyMessage(c: NextUpEmptyInput): string {
+  if (!(c.courseCount > 0)) return "コースはまだありません";
+  if (!(c.totalLessons > 0)) return "レッスンはまだありません";
+  if (c.completedLessons === c.totalLessons) return "すべて完了しました";
+  return "次のレッスンはありません";
+}
+
 export type ActivityInput = { lessonTitle: string; courseName: string; completedAt: DateInput };
 export type ActivityItem = { text: string; time: string };
 

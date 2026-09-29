@@ -72,7 +72,7 @@ describe("StudentDashboard：データの配線", () => {
   });
 
   it("空の状態の文言", () => {
-    for (const text of ["すべて完了しました", "お知らせはありません", "まだ学習履歴はありません"]) {
+    for (const text of ["お知らせはありません", "まだ学習履歴はありません"]) {
       assert.ok(dashboard.includes(text), text);
     }
   });
