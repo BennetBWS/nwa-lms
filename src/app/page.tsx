@@ -42,6 +42,8 @@ import {
   makeAuthFetch,
 } from "@/lib/client-session";
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
+import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
+import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -470,73 +472,64 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) =
 const StudentDashboard = ({ setCurrentPage, userName }) => {
   const [dashData, setDashData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [calEvents, setCalEvents] = useState([]);
-  const [calLoading, setCalLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const dashInFlight = useRef(false);
 
   // Fetch dashboard data from API.
   // An expired session is handled by authFetch (sign out and go to /login) rather
-  // than silently rendering an empty dashboard.
-  useEffect(() => {
+  // than silently rendering an empty dashboard. Any other failure shows an error card
+  // instead of a dashboard filled with zeros.
+  const loadDashboard = () => {
+    if (dashInFlight.current) return;
+    dashInFlight.current = true;
+    setLoading(true);
+    setLoadFailed(false);
+    // Session expired (redirected to /login, or 401), judged by the same rule as
+    // authFetch, which is moving to /login: keep the loading screen instead of
+    // flashing the error card, and do not fetch again. Any other redirect or
+    // non-ok response is a failure (error card).
+    let sessionExpired = false;
     authFetch("/api/dashboard").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
       if (!res.ok || res.redirected) return null;
       return res.json();
     }).then(data => {
+      if (sessionExpired) return;
       if (data && !data.error) setDashData(data);
-    }).catch(() => {}).finally(() => setLoading(false));
-  }, []);
-
-  // Calendar fallback
-  useEffect(() => {
-    setCalEvents([
-      { title: "次のレッスンを視聴", start: new Date(Date.now() + 3600000).toISOString() },
-      { title: "ミニテスト再受験", start: new Date(Date.now() + 7200000).toISOString() },
-      { title: "講師 1on1", start: new Date(Date.now() + 86400000).toISOString() },
-    ]);
-    setCalLoading(false);
-  }, []);
-
-  const fmtTime = (iso) => {
-    try {
-      const d = new Date(iso), h = Math.round((d - new Date()) / 3600000);
-      if (h < 1) return "まもなく";
-      if (h < 24) return `${h}h later`;
-      return `${Math.round(h / 24)}日後`;
-    } catch { return ""; }
+      else setLoadFailed(true);
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      dashInFlight.current = false;
+      setLoading(false);
+    });
   };
 
-  const weekly = [
-    { day: "M", h: 1.5 }, { day: "T", h: 2.0 }, { day: "W", h: 0.5 },
-    { day: "T", h: 3.0 }, { day: "F", h: 1.0 }, { day: "S", h: 2.5 }, { day: "S", h: 0 },
-  ];
+  useEffect(() => { loadDashboard(); }, []);
 
-  // Use API data or fallback
+  const now = new Date();
+
   const courses = dashData?.courses?.map(c => ({
     id: c.id, name: c.name, progress: c.progress, lessons: c.totalLessons, icon: c.icon, color: c.color,
+    completedLessons: c.completedLessons, totalLessons: c.totalLessons,
   })) || [];
 
-  const activeCourse = courses.find(c => c.progress > 0 && c.progress < 100) || courses[0] || { name: "コース", progress: 0 };
+  // Same rule as nextLessons on the API (in progress, otherwise the first unfinished
+  // course, otherwise the first course).
+  const activeCourse = pickActiveCourse(courses);
   const radial = [{ value: activeCourse?.progress || 0, fill: T.accentVivid, max: 100 }];
 
   const stats = [
     { label: "受講中", value: String(dashData?.activeCourses || 0), sub: `/ ${courses.length}`, icon: BookOpen, accent: T.accent, gradient: "linear-gradient(135deg, #3B82F6, #1D4ED8)" },
     { label: "完了", value: String(dashData?.completedLessons || 0), sub: "lessons", icon: CheckCircle2, accent: T.success, gradient: "linear-gradient(135deg, #22C55E, #16A34A)" },
-    { label: "学習時間", value: String(dashData?.weeklyHours || 0), sub: "h/w", icon: Flame, accent: T.purple, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
+    { label: "直近7日", value: String(dashData?.completedLast7Days || 0), sub: "lessons", icon: Flame, accent: T.purple, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
     { label: "全体進度", value: String(dashData?.overallProgress || 0), sub: "%", icon: Target, accent: T.warning, gradient: "linear-gradient(135deg, #FBBF24, #D97706)" },
   ];
 
-  const todos = [
-    { text: "次のレッスンを視聴", icon: PlayCircle, color: T.accent, hi: true },
-    { text: "ミニテスト再受験", icon: HelpCircle, color: T.warning, hi: true },
-    { text: "質問への返信を確認", icon: MessageSquare, color: T.success },
-  ];
-
-  const news = dashData?.notifications?.map(n => ({
-    from: n.title.split("が")[0] || "NWA", msg: n.message, time: "new", av: n.title.charAt(0), imp: !n.read,
-  })) || [
-    { from: "NWA", msg: "ようこそ！学習を始めましょう", time: "now", av: "N", imp: true },
-  ];
-
-  const calColors = [T.accent, T.warning, T.purple, T.success, T.danger];
+  const nextLessons = Array.isArray(dashData?.nextLessons) ? dashData.nextLessons : [];
+  const news = toNewsItems(dashData?.notifications, now);
+  const activity = toActivityItems(dashData?.recentActivity, now);
 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: T.textMuted }}>
@@ -548,19 +541,43 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
     </div>
   );
 
+  const header = (
+    <FadeIn>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <Sparkles size={14} style={{ color: T.accent }} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Dashboard</span>
+        </div>
+        <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 26, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em", overflowWrap: "anywhere" }}>{greetingTitle(userName)}</h1>
+      </div>
+    </FadeIn>
+  );
+
+  if (loadFailed || !dashData) return (
+    <ScrollArea style={{ height: "100%" }}>
+      <div className="nwa-page-content" style={{ padding: "20px 36px 24px", maxWidth: 1200 }}>
+        {header}
+        <FadeIn delay={40}>
+          <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>ダッシュボードを読み込めませんでした</div>
+            <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+            <Button size="sm" onClick={loadDashboard} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+              再読み込み
+            </Button>
+          </div>
+        </FadeIn>
+      </div>
+    </ScrollArea>
+  );
+
+  const emptyText = (text) => (
+    <div style={{ fontSize: 12, color: T.textMuted, padding: "6px 0" }}>{text}</div>
+  );
+
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "20px 36px 24px", maxWidth: 1200 }}>
-        {/* Header */}
-        <FadeIn>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <Sparkles size={14} style={{ color: T.accent }} />
-              <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Dashboard</span>
-            </div>
-            <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 26, fontWeight: 800, color: T.dark, margin: 0, letterSpacing: "-0.04em", overflowWrap: "anywhere" }}>{greetingTitle(userName)}</h1>
-          </div>
-        </FadeIn>
+        {header}
 
         {/* ═══ BENTO GRID ═══ */}
         <div className="nwa-bento" style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 14, gridAutoRows: "minmax(0, auto)" }}>
@@ -591,69 +608,68 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
             );
           })}
 
-          {/* ── Row 2: CTA (8) + ToDo (4) ── */}
-          <FadeIn delay={80} style={{ gridColumn: "span 8" }}>
-            <div onClick={() => setCurrentPage("lesson", activeCourse?.id ? { courseId: activeCourse.id } : undefined)} style={{
-              background: T.mode === "dark" ? "linear-gradient(135deg, #0F172A, #1E293B)" : T.gradientDark,
-              borderRadius: 20, cursor: "pointer", overflow: "hidden", position: "relative",
-              transition: "transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s", height: "100%", minHeight: 118,
-            }}
-              onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 16px 48px rgba(10,22,40,0.18)"; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}>
-              <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", opacity: 0.5, pointerEvents: "none" }} />
-              <div style={{ position: "absolute", top: 0, right: 0, width: "50%", height: "100%", background: "radial-gradient(ellipse at 80% 50%, rgba(59,130,246,0.1) 0%, transparent 65%)", pointerEvents: "none" }} />
-              <div style={{ padding: "18px 26px", position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", height: "100%" }}>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
-                    <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
+          {/* ── Row 2: CTA (8) + Next Up (4)。コースが 0 件なら CTA を出さず Next Up を全幅に ── */}
+          {activeCourse && (
+            <FadeIn delay={80} style={{ gridColumn: "span 8" }}>
+              <div onClick={() => setCurrentPage("lesson", { courseId: activeCourse.id })} style={{
+                background: T.mode === "dark" ? "linear-gradient(135deg, #0F172A, #1E293B)" : T.gradientDark,
+                borderRadius: 20, cursor: "pointer", overflow: "hidden", position: "relative",
+                transition: "transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s", height: "100%", minHeight: 118,
+              }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 16px 48px rgba(10,22,40,0.18)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}>
+                <div style={{ position: "absolute", inset: 0, backgroundImage: T.noise, backgroundRepeat: "repeat", backgroundSize: "256px", opacity: 0.5, pointerEvents: "none" }} />
+                <div style={{ position: "absolute", top: 0, right: 0, width: "50%", height: "100%", background: "radial-gradient(ellipse at 80% 50%, rgba(59,130,246,0.1) 0%, transparent 65%)", pointerEvents: "none" }} />
+                <div style={{ padding: "18px 26px", position: "relative", zIndex: 1, display: "flex", justifyContent: "space-between", alignItems: "center", height: "100%" }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} />
+                      <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Continue Learning</span>
+                    </div>
+                    <div style={{ fontSize: 19, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{activeCourse.name}</div>
+                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>進捗: {activeCourse.progress}%</div>
+                    <Button size="sm" style={{ marginTop: 10, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "6px 15px" }}>
+                      <PlayCircle size={14} /> 開く
+                    </Button>
                   </div>
-                  <div style={{ fontSize: 19, fontWeight: 700, color: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{activeCourse.name || "コース"}</div>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>進捗: {activeCourse.progress}%</div>
-                  <Button size="sm" style={{ marginTop: 10, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, gap: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 4px 16px ${T.accent}40`, padding: "6px 15px" }}>
-                    <PlayCircle size={14} /> 開く
-                  </Button>
-                </div>
-                <div style={{ width: 84, height: 84, flexShrink: 0 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadialBarChart innerRadius={30} outerRadius={46} data={radial} startAngle={90} endAngle={-270}>
-                      <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-                      <RadialBar background={{ fill: "rgba(255,255,255,0.06)" }} dataKey="value" cornerRadius={12} fill={T.accentVivid} angleAxisId={0} />
-                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeCourse.progress}</text>
-                      <text x="50%" y="64%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 9, fill: "rgba(255,255,255,0.35)", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
-                    </RadialBarChart>
-                  </ResponsiveContainer>
+                  <div style={{ width: 84, height: 84, flexShrink: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadialBarChart innerRadius={30} outerRadius={46} data={radial} startAngle={90} endAngle={-270}>
+                        <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+                        <RadialBar background={{ fill: "rgba(255,255,255,0.06)" }} dataKey="value" cornerRadius={12} fill={T.accentVivid} angleAxisId={0} />
+                        <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 17, fontWeight: 800, fill: "#fff", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeCourse.progress}</text>
+                        <text x="50%" y="64%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 9, fill: "rgba(255,255,255,0.35)", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
+                      </RadialBarChart>
+                    </ResponsiveContainer>
+                  </div>
                 </div>
               </div>
-            </div>
-          </FadeIn>
+            </FadeIn>
+          )}
 
-          <FadeIn delay={120} style={{ gridColumn: "span 4" }}>
+          <FadeIn delay={120} style={{ gridColumn: activeCourse ? "span 4" : "span 12" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
               <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Next Up</h3>
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: T.danger, boxShadow: `0 0 6px ${T.danger}40` }} />
               </div>
               <div style={{ padding: "0 20px 12px", flex: 1 }}>
-                {todos.map((t, i) => {
-                  const Icon = t.icon;
-                  return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
+                {nextLessons.length === 0
+                  ? emptyText(nextUpEmptyMessage({ courseCount: courses.length, completedLessons: dashData.completedLessons, totalLessons: dashData.totalLessons }))
+                  : nextLessons.map((l, i) => (
+                    <div key={l.lessonId} onClick={() => setCurrentPage("lesson", { courseId: l.courseId })} style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
                       onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
-                      <div style={{ width: 26, height: 26, borderRadius: 7, background: `${t.color}0C`, border: `1px solid ${t.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <Icon size={12} style={{ color: t.color }} />
+                      <div style={{ width: 26, height: 26, borderRadius: 7, background: `${T.accent}0C`, border: `1px solid ${T.accent}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <PlayCircle size={12} style={{ color: T.accent }} />
                       </div>
-                      <span style={{ flex: 1, fontSize: 12, color: T.textPrimary, lineHeight: 1.3 }}>{t.text}</span>
-                      {t.hi && <div style={{ width: 5, height: 5, borderRadius: "50%", background: T.danger, flexShrink: 0 }} />}
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: T.textPrimary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.title}</span>
                     </div>
-                  );
-                })}
+                  ))}
               </div>
             </div>
           </FadeIn>
 
-          {/* ── Row 3: Curriculum (8) + Calendar (4) ── */}
-          <FadeIn delay={160} style={{ gridColumn: "span 8" }}>
+          {/* ── Row 3: Curriculum (12) ── */}
+          <FadeIn delay={160} style={{ gridColumn: "span 12" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, padding: "14px 22px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <h2 style={{ fontSize: 14, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>カリキュラム進度</h2>
@@ -662,11 +678,13 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
                 </Button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {courses.length === 0 && emptyText("コースはまだありません")}
                 {courses.map((c, i) => {
                   const Icon = CourseIcons[c.icon] || null;
-                  const isAct = c.progress > 0 && c.progress < 100;
-                  const isDone = c.progress === 100;
-                  const isLock = c.progress === 0 && i > 4;
+                  // Judge by lesson counts, not the rounded % (1/300 shows 0%, 299/300 shows 100%)
+                  const isAct = isInProgress(c);
+                  const isDone = c.totalLessons > 0 && c.completedLessons === c.totalLessons;
+                  const isLock = isCourseLocked(i > 0 ? courses[i - 1] : null, c);
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, opacity: isLock ? 0.35 : 1 }}>
                       <div style={{
@@ -698,79 +716,31 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
             </div>
           </FadeIn>
 
-          <FadeIn delay={200} style={{ gridColumn: "span 4" }}>
-            <div style={{ ...glassStyle(), borderRadius: 20, height: "100%", display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>📅 Schedule</h3>
-                <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>Google Cal</span>
-              </div>
-              <div style={{ padding: "0 20px 12px", flex: 1 }}>
-                {calLoading ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 100 }}>
-                    <div style={{ width: 18, height: 18, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-                  </div>
-                ) : calEvents.map((evt, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
-                    <div style={{ width: 3, height: 26, borderRadius: 3, flexShrink: 0, marginTop: 1, background: calColors[i % calColors.length] }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 550, color: T.textPrimary, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{evt.title}</div>
-                      <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{fmtTime(evt.start)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </FadeIn>
-
-          {/* ── Row 4: Weekly (4) + Announcements (4) + Activity (4) ── */}
-          <FadeIn delay={240} style={{ gridColumn: "span 4" }}>
-            <div style={{ ...glassStyle(), borderRadius: 20 }}>
-              <div style={{ padding: "13px 20px 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Weekly</h3>
-                <Badge variant="secondary" style={{ fontSize: 9, fontWeight: 700, background: `${T.purple}12`, color: T.purple, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-                  <Flame size={10} style={{ marginRight: 2 }} />4日
-                </Badge>
-              </div>
-              <div style={{ padding: "2px 8px 8px" }}>
-                <ResponsiveContainer width="100%" height={104}>
-                  <BarChart data={weekly} barCategoryGap="24%">
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
-                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
-                    <YAxis hide />
-                    <Tooltip cursor={{ fill: `${T.accent}06`, radius: 6 }} contentStyle={{ borderRadius: 10, border: `1px solid ${T.border}`, fontSize: 11, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} formatter={v => [`${v}h`]} />
-                    <Bar dataKey="h" radius={[6, 6, 0, 0]}>
-                      {weekly.map((_, i) => <Cell key={i} fill={weekly[i].h > 0 ? T.accent : T.borderSubtle} />)}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </FadeIn>
-
-          <FadeIn delay={280} style={{ gridColumn: "span 4" }}>
+          {/* ── Row 4: Announcements (6) + Activity (6) ── */}
+          <FadeIn delay={200} style={{ gridColumn: "span 6" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
               <div style={{ padding: "13px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>お知らせ</h3>
                 <Bell size={13} style={{ color: T.textMuted }} />
               </div>
               <div style={{ padding: "0 20px 12px" }}>
+                {news.length === 0 && emptyText("お知らせはありません")}
                 {news.map((n, i) => (
-                  <div key={i} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
-                    onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
-                    <Avatar style={{ width: 28, height: 28, flexShrink: 0 }}>
-                      <AvatarFallback style={{
-                        background: n.imp ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : T.mode === "dark" ? "rgba(255,255,255,0.06)" : "#E8EDF4",
-                        color: n.imp ? "#fff" : T.textMuted, fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif",
-                      }}>{n.av}</AvatarFallback>
-                    </Avatar>
+                  <div key={n.id} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                      background: n.unread ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : T.mode === "dark" ? "rgba(255,255,255,0.06)" : "#E8EDF4",
+                      color: n.unread ? "#fff" : T.textMuted,
+                    }}>
+                      <Bell size={12} aria-hidden="true" />
+                    </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{n.from}</span>
-                        {n.imp && <div style={{ width: 4, height: 4, borderRadius: "50%", background: T.accent }} />}
-                        <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginLeft: "auto" }}>{n.time}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.title}</span>
+                        {n.unread && <div aria-label="未読" style={{ width: 4, height: 4, borderRadius: "50%", background: T.accent, flexShrink: 0 }} />}
+                        <span style={{ fontSize: 9, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginLeft: "auto", flexShrink: 0 }}>{n.time}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: T.textSecondary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.msg}</div>
+                      <div style={{ fontSize: 11, color: T.textSecondary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.message}</div>
                     </div>
                   </div>
                 ))}
@@ -778,31 +748,24 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
             </div>
           </FadeIn>
 
-          <FadeIn delay={320} style={{ gridColumn: "span 4" }}>
+          <FadeIn delay={240} style={{ gridColumn: "span 6" }}>
             <div style={{ ...glassStyle(), borderRadius: 20, height: "100%" }}>
               <div style={{ padding: "13px 20px 8px" }}>
                 <h3 style={{ fontSize: 13, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Activity</h3>
               </div>
               <div style={{ padding: "0 20px 12px" }}>
-                {[
-                  { icon: PlayCircle, color: T.accent, text: "AIコーディング（AG）- レスポンシブ #15", time: "2h" },
-                  { icon: Award, color: T.warning, text: "JS クイズ — 90点", time: "1d" },
-                  { icon: MessageSquare, color: T.success, text: "山田先生が回答", time: "2d" },
-                ].map((a, i) => {
-                  const Icon = a.icon;
-                  return (
-                    <div key={i} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none", cursor: "pointer", transition: "opacity 0.15s" }}
-                      onMouseEnter={e => e.currentTarget.style.opacity = "0.6"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
-                      <div style={{ width: 26, height: 26, borderRadius: 7, background: `${a.color}0C`, border: `1px solid ${a.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <Icon size={12} style={{ color: a.color }} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: T.textPrimary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.text}</div>
-                        <div style={{ fontSize: 9, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{a.time}</div>
-                      </div>
+                {activity.length === 0 && emptyText("まだ学習履歴はありません")}
+                {activity.map((a, i) => (
+                  <div key={i} style={{ display: "flex", gap: 9, padding: "6px 0", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 7, background: `${T.success}0C`, border: `1px solid ${T.success}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <CheckCircle2 size={12} style={{ color: T.success }} />
                     </div>
-                  );
-                })}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: T.textPrimary, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.text}</div>
+                      <div style={{ fontSize: 9, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{a.time}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </FadeIn>
@@ -828,10 +791,8 @@ const CourseList = ({ setCurrentPage }) => {
 
   const courses = apiCourses.map((c, i) => {
     const totalLessons = c.sections?.reduce((s, sec) => s + (sec.lessons?.length || 0), 0) || 0;
-    // Lock courses where previous course isn't 100% complete
-    const prevCourse = i > 0 ? apiCourses[i - 1] : null;
-    const prevProgress = prevCourse?.progress ?? 100;
-    const locked = i > 0 && prevProgress < 100 && c.progress === 0;
+    // Same lock rule as the dashboard curriculum, judged by lesson counts (not the rounded %)
+    const locked = isCourseLocked(i > 0 ? countCourseLessons(apiCourses[i - 1]) : null, countCourseLessons(c));
     return {
       id: c.id, name: c.name, desc: c.description || "", lessons: totalLessons,
       hours: Math.round(totalLessons * 0.5), progress: c.progress || 0,
