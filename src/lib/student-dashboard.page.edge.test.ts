@@ -171,6 +171,14 @@ describe("StudentDashboard：変数の取り違えがない", () => {
     assert.match(dashboard, /const nextLessons = Array\.isArray\(dashData\?\.nextLessons\) \? dashData\.nextLessons : \[\];/);
   });
 
+  it("カリキュラムの受講中・完了は丸めた % ではなく件数で判定する（表示の % は c.progress のまま）", () => {
+    assert.ok(definedNames().has("isInProgress"));
+    assert.match(dashboard, /const isAct = isInProgress\(c\);/);
+    assert.match(dashboard, /const isDone = c\.totalLessons > 0 && c\.completedLessons === c\.totalLessons;/);
+    assert.doesNotMatch(dashboard, /c\.progress > 0 && c\.progress < 100|c\.progress === 100/);
+    assert.match(dashboard, /\{c\.progress\}%/);
+  });
+
   it("CTA のクリック先は activeCourse のコース", () => {
     assert.match(dashboard, /onClick=\{\(\) => setCurrentPage\("lesson", \{ courseId: activeCourse\.id \}\)\}/);
   });

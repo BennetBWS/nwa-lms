@@ -42,7 +42,7 @@ import {
   makeAuthFetch,
 } from "@/lib/client-session";
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
-import { nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
+import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -664,8 +664,9 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
                 {courses.length === 0 && emptyText("コースはまだありません")}
                 {courses.map((c, i) => {
                   const Icon = CourseIcons[c.icon] || null;
-                  const isAct = c.progress > 0 && c.progress < 100;
-                  const isDone = c.progress === 100;
+                  // Judge by lesson counts, not the rounded % (1/300 shows 0%, 299/300 shows 100%)
+                  const isAct = isInProgress(c);
+                  const isDone = c.totalLessons > 0 && c.completedLessons === c.totalLessons;
                   const isLock = c.progress === 0 && i > 4;
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, opacity: isLock ? 0.35 : 1 }}>
