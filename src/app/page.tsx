@@ -43,6 +43,7 @@ import {
 } from "@/lib/client-session";
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
+import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -683,7 +684,7 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
                   // Judge by lesson counts, not the rounded % (1/300 shows 0%, 299/300 shows 100%)
                   const isAct = isInProgress(c);
                   const isDone = c.totalLessons > 0 && c.completedLessons === c.totalLessons;
-                  const isLock = c.progress === 0 && i > 4;
+                  const isLock = isCourseLocked(i > 0 ? courses[i - 1] : null, c);
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, opacity: isLock ? 0.35 : 1 }}>
                       <div style={{
@@ -790,10 +791,8 @@ const CourseList = ({ setCurrentPage }) => {
 
   const courses = apiCourses.map((c, i) => {
     const totalLessons = c.sections?.reduce((s, sec) => s + (sec.lessons?.length || 0), 0) || 0;
-    // Lock courses where previous course isn't 100% complete
-    const prevCourse = i > 0 ? apiCourses[i - 1] : null;
-    const prevProgress = prevCourse?.progress ?? 100;
-    const locked = i > 0 && prevProgress < 100 && c.progress === 0;
+    // Same lock rule as the dashboard curriculum, judged by lesson counts (not the rounded %)
+    const locked = isCourseLocked(i > 0 ? countCourseLessons(apiCourses[i - 1]) : null, countCourseLessons(c));
     return {
       id: c.id, name: c.name, desc: c.description || "", lessons: totalLessons,
       hours: Math.round(totalLessons * 0.5), progress: c.progress || 0,

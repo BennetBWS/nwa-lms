@@ -305,3 +305,28 @@ describe("StudentDashboard：空の状態の分岐", () => {
     assert.doesNotMatch(failed, /nwa-bento|stats\.map|直近7日/);
   });
 });
+
+describe("ロック表示（カリキュラム欄・コース一覧で同じ規則）", () => {
+  it("course-lock から isCourseLocked と countCourseLessons を import している", () => {
+    assert.match(src, /^import \{ countCourseLessons, isCourseLocked \} from "@\/lib\/course-lock";$/m);
+  });
+
+  it("カリキュラム欄は前のコースと自分の件数で isCourseLocked を呼ぶ（i > 4 の固定規則を使わない）", () => {
+    assert.match(dashboard, /const isLock = isCourseLocked\(i > 0 \? courses\[i - 1\] : null, c\);/);
+    assert.doesNotMatch(dashboard, /i > 4/);
+    // courses は件数を持つ（isCourseLocked が読む completedLessons / totalLessons）
+    assert.match(dashboard, /completedLessons: c\.completedLessons, totalLessons: c\.totalLessons,/);
+  });
+
+  it("コース一覧は /api/courses の lessons の completed から数えて isCourseLocked を呼ぶ（% で判定しない）", () => {
+    const list = component("CourseList");
+    assert.match(
+      list,
+      /const locked = isCourseLocked\(i > 0 \? countCourseLessons\(apiCourses\[i - 1\]\) : null, countCourseLessons\(c\)\);/
+    );
+    assert.doesNotMatch(list, /prevProgress/);
+    // 表示の % はこれまでどおり API の progress
+    assert.match(list, /progress: c\.progress \|\| 0,/);
+    assert.match(list, /students: 0, locked,/);
+  });
+});
