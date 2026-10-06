@@ -16,12 +16,12 @@ import {
 // #32 レッスンの質問タブ・/api/comments の純粋関数。DB・ネットワークなし。データはすべてダミー。
 // 見えない文字はソースに直接書かず、\u エスケープで書く。
 
-const ZWSP = "​";
-const RLO = "‮";
-const HANGUL_FILLER = "ㅤ";
-const NBSP = " ";
-const IDEOGRAPHIC_SPACE = "　";
-const COMBINING_ACUTE = "́";
+const ZWSP = "\u200B";
+const RLO = "\u202E";
+const HANGUL_FILLER = "\u3164";
+const NBSP = "\u00A0";
+const IDEOGRAPHIC_SPACE = "\u3000";
+const COMBINING_ACUTE = "\u0301";
 const EMOJI = "\u{1F600}";
 
 const ok = (body: unknown) => {

@@ -324,7 +324,7 @@ describe("POST /api/comments：認証・入力", () => {
     ["content なし", { lessonId: LESSON }, "invalid_content"],
     ["content が数値", { lessonId: LESSON, content: 1 }, "invalid_content"],
     ["content が空白だけ", { lessonId: LESSON, content: " \n\t " }, "empty"],
-    ["content が見えない文字だけ", { lessonId: LESSON, content: "​ㅤ" }, "empty"],
+    ["content が見えない文字だけ", { lessonId: LESSON, content: "\u200B\u3164" }, "empty"],
     ["content が 2001 文字", { lessonId: LESSON, content: "あ".repeat(2001) }, "too_long"],
     ["parentId が空文字", { lessonId: LESSON, content: "質問", parentId: "" }, "invalid_parent_id"],
     ["parentId が数値", { lessonId: LESSON, content: "質問", parentId: 1 }, "invalid_parent_id"],
