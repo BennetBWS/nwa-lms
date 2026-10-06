@@ -285,6 +285,22 @@ describe("toNewsItems", () => {
     assert.deepEqual(toNewsItems([], NOW), []);
     assert.deepEqual(toNewsItems(null, NOW), []);
   });
+
+  it("id が文字列でない要素は飛ばす（key が undefined にならない）", () => {
+    const createdAt = ago(1 * HOUR).toISOString();
+    const rows = [
+      { title: "id なし", message: "本文", read: false, createdAt },
+      { id: 123, title: "id が数値", message: "本文", read: false, createdAt },
+      { id: null, title: "id が null", message: "本文", read: false, createdAt },
+      { id: "n1", title: "正常", message: "本文", read: false, createdAt },
+    ] as unknown as Parameters<typeof toNewsItems>[0];
+    const items = toNewsItems(rows, NOW);
+    assert.deepEqual(
+      items.map((n) => n.id),
+      ["n1"]
+    );
+    for (const n of items) assert.equal(typeof n.id, "string");
+  });
 });
 
 describe("nextUpEmptyMessage（Next Up が 0 件のときの文言）", () => {

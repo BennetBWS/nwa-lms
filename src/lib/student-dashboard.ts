@@ -236,11 +236,12 @@ export type NewsItem = { id: string; title: string; message: string; unread: boo
 
 /**
  * お知らせの行。1 行目 title、2 行目 message、未読フラグ、createdAt からの相対時刻。
- * null・非オブジェクト、title が文字列でない要素は飛ばす。message が文字列でなければ空文字
+ * null・非オブジェクト、id か title が文字列でない要素は飛ばす（id は画面の key に使う）。
+ * message が文字列でなければ空文字
  */
 export function toNewsItems(rows: ReadonlyArray<NewsInput | null | undefined> | null | undefined, now: Date): NewsItem[] {
   if (!Array.isArray(rows)) return [];
-  return onlyObjects(rows, ["title"]).map((n) => ({
+  return onlyObjects(rows, ["id", "title"]).map((n) => ({
     id: n.id,
     title: n.title,
     message: typeof n.message === "string" ? n.message : "",
