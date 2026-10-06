@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
+import { createPortal } from "react-dom";
 import useSWR, { preload } from "swr";
 import {
   AreaChart, Area, BarChart, Bar, RadialBarChart, RadialBar, PolarAngleAxis,
@@ -269,7 +270,18 @@ const FadeIn = ({ children, delay = 0, direction = "up", style = {} }) => {
   );
 };
 
-const AnimNum = ({ value, duration = 1400 }) => {
+// #44 モーダルを document.body 直下に描画する。
+// FadeIn（transform）や backdrop-filter を持つ親の中だと position: fixed が画面ではなく親を基準にし、
+// overflow: hidden のカードで切れてしまうため。SSR・初回描画では document がないので、マウント後だけ描画する。
+// Portal でも React のイベント（onClick など）は元のコンポーネントの木に沿って伝わる。
+const ModalPortal = ({ children }) => {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+};
+
+const AnimNum =({ value, duration = 1400 }) => {
   const [d, setD] = useState(0);
   useEffect(() => {
     const end = parseFloat(value), st = Date.now();
@@ -1464,8 +1476,9 @@ const AdminDashboard = () => {
               </div>
               {/* Invite Modal */}
               {inviteModal && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={() => setInviteModal(false)}>
-                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw" }}>
+                <ModalPortal>
+                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={() => setInviteModal(false)}>
+                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw", maxHeight: "calc(100vh - 32px)", overflowY: "auto", margin: "auto" }}>
                     <h3 style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>生徒を招待</h3>
                     {inviteResult?.password ? (
                       <div>
@@ -1507,11 +1520,13 @@ const AdminDashboard = () => {
                     )}
                   </div>
                 </div>
+                </ModalPortal>
               )}
               {/* Deactivate / Reactivate confirm dialog (#7) */}
               {statusDialog && (
-                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={closeStatusDialog}>
-                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw" }}>
+                <ModalPortal>
+                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={closeStatusDialog}>
+                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100vh - 32px)", overflowY: "auto", margin: "auto" }}>
                     <h3 id="nwa-status-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>
                       {statusDialog.action === "deactivate" ? "受講生を無効化" : "受講生を再有効化"}
                     </h3>
@@ -1527,6 +1542,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                 </div>
+                </ModalPortal>
               )}
             </div>
             <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
