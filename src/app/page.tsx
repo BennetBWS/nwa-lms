@@ -45,6 +45,7 @@ import {
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
+import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -947,6 +948,57 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     [courseData]
   );
 
+  // Questions tab (#32): display only, posting is #46.
+  const [comments, setComments] = useState(null);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsFailed, setCommentsFailed] = useState(false);
+  // The request whose response is still awaited ({ lessonId }), or null. A second load for
+  // the same lesson while it is in flight is ignored; a load for another lesson replaces it,
+  // and a response whose request is no longer current (the user switched lessons) is dropped.
+  const commentsInFlight = useRef(null);
+
+  // Same approach as loadNotifications in Notifications: an expired session is handled by
+  // authFetch (sign out and go to /login), so keep the loading state and do not fetch again.
+  // Any other redirect, non-ok response or non-array body is a failure.
+  const loadComments = (lessonId) => {
+    if (!lessonId) {
+      commentsInFlight.current = null;
+      setComments(null);
+      setCommentsLoading(false);
+      setCommentsFailed(false);
+      return;
+    }
+    if (commentsInFlight.current && commentsInFlight.current.lessonId === lessonId) return;
+    const req = { lessonId };
+    commentsInFlight.current = req;
+    const isCurrent = () => commentsInFlight.current === req;
+    setComments(null);
+    setCommentsLoading(true);
+    setCommentsFailed(false);
+    let sessionExpired = false;
+    authFetch(`/api/comments/${encodeURIComponent(lessonId)}`).then(res => {
+      if (!isCurrent()) return null;
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired || !isCurrent()) return;
+      if (Array.isArray(data)) setComments(data);
+      else setCommentsFailed(true);
+    }).catch(() => { if (isCurrent()) setCommentsFailed(true); }).finally(() => {
+      if (sessionExpired || !isCurrent()) return;
+      commentsInFlight.current = null;
+      setCommentsLoading(false);
+    });
+  };
+
+  useEffect(() => { loadComments(activeLesson?.id); }, [activeLesson?.id]);
+
+  const commentItems = toCommentItems(comments, new Date());
+  const commentsReady = !!activeLesson?.id && !commentsLoading && !commentsFailed && Array.isArray(comments);
+  const lessonTypeText = lessonTypeLabel(activeLesson?.type);
+  const lessonDocUrl = safeExternalUrl(activeLesson?.content);
+
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3500); };
 
   const handleComplete = async (lessonId) => {
@@ -1091,15 +1143,15 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
         {/* Tabs */}
         <Tabs defaultValue="content" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <TabsList style={{ background: T.surface, borderBottom: `1px solid ${T.border}`, borderRadius: 0, padding: "0 28px", height: "auto", justifyContent: "flex-start" }}>
-            {[{ v: "content", l: "概要" }, { v: "resources", l: "教材" }, { v: "comments", l: "質問 (3)" }].map(t => (
+            {[{ v: "content", l: "概要" }, { v: "resources", l: "教材" }, { v: "comments", l: commentsTabLabel(commentsReady ? commentItems.length : null) }].map(t => (
               <TabsTrigger key={t.v} value={t.v} style={{ borderRadius: 0, padding: "13px 20px", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", color: T.textSecondary }}>{t.l}</TabsTrigger>
             ))}
           </TabsList>
           <div style={{ flex: 1, overflow: "auto", background: T.bg, color: T.textPrimary }}>
             <TabsContent value="content" style={{ padding: 28 }}>
               <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, margin: "0 0 12px", fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.03em" }}>{activeLesson?.title || ""}</h2>
-              {activeLesson?.content && (
-                <a href={activeLesson.content} target="_blank" rel="noopener noreferrer"
+              {lessonDocUrl && (
+                <a href={lessonDocUrl} target="_blank" rel="noopener noreferrer"
                   style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: T.accent, fontWeight: 600, textDecoration: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif", marginBottom: 16 }}>
                   <FileText size={14} /> Google Docsで開く →
                 </a>
@@ -1109,7 +1161,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
               </p>
               <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
                 {activeLesson?.duration && <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> {activeLesson.duration}</Badge>}
-                <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> {activeLesson?.type || "TEXT"}</Badge>
+                {lessonTypeText && <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><FileText size={13} /> {lessonTypeText}</Badge>}
               </div>
               <Button
                 onClick={() => activeLesson && !isCompleted(activeLesson.id) && handleComplete(activeLesson.id)}
@@ -1127,38 +1179,48 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
               </Button>
             </TabsContent>
             <TabsContent value="resources" style={{ padding: 28 }}>
-              {[{ name: "レスポンシブ実装ガイド.pdf", size: "2.4 MB" }, { name: "サンプルコード.zip", size: "156 KB" }].map((f, i) => (
-                <div key={i} style={{ ...glassStyle(8), borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, marginBottom: 10, cursor: "pointer", transition: "border-color 0.2s" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = T.accent + "40"} onMouseLeave={e => e.currentTarget.style.borderColor = T.glassBorder}>
-                  <div style={{ width: 42, height: 42, borderRadius: 12, background: `${T.accent}08`, border: `1px solid ${T.accent}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <FileText size={18} style={{ color: T.accent }} />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: T.textPrimary }}>{f.name}</div>
-                    <div style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{f.size}</div>
-                  </div>
-                  <Button variant="ghost" size="sm" style={{ color: T.accent, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12 }}>Download</Button>
-                </div>
-              ))}
+              <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>教材は準備中です</div>
             </TabsContent>
             <TabsContent value="comments" style={{ padding: 28 }}>
-              <div style={{ display: "flex", gap: 12, marginBottom: 22 }}>
-                <Avatar style={{ width: 34, height: 34 }}><AvatarFallback style={{ background: "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 12, fontWeight: 700 }}>佐</AvatarFallback></Avatar>
-                <div style={{ flex: 1 }}>
-                  <div style={{ ...glassStyle(8), borderRadius: 14, padding: "14px 18px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, marginBottom: 5, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>佐藤 太郎</div>
-                    <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.55 }}>レスポンシブのブレイクポイントを768pxに設定したのですが、タブレットでレイアウトが崩れます。原因は何でしょうか？</div>
+              {commentsLoading ? (
+                <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+                  <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+                  <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                </div>
+              ) : commentsFailed ? (
+                <div role="alert" style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>質問を読み込めませんでした</div>
+                  <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+                  <Button size="sm" onClick={() => loadComments(activeLesson?.id)} disabled={commentsLoading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+                    再読み込み
+                  </Button>
+                </div>
+              ) : commentItems.length === 0 ? (
+                <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>まだ質問はありません</div>
+              ) : (
+                commentItems.map(c => (
+                  <div key={c.id} style={{ marginBottom: 22 }}>
+                    {[c, ...c.replies].map((x, xi) => (
+                      <div key={x.id} style={{ display: "flex", gap: 12, marginLeft: xi === 0 ? 0 : 46, marginTop: xi === 0 ? 0 : 12 }}>
+                        <Avatar aria-hidden="true" style={{ width: xi === 0 ? 34 : 28, height: xi === 0 ? 34 : 28, flexShrink: 0 }}>
+                          <AvatarFallback style={{ background: x.isInstructor ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.initial ?? <User size={15} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
+                        </Avatar>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ ...glassStyle(8), borderRadius: 14, padding: "14px 18px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
+                              <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{x.name}</span>
+                              {x.isInstructor && <Badge variant="outline" style={{ padding: "1px 8px", fontSize: 10, color: T.accent, borderColor: `${T.accent}40` }}>講師</Badge>}
+                            </div>
+                            <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{x.content}</div>
+                          </div>
+                          <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>3h ago</span>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <Avatar style={{ width: 34, height: 34 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>T</AvatarFallback></Avatar>
-                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, ...glassStyle(8), borderRadius: 14, padding: "9px 16px" }}>
-                  <input placeholder="Write a question..." style={{ flex: 1, border: "none", outline: "none", fontSize: 13, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
-                  <Button size="sm" style={{ background: T.accent, borderRadius: 10, padding: "7px 10px", boxShadow: `0 2px 8px ${T.accent}30` }}><Send size={15} /></Button>
-                </div>
-              </div>
+                ))
+              )}
             </TabsContent>
           </div>
         </Tabs>
