@@ -64,8 +64,10 @@ function projectComment(c: CommentRow, select: Select | undefined): Record<strin
       continue;
     }
     if (k === "replies") {
-      const spec = v as { select?: Select; orderBy?: unknown };
-      const rows = sortRows(comments.filter((r) => r.parentId === c.id) as unknown as Record<string, unknown>[], spec.orderBy);
+      const spec = v as { where?: Record<string, unknown>; select?: Select; orderBy?: unknown };
+      const where = spec.where ?? {};
+      const children = comments.filter((r) => r.parentId === c.id && Object.entries(where).every(([wk, wv]) => r[wk as keyof CommentRow] === wv));
+      const rows = sortRows(children as unknown as Record<string, unknown>[], spec.orderBy);
       out.replies = (rows as unknown as CommentRow[]).map((r) => projectComment(r, spec.select));
       continue;
     }
@@ -201,7 +203,7 @@ describe("GET /api/comments/[lessonId]：応答", () => {
     const base = { id: true, content: true, createdAt: true, userId: true, user: userSelect };
     assert.deepEqual(calls[0].args.select, {
       ...base,
-      replies: { select: base, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
+      replies: { where: { lessonId: LESSON }, select: base, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
     });
     assert.deepEqual(calls[0].args.where, { lessonId: LESSON, parentId: null });
     assert.equal("include" in calls[0].args, false);

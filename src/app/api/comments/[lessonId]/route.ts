@@ -32,7 +32,9 @@ export async function GET(
       where: { lessonId, parentId: null },
       select: {
         ...COMMENT_SELECT,
+        // 親と同じレッスンの返信だけ（#32 より前の POST では、別レッスンの lessonId を持つ返信が作られうる）
         replies: {
+          where: { lessonId },
           select: COMMENT_SELECT,
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },

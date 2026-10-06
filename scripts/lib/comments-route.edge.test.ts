@@ -5,7 +5,7 @@ import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession 
 
 // #32 GET /api/comments/[lessonId] と POST /api/comments の境界・異常系（comments-route.test.ts の補強）。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く小さな偽物で、
-// - replies は Prisma のリレーションと同じく parentId だけでたどる（返信の lessonId は見ない）
+// - replies は Prisma のリレーションと同じく parentId でたどり、replies の where（route が渡す lessonId）も適用する
 // - failOn で指定したメソッドだけ例外を投げる
 // NextAuth は installFakeAuth で差し替える。データはすべてダミー（example.com）。
 // 見えない文字はソースに直接書かず、\u エスケープで書く。
@@ -49,10 +49,11 @@ function projectComment(c: CommentRow, select: Select | undefined): Record<strin
       continue;
     }
     if (k === "replies") {
-      const spec = v as { select?: Select };
-      // Prisma のリレーションと同じく parentId だけでたどる。並びは createdAt 昇順
+      const spec = v as { where?: Record<string, unknown>; select?: Select };
+      const where = spec.where ?? {};
+      // Prisma のリレーションと同じく parentId でたどり、where を適用する。並びは createdAt 昇順
       out.replies = comments
-        .filter((r) => r.parentId === c.id)
+        .filter((r) => r.parentId === c.id && Object.entries(where).every(([wk, wv]) => r[wk as keyof CommentRow] === wv))
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .map((r) => projectComment(r, spec.select));
       continue;
@@ -209,15 +210,16 @@ describe("GET：他のレッスン・他の人の情報が混ざらない", () =
     assert.equal("replies" in JSON.parse(text)[0].replies[0], false);
   });
 
-  it(
-    "親と別レッスンの lessonId を持つ返信（#32 以前の POST で作られうる既存データ）は含めない",
-    { todo: "route は replies を parentId だけでたどるため、別レッスンの返信も親のレッスンに表示される（報告済み）" },
-    async () => {
-      comments.push({ id: "bad_r", userId: STUDENT, lessonId: OTHER_LESSON, content: "別レッスンとして投稿された返信", parentId: "c1", createdAt: at(20) });
-      const text = await (await get()).text();
-      assert.doesNotMatch(text, /bad_r/);
-    }
-  );
+  it("親と別レッスンの lessonId を持つ返信（#32 以前の POST で作られうる既存データ）は含めない", async () => {
+    comments.push({ id: "bad_r", userId: STUDENT, lessonId: OTHER_LESSON, content: "別レッスンとして投稿された返信", parentId: "c1", createdAt: at(20) });
+    comments.push({ id: "ok_r", userId: "ins_1", lessonId: LESSON, content: "同じレッスンの返信", parentId: "c1", createdAt: at(30) });
+    const res = await get();
+    const text = await res.text();
+    assert.doesNotMatch(text, /bad_r|別レッスンとして投稿された返信/);
+    assert.deepEqual(JSON.parse(text)[0].replies.map((r: { id: string }) => r.id), ["ok_r"]);
+    const select = calls[0].args.select as { replies: { where: unknown } };
+    assert.deepEqual(select.replies.where, { lessonId: LESSON });
+  });
 });
 
 describe("GET：入力・ログ", () => {
