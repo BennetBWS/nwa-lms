@@ -281,7 +281,7 @@ const ModalPortal = ({ children }) => {
   return createPortal(children, document.body);
 };
 
-const AnimNum =({ value, duration = 1400 }) => {
+const AnimNum = ({ value, duration = 1400 }) => {
   const [d, setD] = useState(0);
   useEffect(() => {
     const end = parseFloat(value), st = Date.now();
@@ -1478,7 +1478,7 @@ const AdminDashboard = () => {
               {inviteModal && (
                 <ModalPortal>
                 <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={() => setInviteModal(false)}>
-                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw", maxHeight: "calc(100vh - 32px)", overflowY: "auto", margin: "auto" }}>
+                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
                     <h3 style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>生徒を招待</h3>
                     {inviteResult?.password ? (
                       <div>
@@ -1526,7 +1526,7 @@ const AdminDashboard = () => {
               {statusDialog && (
                 <ModalPortal>
                 <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={closeStatusDialog}>
-                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100vh - 32px)", overflowY: "auto", margin: "auto" }}>
+                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
                     <h3 id="nwa-status-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>
                       {statusDialog.action === "deactivate" ? "受講生を無効化" : "受講生を再有効化"}
                     </h3>

@@ -86,7 +86,7 @@ for (const d of dialogs) {
 
     it("本体はクリックを背景に伝えず、高さを画面に収めてスクロールする", () => {
       assert.match(panel, /onClick=\{e => e\.stopPropagation\(\)\}/);
-      assert.match(panel, /maxHeight: "calc\(100vh - 32px\)"/);
+      assert.match(panel, /maxHeight: "calc\(100dvh - 32px\)"/);
       assert.match(panel, /overflowY: "auto"/);
       assert.match(panel, /maxWidth: "90vw"/);
     });
