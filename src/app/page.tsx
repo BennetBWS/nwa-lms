@@ -1157,7 +1157,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
                 </a>
               )}
               <p style={{ fontSize: 14, color: T.textSecondary, lineHeight: 1.8, margin: "0 0 24px" }}>
-                {activeLesson?.type === "TEXT" ? "テキストレッスンです。上のリンクからGoogle Docsを開いて学習してください。" : "レッスン内容をご確認ください。"}
+                {activeLesson?.type === "TEXT" && lessonDocUrl ? "テキストレッスンです。上のリンクからGoogle Docsを開いて学習してください。" : "レッスン内容をご確認ください。"}
               </p>
               <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
                 {activeLesson?.duration && <Badge variant="outline" style={{ gap: 4, padding: "5px 14px", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}><Clock size={13} /> {activeLesson.duration}</Badge>}

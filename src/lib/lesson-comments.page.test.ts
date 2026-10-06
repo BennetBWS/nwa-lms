@@ -151,6 +151,22 @@ describe("LessonView：教材タブ・概要タブ", () => {
     assert.match(contentTab, /\{lessonDocUrl && \(\s*<a href=\{lessonDocUrl\} target="_blank" rel="noopener noreferrer"/);
   });
 
+  it("説明文の「上のリンク」は、TEXT でリンクを出すとき（lessonDocUrl があるとき）だけ", () => {
+    const m = contentTab.match(/<p [^>]*>\s*\{([^{}]*"テキストレッスンです。上のリンクから[^{}]*)\}\s*<\/p>/);
+    assert.ok(m, "説明文の式が見つからない");
+    assert.equal((contentTab.match(/上のリンク/g) ?? []).length, 1);
+    const text = new Function("activeLesson", "lessonDocUrl", `return ${m[1]};`) as (activeLesson: unknown, lessonDocUrl: string | null) => string;
+    const linked = "テキストレッスンです。上のリンクからGoogle Docsを開いて学習してください。";
+    const plain = "レッスン内容をご確認ください。";
+    assert.equal(text({ type: "TEXT" }, "https://docs.example.com/d/1"), linked);
+    // http / https 以外・空などで safeExternalUrl が null を返し、リンクを出さないとき
+    assert.equal(text({ type: "TEXT" }, null), plain);
+    assert.equal(text({ type: "TEXT" }, ""), plain);
+    assert.equal(text({ type: "VIDEO" }, "https://docs.example.com/d/1"), plain);
+    assert.equal(text({ type: "VIDEO" }, null), plain);
+    assert.equal(text(null, null), plain);
+  });
+
   it("ヒーローの再生ボタンは変えていない", () => {
     assert.ok(lessonView.includes('{activeLesson?.type === "TEXT" ? <FileText size={32} style={{ color: "white" }} /> : <Play size={34} fill="white" style={{ color: "white", marginLeft: 4 }} />}'));
   });
