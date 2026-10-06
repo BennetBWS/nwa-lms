@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { countCompletedSince, pickNextLessons, summarizeCourses } from "@/lib/student-dashboard";
 
 export async function GET() {
   try {
@@ -10,28 +11,42 @@ export async function GET() {
     }
 
     const userId = session.user.id;
+    const now = new Date();
 
-    const [courses, userProgress, recentActivity, notifications] =
+    const [courses, userProgress, recentActivity, notifications, unreadNotifications] =
       await Promise.all([
         prisma.course.findMany({
           orderBy: { order: "asc" },
-          include: {
+          select: {
+            id: true,
+            name: true,
+            icon: true,
+            color: true,
+            order: true,
             sections: {
-              include: {
-                lessons: { select: { id: true } },
+              orderBy: [{ order: "asc" }, { id: "asc" }],
+              select: {
+                id: true,
+                order: true,
+                lessons: {
+                  orderBy: [{ order: "asc" }, { id: "asc" }],
+                  select: { id: true, title: true, order: true },
+                },
               },
             },
           },
         }),
         prisma.progress.findMany({
           where: { userId, completed: true },
-          select: { lessonId: true },
+          select: { lessonId: true, completed: true, completedAt: true },
         }),
+        // completedAt が NULL の行は Postgres の DESC で先頭に来るため除く
         prisma.progress.findMany({
-          where: { userId, completed: true },
-          orderBy: { completedAt: "desc" },
+          where: { userId, completed: true, completedAt: { not: null } },
+          orderBy: [{ completedAt: "desc" }, { id: "desc" }],
           take: 5,
-          include: {
+          select: {
+            completedAt: true,
             lesson: {
               select: {
                 title: true,
@@ -48,61 +63,15 @@ export async function GET() {
           where: { userId },
           orderBy: { createdAt: "desc" },
           take: 5,
+          select: { id: true, title: true, message: true, read: true, createdAt: true },
+        }),
+        prisma.notification.count({
+          where: { userId, read: false },
         }),
       ]);
 
-    const unreadNotifications = await prisma.notification.count({
-      where: { userId, read: false },
-    });
-
-    const completedLessonIds = new Set(
-      userProgress.map((p) => p.lessonId)
-    );
-
-    let totalLessons = 0;
-    let completedLessons = 0;
-    let activeCourses = 0;
-
-    const coursesData = courses.map((course) => {
-      let courseTotalLessons = 0;
-      let courseCompletedLessons = 0;
-
-      for (const section of course.sections) {
-        for (const lesson of section.lessons) {
-          courseTotalLessons++;
-          totalLessons++;
-          if (completedLessonIds.has(lesson.id)) {
-            courseCompletedLessons++;
-            completedLessons++;
-          }
-        }
-      }
-
-      const progress =
-        courseTotalLessons > 0
-          ? Math.round((courseCompletedLessons / courseTotalLessons) * 100)
-          : 0;
-
-      if (courseCompletedLessons > 0 && courseCompletedLessons < courseTotalLessons) {
-        activeCourses++;
-      }
-
-      return {
-        id: course.id,
-        name: course.name,
-        icon: course.icon,
-        color: course.color,
-        order: course.order,
-        progress,
-        totalLessons: courseTotalLessons,
-        completedLessons: courseCompletedLessons,
-      };
-    });
-
-    const overallProgress =
-      totalLessons > 0
-        ? Math.round((completedLessons / totalLessons) * 100)
-        : 0;
+    const completedLessonIds = new Set(userProgress.map((p) => p.lessonId));
+    const summary = summarizeCourses(courses, completedLessonIds);
 
     const recentActivityData = recentActivity.map((p) => ({
       lessonTitle: p.lesson.title,
@@ -111,12 +80,13 @@ export async function GET() {
     }));
 
     return NextResponse.json({
-      activeCourses,
-      completedLessons,
-      totalLessons,
-      overallProgress,
-      weeklyHours: 8,
-      courses: coursesData,
+      activeCourses: summary.activeCourses,
+      completedLessons: summary.completedLessons,
+      totalLessons: summary.totalLessons,
+      overallProgress: summary.overallProgress,
+      completedLast7Days: countCompletedSince(userProgress, now),
+      courses: summary.courses,
+      nextLessons: pickNextLessons(courses, completedLessonIds),
       recentActivity: recentActivityData,
       unreadNotifications,
       notifications,
