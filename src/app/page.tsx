@@ -1867,46 +1867,93 @@ const QuizPage = () => {
 // NOTIFICATIONS / QUESTIONS / ADMIN COURSES
 // ═══════════════════════════════════════════
 const Notifications = () => {
-  const [apiNotifs, setApiNotifs] = useState([]);
-  useEffect(() => {
-    authFetch("/api/notifications").then(r => r.json()).then(data => {
-      if (Array.isArray(data)) setApiNotifs(data);
-    }).catch(() => {});
-  }, []);
-  const iconMap = { "質問": MessageSquare, "開放": GraduationCap, "クイズ": Award, "テスト": Award };
-  const colorMap = { "質問": T.accent, "開放": T.purple, "クイズ": T.warning, "テスト": T.warning };
-  const n = apiNotifs.length > 0 ? apiNotifs.map(x => {
-    const key = Object.keys(iconMap).find(k => x.title.includes(k)) || "";
-    return { icon: iconMap[key] || Bell, color: colorMap[key] || T.textMuted, title: x.title, desc: x.message, time: "new", unread: !x.read };
-  }) : [
-    { icon: MessageSquare, color: T.accent, title: "山田先生が質問に回答", desc: "AIコーディング（AG） - L16", time: "2h", unread: true },
-    { icon: GraduationCap, color: T.purple, title: "STEP5「Apple模写コーディング」が開放されました", desc: "STEP4完了後に受講可能", time: "1d", unread: true },
-    { icon: Award, color: T.warning, title: "JS DOM操作クイズ — 90点", desc: "合格おめでとう！", time: "2d", unread: false },
-    { icon: Settings, color: T.textMuted, title: "パスワード変更のお知らせ", desc: "定期変更を推奨", time: "1w", unread: false },
-  ];
+  const [notifs, setNotifs] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const notifsInFlight = useRef(false);
+
+  // Same approach as loadDashboard in StudentDashboard: an expired session is handled
+  // by authFetch (sign out and go to /login), so keep the loading screen and do not
+  // fetch again. Any other redirect, non-ok response or non-array body is a failure.
+  const loadNotifications = () => {
+    if (notifsInFlight.current) return;
+    notifsInFlight.current = true;
+    setLoading(true);
+    setLoadFailed(false);
+    let sessionExpired = false;
+    authFetch("/api/notifications").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      if (Array.isArray(data)) setNotifs(data);
+      else setLoadFailed(true);
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      notifsInFlight.current = false;
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => { loadNotifications(); }, []);
+
+  const now = new Date();
+  const n = toNewsItems(notifs, now);
+
+  let body;
+  if (loading) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+        <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+        <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  } else if (loadFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>通知を読み込めませんでした</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={loadNotifications} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else if (n.length === 0) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>通知はありません</div>
+    );
+  } else {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
+        {n.map((x, i) => (
+          <FadeIn key={x.id} delay={Math.min(50 * i, 500)}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "18px 24px", borderBottom: i < n.length - 1 ? `1px solid ${T.borderSubtle}` : "none", background: x.unread ? `${T.accent}03` : "transparent" }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 13, background: `${T.accent}0A`, border: `1px solid ${T.accent}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><Bell size={18} aria-hidden="true" style={{ color: T.accent }} /></div>
+                {x.unread && <div role="img" aria-label="未読" style={{ position: "absolute", top: -1, right: -1, width: 10, height: 10, borderRadius: "50%", background: T.accent, border: "2px solid white", boxShadow: `0 0 6px ${T.accent}40` }} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: x.unread ? 650 : 450, color: T.textPrimary, overflowWrap: "anywhere" }}>{x.title}</div>
+                <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2, overflowWrap: "anywhere" }}>{x.message}</div>
+              </div>
+              <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{x.time}</span>
+            </div>
+          </FadeIn>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 880 }}>
         <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Notifications</span>
           <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>通知</h1></FadeIn>
-        <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
-          {n.map((x, i) => { const Icon = x.icon; return (
-            <FadeIn key={i} delay={50 * i}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "18px 24px", borderBottom: i < n.length - 1 ? `1px solid ${T.borderSubtle}` : "none", background: x.unread ? `${T.accent}03` : "transparent", cursor: "pointer", transition: "background 0.2s" }}
-                onMouseEnter={e => e.currentTarget.style.background = `${T.accent}05`} onMouseLeave={e => e.currentTarget.style.background = x.unread ? `${T.accent}03` : "transparent"}>
-                <div style={{ position: "relative", flexShrink: 0 }}>
-                  <div style={{ width: 42, height: 42, borderRadius: 13, background: `${x.color}0A`, border: `1px solid ${x.color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><Icon size={18} style={{ color: x.color }} /></div>
-                  {x.unread && <div style={{ position: "absolute", top: -1, right: -1, width: 10, height: 10, borderRadius: "50%", background: T.accent, border: "2px solid white", boxShadow: `0 0 6px ${T.accent}40` }} />}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: x.unread ? 650 : 450, color: T.textPrimary }}>{x.title}</div>
-                  <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2 }}>{x.desc}</div>
-                </div>
-                <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>{x.time}</span>
-              </div>
-            </FadeIn>
-          );})}
-        </div>
+        {body}
       </div>
     </ScrollArea>
   );
