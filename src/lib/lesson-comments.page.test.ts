@@ -67,6 +67,15 @@ describe("LessonView：配線", () => {
     for (const n of ["commentsTabLabel", "lessonTypeLabel", "safeExternalUrl", "toCommentItems"]) assert.ok(names.includes(n), n);
   });
 
+  it("lucide-react から使わなくなった Send を import しない（User は使うので残す）", () => {
+    const m = src.match(/import \{([^}]*)\} from "lucide-react";/);
+    assert.ok(m, "lucide-react の import がない");
+    const names = m[1].split(",").map((s) => s.trim());
+    assert.ok(!names.includes("Send"), "Send が残っている");
+    assert.ok(names.includes("User"), "User がない");
+    assert.doesNotMatch(src, /\bSend\b/);
+  });
+
   it("state は comments(null) / commentsLoading(true) / commentsFailed(false)、ref は null", () => {
     assert.match(lessonView, /const \[comments, setComments\] = useState\(null\);/);
     assert.match(lessonView, /const \[commentsLoading, setCommentsLoading\] = useState\(true\);/);

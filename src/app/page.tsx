@@ -19,7 +19,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Home, BookOpen, Play, Bell, MessageSquare, Settings, Users, BarChart3,
-  ChevronRight, Clock, FileText, HelpCircle, Lock, Search, Send, ArrowLeft,
+  ChevronRight, Clock, FileText, HelpCircle, Lock, Search, ArrowLeft,
   Plus, TrendingUp, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
   LogOut, Target, Zap, Sparkles, ArrowUpRight, User
 } from "lucide-react";
