@@ -95,15 +95,20 @@ describe("LessonView：配線", () => {
 
   it("タブ名は commentsTabLabel（件数は読み込みが終わって成功したときだけ）", () => {
     assert.match(lessonView, /l: commentsTabLabel\(commentsReady \? commentItems\.length : null\)/);
-    assert.match(lessonView, /const commentsReady = !!activeLesson\?\.id && !commentsLoading && !commentsFailed && Array\.isArray\(comments\);/);
-    assert.match(lessonView, /const commentItems = toCommentItems\(comments, new Date\(\)\);/);
+    assert.match(lessonView, /const commentRows = comments && activeLesson\?\.id && comments\.lessonId === activeLesson\.id \? comments\.rows : null;/);
+    assert.match(lessonView, /const commentsReady = !!activeLesson\?\.id && !commentsLoading && !commentsFailed && Array\.isArray\(commentRows\);/);
+    assert.match(lessonView, /const commentItems = toCommentItems\(commentRows, new Date\(\)\);/);
+  });
+
+  it("成功した応答は { lessonId, rows } の形で setComments する", () => {
+    assert.match(loadSrc, /if \(Array\.isArray\(data\)\) setComments\(\{ lessonId, rows: data \}\);/);
   });
 });
 
 describe("LessonView：質問タブの表示", () => {
-  it("読み込み中 → 失敗 → 0 件 → 一覧 の順に判定する", () => {
-    const iLoading = commentsTab.indexOf("{commentsLoading ? (");
-    const iFailed = commentsTab.indexOf(") : commentsFailed ? (");
+  it("読み込み中 → 失敗 → 0 件 → 一覧 の順に判定する（読み込み中・失敗は今のレッスンについての値で見る）", () => {
+    const iLoading = commentsTab.indexOf("{commentsWaiting ? (");
+    const iFailed = commentsTab.indexOf(") : commentsShowFailed ? (");
     const iEmpty = commentsTab.indexOf(") : commentItems.length === 0 ? (");
     const iList = commentsTab.indexOf("commentItems.map(c =>");
     assert.ok(iLoading >= 0 && iLoading < iFailed && iFailed < iEmpty && iEmpty < iList);
@@ -283,7 +288,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.equal(st.loading, true);
     assert.ok(st.inFlight);
     await settle();
-    assert.deepEqual(st.comments, [ROW]);
+    assert.deepEqual(st.comments, { lessonId: "l1", rows: [ROW] });
     assert.equal(st.loading, false);
     assert.equal(st.failed, false);
     assert.equal(st.inFlight, null);
@@ -299,7 +304,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     const { st, load } = harness(res({ body: [] }));
     load("l1");
     await settle();
-    assert.deepEqual(st.comments, []);
+    assert.deepEqual(st.comments, { lessonId: "l1", rows: [] });
     assert.equal(st.failed, false);
     assert.equal(st.loading, false);
   });
@@ -388,7 +393,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.equal(st.urls.length, 1);
     d.release(okRes([ROW]));
     await settle();
-    assert.deepEqual(st.comments, [ROW]);
+    assert.deepEqual(st.comments, { lessonId: "l1", rows: [ROW] });
     assert.equal(st.inFlight, null);
   });
 
@@ -403,7 +408,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.equal(st.failed, false);
     await settle();
     assert.equal(st.urls.length, 2);
-    assert.deepEqual(st.comments, [ROW]);
+    assert.deepEqual(st.comments, { lessonId: "l1", rows: [ROW] });
     assert.equal(st.failed, false);
   });
 
@@ -417,13 +422,13 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     const B_ROW = { ...ROW, id: "b1" };
     b.release(okRes([B_ROW]));
     await settle();
-    assert.deepEqual(st.comments, [B_ROW]);
+    assert.deepEqual(st.comments, { lessonId: "B", rows: [B_ROW] });
     assert.equal(st.loading, false);
     // A の応答が後から届いても、表示（B）も状態も変えない・JSON も読まない
     const reads = st.jsonReads;
     a.release(okRes([{ ...ROW, id: "a1" }]));
     await settle();
-    assert.deepEqual(st.comments, [B_ROW]);
+    assert.deepEqual(st.comments, { lessonId: "B", rows: [B_ROW] });
     assert.equal(st.loading, false);
     assert.equal(st.failed, false);
     assert.equal(st.jsonReads, reads);
@@ -446,7 +451,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.ok(st.inFlight);
     b.release(okRes([]));
     await settle();
-    assert.deepEqual(st.comments, []);
+    assert.deepEqual(st.comments, { lessonId: "B", rows: [] });
     assert.equal(st.loading, false);
   });
 
@@ -467,11 +472,11 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.equal(st.loading, true);
     reqs[2].release(okRes([{ ...ROW, id: "new" }]));
     await settle();
-    assert.deepEqual(st.comments, [{ ...ROW, id: "new" }]);
+    assert.deepEqual(st.comments, { lessonId: "A", rows: [{ ...ROW, id: "new" }] });
     assert.equal(st.loading, false);
     reqs[1].release(okRes([{ ...ROW, id: "b" }]));
     await settle();
-    assert.deepEqual(st.comments, [{ ...ROW, id: "new" }]);
+    assert.deepEqual(st.comments, { lessonId: "A", rows: [{ ...ROW, id: "new" }] });
   });
 
   it("レッスンがなくなったら（id なし）、読み込み中の応答を捨てる", async () => {

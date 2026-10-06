@@ -949,6 +949,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   );
 
   // Questions tab (#32): display only, posting is #46.
+  // comments is { lessonId, rows } for the lesson the rows were loaded for (or null), so rows
+  // of the previous lesson are never shown on the first render after switching lessons.
   const [comments, setComments] = useState(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsFailed, setCommentsFailed] = useState(false);
@@ -983,7 +985,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
       return res.json();
     }).then(data => {
       if (sessionExpired || !isCurrent()) return;
-      if (Array.isArray(data)) setComments(data);
+      if (Array.isArray(data)) setComments({ lessonId, rows: data });
       else setCommentsFailed(true);
     }).catch(() => { if (isCurrent()) setCommentsFailed(true); }).finally(() => {
       if (sessionExpired || !isCurrent()) return;
@@ -994,8 +996,14 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
 
   useEffect(() => { loadComments(activeLesson?.id); }, [activeLesson?.id]);
 
-  const commentItems = toCommentItems(comments, new Date());
-  const commentsReady = !!activeLesson?.id && !commentsLoading && !commentsFailed && Array.isArray(comments);
+  // Rows of another lesson (the effect for the new lesson has not run yet) count as not loaded.
+  const commentRows = comments && activeLesson?.id && comments.lessonId === activeLesson.id ? comments.rows : null;
+  const commentItems = toCommentItems(commentRows, new Date());
+  const commentsReady = !!activeLesson?.id && !commentsLoading && !commentsFailed && Array.isArray(commentRows);
+  // With a lesson: waiting until its rows are loaded (or it failed). Without one: waiting while the
+  // course has lessons (the first lesson is not chosen yet); a course with no lessons shows the empty message.
+  const commentsWaiting = activeLesson?.id ? !commentsFailed && !commentsReady : allLessons.length > 0;
+  const commentsShowFailed = !!activeLesson?.id && commentsFailed;
   const lessonTypeText = lessonTypeLabel(activeLesson?.type);
   const lessonDocUrl = safeExternalUrl(activeLesson?.content);
 
@@ -1182,13 +1190,13 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
               <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>教材は準備中です</div>
             </TabsContent>
             <TabsContent value="comments" style={{ padding: 28 }}>
-              {commentsLoading ? (
+              {commentsWaiting ? (
                 <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
                   <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
                   <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
                   <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
                 </div>
-              ) : commentsFailed ? (
+              ) : commentsShowFailed ? (
                 <div role="alert" style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center" }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>質問を読み込めませんでした</div>
                   <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>

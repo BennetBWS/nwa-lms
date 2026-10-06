@@ -6,7 +6,7 @@ import { classifyAuthFailure } from "./client-session";
 import { commentsTabLabel, toCommentItems } from "./lesson-comments";
 
 // #32 レッスン画面（page.tsx の LessonView、// @ts-nocheck）の補強（lesson-comments.page.test.ts の続き）。
-// loadComments と、描画で使う式（commentsReady・タブ名）をソースから取り出して実行する。
+// loadComments と、描画で使う式（commentRows・commentsReady・commentsWaiting・commentsShowFailed・タブ名）をソースから取り出して実行する。
 // レンダリング・DB・ネットワークなし。データはすべてダミー。
 
 const src = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
@@ -59,7 +59,8 @@ function harness() {
     ref,
     (v: unknown) => {
       st.comments = v;
-      st.log.push(`comments:${Array.isArray(v) ? v.map((x: { id: string }) => x.id).join(",") : String(v)}`);
+      const c = v as { lessonId: string; rows: Array<{ id: string }> } | null;
+      st.log.push(`comments:${c ? `${c.lessonId}:${c.rows.map((x) => x.id).join(",")}` : String(c)}`);
     },
     (v: boolean) => (st.loading = v),
     (v: boolean) => (st.failed = v)
@@ -79,7 +80,7 @@ describe("loadComments：切り替えの組み合わせ", () => {
     reqs[1].release(okRes([{ ...ROW, id: "b" }]));
     reqs[0].release(okRes([{ ...ROW, id: "a1" }]));
     await settle();
-    assert.deepEqual(st.comments, [{ ...ROW, id: "a2" }]);
+    assert.deepEqual(st.comments, { lessonId: "A", rows: [{ ...ROW, id: "a2" }] });
     assert.equal(st.loading, false);
     assert.equal(st.failed, false);
     assert.equal(st.inFlight, null);
@@ -108,7 +109,7 @@ describe("loadComments：切り替えの組み合わせ", () => {
     assert.equal(st.loading, true);
     reqs[1].release(okRes([ROW]));
     await settle();
-    assert.deepEqual(st.comments, [ROW]);
+    assert.deepEqual(st.comments, { lessonId: "B", rows: [ROW] });
     assert.equal(st.loading, false);
     assert.equal(st.inFlight, null);
   });
@@ -132,7 +133,7 @@ describe("loadComments：切り替えの組み合わせ", () => {
     assert.equal(st.urls.length, 2);
     reqs[1].release(okRes([]));
     await settle();
-    assert.deepEqual(st.comments, []);
+    assert.deepEqual(st.comments, { lessonId: "B", rows: [] });
     load("A");
     assert.equal(st.urls.length, 3);
   });
@@ -148,7 +149,7 @@ describe("loadComments：切り替えの組み合わせ", () => {
     assert.equal(st.loading, true);
     reqs[1].release(okRes([{ ...ROW, id: "new" }]));
     await settle();
-    assert.deepEqual(st.comments, [{ ...ROW, id: "new" }]);
+    assert.deepEqual(st.comments, { lessonId: "A", rows: [{ ...ROW, id: "new" }] });
   });
 
   it("空文字の id は id なしと同じ（取得しない）", () => {
@@ -170,7 +171,7 @@ describe("loadComments：切り替えの組み合わせ", () => {
     assert.equal(st.loading, true);
     reqs[1].release(okRes([]));
     await settle();
-    assert.deepEqual(st.comments, []);
+    assert.deepEqual(st.comments, { lessonId: "A", rows: [] });
   });
 
   it("切り替えた瞬間に前のレッスンの一覧を消す（setComments(null) を先に呼ぶ）", async () => {
@@ -181,44 +182,119 @@ describe("loadComments：切り替えの組み合わせ", () => {
     load("B");
     assert.equal(st.comments, null);
     assert.equal(st.loading, true);
-    assert.deepEqual(st.log, ["comments:null", "comments:c1", "comments:null"]);
+    assert.deepEqual(st.log, ["comments:null", "comments:A:c1", "comments:null"]);
   });
 });
 
-describe("描画で使う式（commentsReady・タブ名）", () => {
-  const readyLine = lessonView.match(/const commentsReady = ([^;]+);/);
-  assert.ok(readyLine, "commentsReady がない");
-  const ready = new Function("activeLesson", "commentsLoading", "commentsFailed", "comments", `return ${readyLine[1]};`) as (
-    activeLesson: unknown,
-    loading: boolean,
-    failed: boolean,
-    comments: unknown
-  ) => boolean;
-  const label = (activeLesson: unknown, loading: boolean, failed: boolean, comments: unknown) =>
-    commentsTabLabel(ready(activeLesson, loading, failed, comments) ? toCommentItems(comments, new Date()).length : null);
+describe("描画で使う式（commentRows・commentsReady・commentsWaiting・commentsShowFailed・タブ名）", () => {
+  const exprs = ["commentRows", "commentsReady", "commentsWaiting", "commentsShowFailed"].map((name) => {
+    const m = lessonView.match(new RegExp(`const ${name} = ([^;]+);`));
+    assert.ok(m, `${name} がない`);
+    return `const ${name} = ${m[1]};`;
+  });
+  type View = { rows: unknown; ready: boolean; waiting: boolean; showFailed: boolean; label: string; shown: string };
+  type Input = { activeLesson: unknown; comments: unknown; loading: boolean; failed: boolean; allLessons?: unknown[] };
+  const evalExprs = new Function(
+    "activeLesson",
+    "comments",
+    "commentsLoading",
+    "commentsFailed",
+    "allLessons",
+    `${exprs.join("\n")}\nreturn { rows: commentRows, ready: commentsReady, waiting: commentsWaiting, showFailed: commentsShowFailed };`
+  ) as (a: unknown, c: unknown, l: boolean, f: boolean, all: unknown[]) => Omit<View, "label" | "shown">;
+  /** 描画と同じ判定：タブ名と、質問タブに出るもの（読み込み中 / 失敗 / 空 / 一覧の id） */
+  const view = ({ activeLesson, comments, loading, failed, allLessons }: Input): View => {
+    const v = evalExprs(activeLesson, comments, loading, failed, allLessons ?? [activeLesson].filter(Boolean));
+    const items = toCommentItems(v.rows, new Date());
+    const label = commentsTabLabel(v.ready ? items.length : null);
+    const shown = v.waiting ? "loading" : v.showFailed ? "failed" : items.length === 0 ? "empty" : items.map((x) => x.id).join(",");
+    return { ...v, label, shown };
+  };
+  const A = { id: "A" };
+  const B = { id: "B" };
 
-  it("成功して配列があるときだけ件数を出す", () => {
-    assert.equal(label({ id: "A" }, false, false, [ROW, { ...ROW, id: "c2" }]), "質問 (2)");
-    assert.equal(label({ id: "A" }, false, false, []), "質問 (0)");
+  it("成功して今のレッスンの rows があるときだけ件数と一覧を出す", () => {
+    let v = view({ activeLesson: A, comments: { lessonId: "A", rows: [ROW, { ...ROW, id: "c2" }] }, loading: false, failed: false });
+    assert.equal(v.label, "質問 (2)");
+    assert.equal(v.shown, "c1,c2");
+    v = view({ activeLesson: A, comments: { lessonId: "A", rows: [] }, loading: false, failed: false });
+    assert.equal(v.label, "質問 (0)");
+    assert.equal(v.shown, "empty");
   });
 
-  it("読み込み中・失敗・未取得・レッスンなし・id なしは「質問」", () => {
-    assert.equal(label({ id: "A" }, true, false, null), "質問");
-    assert.equal(label({ id: "A" }, false, true, null), "質問");
-    assert.equal(label({ id: "A" }, false, false, null), "質問");
-    assert.equal(label(null, false, false, null), "質問");
-    assert.equal(label({ id: "" }, false, false, []), "質問");
-    assert.equal(label({}, false, false, []), "質問");
+  it("切り替え直後の最初の描画（comments は前のレッスン A のまま、読み込み中でも失敗でもない）：前のレッスンの一覧・件数を出さず、読み込み中", () => {
+    const v = view({ activeLesson: B, comments: { lessonId: "A", rows: [ROW, { ...ROW, id: "c2" }] }, loading: false, failed: false });
+    assert.equal(v.rows, null);
+    assert.equal(v.ready, false);
+    assert.equal(v.label, "質問");
+    assert.equal(v.shown, "loading");
+  });
+
+  it("loadComments を実際に動かして、A の成功 → B に切り替えた直後（effect 前）→ B の読み込み中 → B の成功 で前の一覧を一度も出さない", async () => {
+    const { st, load, reqs } = harness();
+    const at = (activeLesson: unknown) => view({ activeLesson, comments: st.comments, loading: st.loading, failed: st.failed, allLessons: [A, B] });
+    load("A");
+    reqs[0].release(okRes([ROW]));
+    await settle();
+    assert.equal(at(A).shown, "c1");
+    assert.equal(at(A).label, "質問 (1)");
+    // activeLesson だけ B に変わり、effect（load("B")）はまだ
+    assert.equal(at(B).shown, "loading");
+    assert.equal(at(B).label, "質問");
+    load("B");
+    assert.equal(at(B).shown, "loading");
+    assert.equal(at(B).label, "質問");
+    reqs[1].release(okRes([{ ...ROW, id: "b1" }]));
+    await settle();
+    assert.equal(at(B).shown, "b1");
+    assert.equal(at(B).label, "質問 (1)");
+    // A に戻した直後も B の一覧は出さない
+    assert.equal(at(A).shown, "loading");
+    assert.equal(at(A).label, "質問");
+  });
+
+  it("lessonId が一致しない・形が違う comments は使わない", () => {
+    for (const comments of [{ lessonId: "", rows: [ROW] }, { lessonId: undefined, rows: [ROW] }, { rows: [ROW] }, [ROW], { lessonId: "a", rows: [ROW] }]) {
+      const v = view({ activeLesson: A, comments, loading: false, failed: false });
+      assert.equal(v.label, "質問", JSON.stringify(comments));
+      assert.equal(v.shown, "loading", JSON.stringify(comments));
+    }
+  });
+
+  it("今のレッスンの読み込み中・失効（読み込み中のまま）は読み込み中、失敗は失敗", () => {
+    assert.equal(view({ activeLesson: A, comments: null, loading: true, failed: false }).shown, "loading");
+    assert.equal(view({ activeLesson: A, comments: null, loading: false, failed: true }).shown, "failed");
+    assert.equal(view({ activeLesson: A, comments: null, loading: false, failed: true }).label, "質問");
+  });
+
+  it("activeLesson がない：コースにレッスンがある間（最初のレッスンを選ぶ前）は読み込み中、レッスン 0 件なら空の案内", () => {
+    let v = view({ activeLesson: null, comments: null, loading: false, failed: false, allLessons: [A, B] });
+    assert.equal(v.shown, "loading");
+    assert.equal(v.label, "質問");
+    // コースを切り替えた直後（前のコースの comments・失敗が残っていても）
+    v = view({ activeLesson: null, comments: { lessonId: "A", rows: [ROW] }, loading: false, failed: true, allLessons: [A] });
+    assert.equal(v.shown, "loading");
+    assert.equal(v.label, "質問");
+    v = view({ activeLesson: null, comments: null, loading: false, failed: false, allLessons: [] });
+    assert.equal(v.shown, "empty");
+    assert.equal(v.label, "質問");
+    v = view({ activeLesson: null, comments: { lessonId: "A", rows: [ROW] }, loading: false, failed: true, allLessons: [] });
+    assert.equal(v.shown, "empty");
+  });
+
+  it("id が空・ない activeLesson は、レッスンなしと同じ扱い（件数は出さない）", () => {
+    assert.equal(view({ activeLesson: { id: "" }, comments: { lessonId: "", rows: [ROW] }, loading: false, failed: false }).label, "質問");
+    assert.equal(view({ activeLesson: {}, comments: { lessonId: undefined, rows: [ROW] }, loading: false, failed: false }).label, "質問");
   });
 
   it("壊れた要素は件数に入れない", () => {
-    assert.equal(label({ id: "A" }, false, false, [ROW, null, { id: 1 }, ROW]), "質問 (1)");
+    assert.equal(view({ activeLesson: A, comments: { lessonId: "A", rows: [ROW, null, { id: 1 }, ROW] }, loading: false, failed: false }).label, "質問 (1)");
   });
 });
 
 describe("@ts-nocheck の取り違え防止", () => {
   it("質問タブまわりの state・値はすべて宣言後に使われている（使わない state を残していない）", () => {
-    for (const name of ["comments", "setComments", "commentsLoading", "setCommentsLoading", "commentsFailed", "setCommentsFailed", "commentsInFlight", "commentItems", "commentsReady", "lessonTypeText", "lessonDocUrl", "loadComments"]) {
+    for (const name of ["comments", "setComments", "commentsLoading", "setCommentsLoading", "commentsFailed", "setCommentsFailed", "commentsInFlight", "commentRows", "commentItems", "commentsReady", "commentsWaiting", "commentsShowFailed", "lessonTypeText", "lessonDocUrl", "loadComments"]) {
       const n = (lessonView.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length;
       assert.ok(n >= 2, `${name} が使われていない（${n} 回）`);
     }
