@@ -311,10 +311,17 @@ describe("toNewsItems：id の境界", () => {
     assert.deepEqual(got.map((x) => x.id), ["ok"]);
   });
 
-  it("空文字の id は文字列なので通る（現仕様）", () => {
-    const got = run([{ ...base, id: "" }]);
-    assert.equal(got.length, 1);
-    assert.equal(got[0].id, "");
+  it("空文字の id は飛ばす（React の key が重複しないように）", () => {
+    assert.deepEqual(run([{ ...base, id: "" }]), []);
+  });
+
+  it("同じ id が重複したら最初の 1 件だけ残す", () => {
+    const got = run([
+      { ...base, id: "a", title: "1" },
+      { ...base, id: "a", title: "2" },
+      { ...base, id: "b", title: "3" },
+    ]);
+    assert.deepEqual(got.map((x) => [x.id, x.title]), [["a", "1"], ["b", "3"]]);
   });
 
   it("String オブジェクトの id は飛ばす", () => {

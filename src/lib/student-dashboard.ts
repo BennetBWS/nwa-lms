@@ -241,7 +241,14 @@ export type NewsItem = { id: string; title: string; message: string; unread: boo
  */
 export function toNewsItems(rows: ReadonlyArray<NewsInput | null | undefined> | null | undefined, now: Date): NewsItem[] {
   if (!Array.isArray(rows)) return [];
-  return onlyObjects(rows, ["id", "title"]).map((n) => ({
+  // The id is the React key: skip empty ids and keep only the first row of a repeated id
+  const seen = new Set<string>();
+  const unique = onlyObjects(rows, ["id", "title"]).filter((n) => {
+    if (n.id === "" || seen.has(n.id)) return false;
+    seen.add(n.id);
+    return true;
+  });
+  return unique.map((n) => ({
     id: n.id,
     title: n.title,
     message: typeof n.message === "string" ? n.message : "",
