@@ -3,9 +3,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { safeErrorSummary } from "@/lib/safe-error";
 import { isValidId } from "@/lib/lesson-comments";
-import { summarizeAttempts, toQuestionViews } from "@/lib/student-quizzes";
+import { summarizeAttempts, toAnswerKey, toQuestionViews } from "@/lib/student-quizzes";
 
-// 受験画面の問題（#32）。correctIndex は読まないし返さない。受験記録は自分の分の集計値だけ（行そのものは返さない）
+// 受験画面の問題（#32）。受験記録は自分の分の集計値だけ（行そのものは返さない）。
+// correctIndex は「受験できるか」の判定（toAnswerKey。一覧の除外・submit の 409 と同じ基準）にだけ使い、応答には含めない。
+// 応答の questions は toQuestionViews（id・question・options だけ）で作る
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ quizId: string }> }
@@ -31,7 +33,7 @@ export async function GET(
           type: true,
           questions: {
             orderBy: [{ order: "asc" }, { id: "asc" }],
-            select: { id: true, question: true, options: true },
+            select: { id: true, question: true, options: true, correctIndex: true },
           },
         },
       }),
@@ -46,7 +48,7 @@ export async function GET(
     }
 
     const questions = toQuestionViews(quiz.questions);
-    if (!questions) {
+    if (!questions || !toAnswerKey(quiz.questions)) {
       return NextResponse.json({ error: "Quiz unavailable", reason: "quiz_unavailable" }, { status: 409 });
     }
 

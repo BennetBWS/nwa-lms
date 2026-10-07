@@ -432,6 +432,7 @@ describe("GET /api/quizzes/[quizId]：認証・入力", () => {
   for (const [label, id] of [
     ["問題 0 件", "empty"],
     ["options が壊れている", "broken"],
+    ["correctIndex が範囲外", "badkey"],
   ]) {
     it(`${label}なら 409 quiz_unavailable`, async () => {
       const res = await getOne(id);
@@ -439,6 +440,16 @@ describe("GET /api/quizzes/[quizId]：認証・入力", () => {
       assert.deepEqual(await res.json(), { error: "Quiz unavailable", reason: "quiz_unavailable" });
     });
   }
+
+  it("correctIndex が範囲外のクイズは、一覧（除外）・submit（409）と同じく受験できない扱いで、問題も正解も返さない", async () => {
+    const res = await getOne("badkey");
+    assert.equal(res.status, 409);
+    const text = await res.text();
+    for (const s of ["correctIndex", "questions", "options", "範囲外", "bk1"]) assert.ok(!text.includes(s), s);
+    const list = await (await LIST()).text();
+    assert.ok(!list.includes("badkey"));
+    assert.equal((await HANDLE_SUBMIT(STUDENT, submitRequest("badkey", { answers: [0] }), ctx("badkey"), { attemptsEnabled: true })).status, 409);
+  });
 });
 
 describe("GET /api/quizzes/[quizId]：応答", () => {
@@ -468,13 +479,13 @@ describe("GET /api/quizzes/[quizId]：応答", () => {
     }
   });
 
-  it("問題の select に correctIndex がなく、orderBy は [order, id]。受験記録は where userId・quizId で集計に必要な項目だけ", async () => {
+  it("問題の select は受験できるかの判定に必要な項目だけ（correctIndex は判定用。応答には出ない）で、orderBy は [order, id]。受験記録は where userId・quizId で集計に必要な項目だけ", async () => {
     await getOne("fin1");
     const quiz = calls.find((c) => c.method === "quiz.findUnique");
     const questions = (quiz?.args.select as Select).questions as { orderBy: unknown; select: Select };
     assert.deepEqual(questions.orderBy, [{ order: "asc" }, { id: "asc" }]);
-    assert.deepEqual(questions.select, { id: true, question: true, options: true });
-    assert.doesNotMatch(JSON.stringify(quiz?.args), /correctIndex|attempts/);
+    assert.deepEqual(questions.select, { id: true, question: true, options: true, correctIndex: true });
+    assert.doesNotMatch(JSON.stringify(quiz?.args), /attempts/);
     const attempts = calls.find((c) => c.method === "quizAttempt.findMany");
     assert.deepEqual(attempts?.args.where, { userId: STUDENT, quizId: "fin1" });
     assert.deepEqual(attempts?.args.select, { score: true, passed: true, createdAt: true });

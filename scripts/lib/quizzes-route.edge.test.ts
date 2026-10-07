@@ -235,11 +235,13 @@ describe("応答の項目は許可リストの中だけ（正解・回答・他�
     for (const s of [...LEAK_MARKERS, "SECRET_OPT", "options"]) assert.ok(!text.includes(s), s);
   });
 
-  it("GET /api/quizzes/badkey（正解が範囲外）でも正解は出さない（一覧には出ない・submit は 409）", async () => {
+  it("GET /api/quizzes/badkey（正解が範囲外）は 409 で正解を出さない（一覧には出ない・submit も 409）", async () => {
     const list = await (await LIST()).text();
     assert.ok(!list.includes("badkey"));
     const res = await getOne("badkey");
+    assert.equal(res.status, 409);
     const text = await res.text();
+    assert.deepEqual(JSON.parse(text), { error: "Quiz unavailable", reason: "quiz_unavailable" });
     assert.ok(!text.includes("correctIndex"));
     assert.ok(!text.includes("7"), "範囲外の正解の位置が出ていない");
     assert.equal((await submit("badkey", '{"answers":[0]}')).status, 409);
