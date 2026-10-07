@@ -953,7 +953,9 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   // of the previous lesson are never shown on the first render after switching lessons.
   const [comments, setComments] = useState(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
-  const [commentsFailed, setCommentsFailed] = useState(false);
+  // Id of the lesson whose load failed, or null. Like comments, it is tied to a lesson so a failure
+  // of the previous lesson is not shown on the first render after switching lessons.
+  const [commentsFailedLessonId, setCommentsFailedLessonId] = useState(null);
   // The request whose response is still awaited ({ lessonId }), or null. A second load for
   // the same lesson while it is in flight is ignored; a load for another lesson replaces it,
   // and a response whose request is no longer current (the user switched lessons) is dropped.
@@ -967,7 +969,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
       commentsInFlight.current = null;
       setComments(null);
       setCommentsLoading(false);
-      setCommentsFailed(false);
+      setCommentsFailedLessonId(null);
       return;
     }
     if (commentsInFlight.current && commentsInFlight.current.lessonId === lessonId) return;
@@ -976,7 +978,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     const isCurrent = () => commentsInFlight.current === req;
     setComments(null);
     setCommentsLoading(true);
-    setCommentsFailed(false);
+    setCommentsFailedLessonId(null);
     let sessionExpired = false;
     authFetch(`/api/comments/${encodeURIComponent(lessonId)}`).then(res => {
       if (!isCurrent()) return null;
@@ -986,8 +988,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     }).then(data => {
       if (sessionExpired || !isCurrent()) return;
       if (Array.isArray(data)) setComments({ lessonId, rows: data });
-      else setCommentsFailed(true);
-    }).catch(() => { if (isCurrent()) setCommentsFailed(true); }).finally(() => {
+      else setCommentsFailedLessonId(lessonId);
+    }).catch(() => { if (isCurrent()) setCommentsFailedLessonId(lessonId); }).finally(() => {
       if (sessionExpired || !isCurrent()) return;
       commentsInFlight.current = null;
       setCommentsLoading(false);
@@ -998,6 +1000,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
 
   // Rows of another lesson (the effect for the new lesson has not run yet) count as not loaded.
   const commentRows = comments && activeLesson?.id && comments.lessonId === activeLesson.id ? comments.rows : null;
+  // A failure of another lesson (the effect for the new lesson has not run yet) counts as still loading.
+  const commentsFailed = !!activeLesson?.id && commentsFailedLessonId === activeLesson.id;
   const commentItems = toCommentItems(commentRows, new Date());
   const commentsReady = !!activeLesson?.id && !commentsLoading && !commentsFailed && Array.isArray(commentRows);
   // With a lesson: waiting until its rows are loaded (or it failed). Without one: waiting while the

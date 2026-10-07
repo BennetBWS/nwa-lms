@@ -76,10 +76,10 @@ describe("LessonView：配線", () => {
     assert.doesNotMatch(src, /\bSend\b/);
   });
 
-  it("state は comments(null) / commentsLoading(true) / commentsFailed(false)、ref は null", () => {
+  it("state は comments(null) / commentsLoading(true) / commentsFailedLessonId(null)、ref は null", () => {
     assert.match(lessonView, /const \[comments, setComments\] = useState\(null\);/);
     assert.match(lessonView, /const \[commentsLoading, setCommentsLoading\] = useState\(true\);/);
-    assert.match(lessonView, /const \[commentsFailed, setCommentsFailed\] = useState\(false\);/);
+    assert.match(lessonView, /const \[commentsFailedLessonId, setCommentsFailedLessonId\] = useState\(null\);/);
     assert.match(lessonView, /const commentsInFlight = useRef\(null\);/);
   });
 
@@ -98,6 +98,13 @@ describe("LessonView：配線", () => {
     assert.match(lessonView, /const commentRows = comments && activeLesson\?\.id && comments\.lessonId === activeLesson\.id \? comments\.rows : null;/);
     assert.match(lessonView, /const commentsReady = !!activeLesson\?\.id && !commentsLoading && !commentsFailed && Array\.isArray\(commentRows\);/);
     assert.match(lessonView, /const commentItems = toCommentItems\(commentRows, new Date\(\)\);/);
+  });
+
+  it("失敗は今のレッスンについてだけ見る（失敗したレッスンの id を持ち、今の activeLesson.id と比べる）", () => {
+    assert.match(lessonView, /const commentsFailed = !!activeLesson\?\.id && commentsFailedLessonId === activeLesson\.id;/);
+    assert.doesNotMatch(lessonView, /\bsetCommentsFailed\(/);
+    assert.equal((loadSrc.match(/setCommentsFailedLessonId\(lessonId\)/g) ?? []).length, 2);
+    assert.equal((loadSrc.match(/setCommentsFailedLessonId\(null\)/g) ?? []).length, 2);
   });
 
   it("成功した応答は { lessonId, rows } の形で setComments する", () => {
@@ -212,11 +219,11 @@ describe("LessonView：使っている識別子はすべて page.tsx で import 
 // ───────────── loadComments の実行 ─────────────
 
 type FakeRes = { status: number; ok: boolean; redirected: boolean; url: string; json: () => Promise<unknown> };
-type State = { comments: unknown; loading: boolean; failed: boolean; inFlight: unknown; urls: string[]; jsonReads: number };
+type State = { comments: unknown; loading: boolean; failedLessonId: string | null; inFlight: unknown; urls: string[]; jsonReads: number };
 
 /** loadComments を実際に動かすハーネス。respond は URL ごとの応答（例外を返すなら reject） */
 function harness(respond: (url: string) => Promise<FakeRes>) {
-  const st: State = { comments: null, loading: true, failed: false, inFlight: null, urls: [], jsonReads: 0 };
+  const st: State = { comments: null, loading: true, failedLessonId: null, inFlight: null, urls: [], jsonReads: 0 };
   const ref = {
     get current() {
       return st.inFlight;
@@ -241,7 +248,7 @@ function harness(respond: (url: string) => Promise<FakeRes>) {
     "commentsInFlight",
     "setComments",
     "setCommentsLoading",
-    "setCommentsFailed",
+    "setCommentsFailedLessonId",
     `${loadSrc}\nreturn loadComments;`
   );
   const load = make(
@@ -250,7 +257,7 @@ function harness(respond: (url: string) => Promise<FakeRes>) {
     ref,
     (v: unknown) => (st.comments = v),
     (v: boolean) => (st.loading = v),
-    (v: boolean) => (st.failed = v)
+    (v: string | null) => (st.failedLessonId = v)
   ) as (lessonId?: string) => void;
   return { st, load };
 }
@@ -290,7 +297,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     await settle();
     assert.deepEqual(st.comments, { lessonId: "l1", rows: [ROW] });
     assert.equal(st.loading, false);
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     assert.equal(st.inFlight, null);
   });
 
@@ -305,7 +312,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     load("l1");
     await settle();
     assert.deepEqual(st.comments, { lessonId: "l1", rows: [] });
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     assert.equal(st.loading, false);
   });
 
@@ -314,7 +321,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     load(undefined);
     assert.deepEqual(st.urls, []);
     assert.equal(st.loading, false);
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     assert.equal(st.comments, null);
   });
 
@@ -328,7 +335,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
       await settle();
       assert.equal(st.jsonReads, 0);
       assert.equal(st.loading, true);
-      assert.equal(st.failed, false);
+      assert.equal(st.failedLessonId, null);
       assert.equal(st.comments, null);
       assert.ok(st.inFlight);
       load("l1");
@@ -343,12 +350,12 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     ["403", { status: 403, ok: false, redirected: false, url: `${ORIGIN}/api/comments/l1` }],
     ["500", { status: 500, ok: false, redirected: false, url: `${ORIGIN}/api/comments/l1`, body: { error: "Internal server error" } }],
   ] as Array<[string, Partial<FakeRes> & { body?: unknown }]>) {
-    it(`失敗（${label}）：JSON を読まず failed、loading=false、ref が戻る`, async () => {
+    it(`失敗（${label}）：JSON を読まず失敗のレッスン id を持ち、loading=false、ref が戻る`, async () => {
       const { st, load } = harness(res(r));
       load("l1");
       await settle();
       assert.equal(st.jsonReads, 0);
-      assert.equal(st.failed, true);
+      assert.equal(st.failedLessonId, "l1");
       assert.equal(st.loading, false);
       assert.equal(st.comments, null);
       assert.equal(st.inFlight, null);
@@ -364,7 +371,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
       const { st, load } = harness(res({ body }));
       load("l1");
       await settle();
-      assert.equal(st.failed, true);
+      assert.equal(st.failedLessonId, "l1");
       assert.equal(st.loading, false);
       assert.equal(st.inFlight, null);
     });
@@ -378,7 +385,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
       const { st, load } = harness(respond);
       load("l1");
       await settle();
-      assert.equal(st.failed, true);
+      assert.equal(st.failedLessonId, "l1");
       assert.equal(st.loading, false);
       assert.equal(st.inFlight, null);
     }
@@ -397,19 +404,19 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     assert.equal(st.inFlight, null);
   });
 
-  it("再読み込み：失敗のあとに呼ぶと loading=true・failed=false に戻して取得し直す", async () => {
+  it("再読み込み：失敗のあとに呼ぶと loading=true・失敗のレッスン id を null に戻して取得し直す", async () => {
     let n = 0;
     const { st, load } = harness(() => (++n === 1 ? res({ status: 500, ok: false })() : res({ body: [ROW] })()));
     load("l1");
     await settle();
-    assert.equal(st.failed, true);
+    assert.equal(st.failedLessonId, "l1");
     load("l1");
     assert.equal(st.loading, true);
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     await settle();
     assert.equal(st.urls.length, 2);
     assert.deepEqual(st.comments, { lessonId: "l1", rows: [ROW] });
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
   });
 
   it("素早くレッスンを切り替えたら、古いレッスンの応答（後から届いても）を捨てる", async () => {
@@ -430,7 +437,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     await settle();
     assert.deepEqual(st.comments, { lessonId: "B", rows: [B_ROW] });
     assert.equal(st.loading, false);
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     assert.equal(st.jsonReads, reads);
   });
 
@@ -446,7 +453,7 @@ describe("LessonView：loadComments の状態遷移（実行）", () => {
     load("A");
     load("B");
     await settle();
-    assert.equal(st.failed, false);
+    assert.equal(st.failedLessonId, null);
     assert.equal(st.loading, true);
     assert.ok(st.inFlight);
     b.release(okRes([]));
