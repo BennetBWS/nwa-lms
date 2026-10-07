@@ -283,7 +283,7 @@ describe("GET /api/quizzes：認証", () => {
 });
 
 describe("GET /api/quizzes：応答", () => {
-  it("コースの順（order）に、修了テスト・ミニテスト（レッスン順）を振り分ける。問題 0 件・コースに属さないクイズは除く", async () => {
+  it("コースの順（order）に、修了テスト・ミニテスト（レッスン順）を振り分ける。問題 0 件・選択肢が壊れている・正解が範囲外・コースに属さないクイズは除く", async () => {
     const body = await (await LIST()).json();
     assert.deepEqual(
       body.courses.map((c: { id: string; finalQuizzes: Array<{ id: string }>; miniQuizzes: Array<{ id: string }> }) => [
@@ -293,8 +293,8 @@ describe("GET /api/quizzes：応答", () => {
       ]),
       [
         ["c1", ["fin1"], ["mini1a", "mini1b"]],
-        ["c2", ["fin2"], ["broken"]],
-        ["c3", ["fin3"], ["badkey"]],
+        ["c2", ["fin2"], []],
+        ["c3", ["fin3"], []],
       ]
     );
   });
@@ -349,14 +349,32 @@ describe("GET /api/quizzes：応答", () => {
     assert.deepEqual(progress?.args.where, { userId: STUDENT, completed: true });
   });
 
-  it("コースは [order, id] で並べ、クイズは正解・問題文を読まない（問題は件数だけ）", async () => {
+  it("コースは [order, id] で並べ、クイズの問題は受験できるかの確認に options・correctIndex だけを読む（問題文・回答は読まない）", async () => {
     await LIST();
     const courses = calls.find((c) => c.method === "course.findMany");
     assert.deepEqual(courses?.args.orderBy, [{ order: "asc" }, { id: "asc" }]);
     const quizzes = calls.find((c) => c.method === "quiz.findMany");
-    const text = JSON.stringify(quizzes?.args);
-    assert.doesNotMatch(text, /correctIndex|options|question"|answers|attempts/);
-    assert.deepEqual((quizzes?.args.select as Select)._count, { select: { questions: true } });
+    const select = quizzes?.args.select as Select;
+    assert.deepEqual(select.questions, { select: { options: true, correctIndex: true } });
+    const { questions: _questions, ...rest } = select;
+    assert.doesNotMatch(JSON.stringify(rest), /correctIndex|options|question"|answers|attempts/);
+  });
+
+  it("選択肢・正解の問題が 1 つでも壊れていればそのクイズは出さない（ほかの問題が正常でも）", async () => {
+    db.questions.push({ id: "qbad", quizId: "fin1", question: "壊れ", options: "x,y", correctIndex: 0, order: 9 });
+    db.questions.push({ id: "f2bad", quizId: "fin2", question: "範囲外", options: ["x", "y"], correctIndex: 2, order: 9 });
+    const body = await (await LIST()).json();
+    assert.deepEqual(
+      body.courses.map((c: { id: string; finalQuizzes: Array<{ id: string }>; miniQuizzes: Array<{ id: string }> }) => [
+        c.id,
+        c.finalQuizzes.map((q) => q.id),
+        c.miniQuizzes.map((q) => q.id),
+      ]),
+      [
+        ["c1", [], ["mini1a", "mini1b"]],
+        ["c3", ["fin3"], []],
+      ]
+    );
   });
 
   it("応答 JSON に正解・回答・他人の ID・メールアドレスを含まない", async () => {

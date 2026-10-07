@@ -18,6 +18,7 @@ import {
   toQuizCourseItems,
   toQuizResultView,
   toQuizTakeView,
+  type AnswerKeyRow,
   type QuizAttemptInput,
   type QuizCourseInput,
   type QuizInput,
@@ -245,8 +246,13 @@ function course(id: string, order: number, lessonIds: string[]): QuizCourseInput
   return { id, name: `コース${id}`, order, icon: "html", color: "#000000", sections: [{ lessons: lessonIds.map((x) => ({ id: x })) }] };
 }
 
+/** 受験できる問題（2 択・正解は 0）を n 件 */
+function validQuestions(n: number): AnswerKeyRow[] {
+  return Array.from({ length: n }, () => ({ options: ["x", "y"], correctIndex: 0 }));
+}
+
 function finalQuiz(id: string, courseId: string | null, questionCount = 3, title = `修了${id}`): QuizInput {
-  return { id, title, type: "FINAL", courseId, lessonId: null, lesson: null, questionCount };
+  return { id, title, type: "FINAL", courseId, lessonId: null, lesson: null, questions: validQuestions(questionCount) };
 }
 
 function miniQuiz(
@@ -262,7 +268,7 @@ function miniQuiz(
     courseId: null,
     lessonId: lesson?.id ?? null,
     lesson: lesson ? { ...lesson, title: `レッスン${lesson.id}` } : null,
-    questionCount,
+    questions: validQuestions(questionCount),
   };
 }
 
@@ -322,6 +328,39 @@ describe("buildQuizCourses：振り分け", () => {
     );
     assert.deepEqual(out.map((c) => c.finalQuizzes.map((q) => q.id)), [["ok"]]);
     assert.deepEqual(out[0].miniQuizzes, []);
+  });
+
+  it("受験できない問題（options が壊れている・correctIndex が範囲外）を 1 つでも含むクイズは除く", () => {
+    const withQuestions = (q: QuizInput, questions: AnswerKeyRow[]): QuizInput => ({ ...q, questions });
+    const mini = miniQuiz("m_ok", { id: "l1", order: 1, section: { id: "s1", order: 1, courseId: "c1" } });
+    const out = buildQuizCourses(
+      [course("c1", 1, ["l1"])],
+      NONE,
+      [
+        withQuestions(finalQuiz("one_option", "c1"), [...validQuestions(2), { options: ["only"], correctIndex: 0 }]),
+        withQuestions(finalQuiz("not_array", "c1"), [{ options: "x,y", correctIndex: 0 }]),
+        withQuestions(finalQuiz("non_string", "c1"), [{ options: ["x", 1], correctIndex: 0 }]),
+        withQuestions(finalQuiz("null_options", "c1"), [{ options: null, correctIndex: 0 }]),
+        withQuestions(finalQuiz("key_too_big", "c1"), [{ options: ["x", "y"], correctIndex: 2 }, ...validQuestions(1)]),
+        withQuestions(finalQuiz("key_negative", "c1"), [{ options: ["x", "y"], correctIndex: -1 }]),
+        withQuestions({ ...mini, id: "m_broken" }, [{ options: ["x"], correctIndex: 0 }]),
+        mini,
+        finalQuiz("ok", "c1"),
+      ],
+      []
+    );
+    assert.deepEqual(out.map((c) => [c.finalQuizzes.map((q) => q.id), c.miniQuizzes.map((q) => q.id)]), [[["ok"], ["m_ok"]]]);
+  });
+
+  it("壊れたクイズしかないコースは返さない。壊れたクイズの受験記録は数えない", () => {
+    const broken: QuizInput = { ...finalQuiz("broken", "c1"), questions: [{ options: ["only"], correctIndex: 0 }] };
+    assert.deepEqual(buildQuizCourses([course("c1", 1, [])], NONE, [broken], [{ quizId: "broken", score: 100, passed: true, createdAt: new Date("2026-10-01T00:00:00.000Z") }]), []);
+  });
+
+  it("questionCount は問題の件数で、応答に選択肢・正解は出さない", () => {
+    const out = buildQuizCourses([course("c1", 1, [])], NONE, [finalQuiz("f1", "c1", 4)], []);
+    assert.equal(out[0].finalQuizzes[0].questionCount, 4);
+    assert.doesNotMatch(JSON.stringify(out), /correctIndex|options|questions"/);
   });
 
   it("クイズのないコースは返さない。全部なければ空配列", () => {

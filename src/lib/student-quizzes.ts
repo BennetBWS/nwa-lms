@@ -218,7 +218,8 @@ export type QuizInput = {
     order: number;
     section: { id: string; order: number; courseId: string };
   } | null;
-  questionCount: number;
+  /** 受験できるかの確認だけに使う（応答には件数だけを出し、選択肢・正解は出さない） */
+  questions: ReadonlyArray<AnswerKeyRow>;
 };
 
 export type QuizAttemptInput = AttemptRow & { quizId: string };
@@ -260,7 +261,8 @@ function countLessons(course: QuizCourseInput, completedLessonIds: ReadonlySet<s
  * - courses は表示順（route が [order, id] で並べる）。ロックは course-lock の isCourseLocked と同じ規則で、
  *   クイズのないコースも含めた全コースの並びで前のコースを見る
  * - 修了テスト（FINAL）は quiz.courseId のコースへ、ミニテスト（MINI）は lesson.section.courseId のコースへ振り分ける
- * - 問題が 0 件のクイズ、振り分け先のコースがないクイズは除く。クイズが 1 件もないコースは返さない
+ * - 受験できないクイズ（問題が 0 件、options が壊れている、correctIndex が選択肢の範囲外の問題を 1 つでも含む。
+ *   toAnswerKey が null）と、振り分け先のコースがないクイズは除く。クイズが 1 件もないコースは返さない
  * - 修了テストはタイトル順（同じなら id 順）、ミニテストはセクション順・レッスン順（同じなら id 順）、同じレッスンならタイトル・id 順
  * - attempts は渡されたものをすべて数える（route が自分の分だけを読む）
  */
@@ -280,7 +282,7 @@ export function buildQuizCourses(
   const finals = new Map<string, QuizInput[]>();
   const minis = new Map<string, QuizInput[]>();
   for (const q of quizzes) {
-    if (!(q.questionCount > 0)) continue;
+    if (!toAnswerKey(q.questions)) continue;
     let courseId: string | null = null;
     let target: Map<string, QuizInput[]> | null = null;
     if (q.type === "FINAL") {
@@ -302,7 +304,7 @@ export function buildQuizCourses(
     type: q.type,
     lessonId: q.type === "MINI" ? q.lesson?.id ?? null : null,
     lessonTitle: q.type === "MINI" ? q.lesson?.title ?? null : null,
-    questionCount: q.questionCount,
+    questionCount: q.questions.length,
     ...summarizeAttempts(attemptsByQuiz.get(q.id) ?? []),
   });
 

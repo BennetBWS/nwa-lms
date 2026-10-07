@@ -5,7 +5,7 @@ import { safeErrorSummary } from "@/lib/safe-error";
 import { buildQuizCourses } from "@/lib/student-quizzes";
 
 // 確認テストの一覧（#32）。コースごとに修了テスト・ミニテストと、自分の受験回数・最高点・合否、コースのロック。
-// 正解・回答は読まない。受験記録は自分の分だけ
+// 問題の選択肢・正解は受験できるかの確認だけに読み、応答には含めない。回答・問題文は読まない。受験記録は自分の分だけ
 export async function GET() {
   try {
     const session = await auth();
@@ -46,7 +46,8 @@ export async function GET() {
               section: { select: { id: true, order: true, courseId: true } },
             },
           },
-          _count: { select: { questions: true } },
+          // 受験できるか（選択肢が壊れていない・正解が範囲内）の確認だけに使う。応答には件数だけを出す
+          questions: { select: { options: true, correctIndex: true } },
         },
       }),
       prisma.quizAttempt.findMany({
@@ -56,10 +57,8 @@ export async function GET() {
     ]);
 
     const completedLessonIds = new Set(progress.map((p) => p.lessonId));
-    const quizInputs = quizzes.map(({ _count, ...q }) => ({ ...q, questionCount: _count.questions }));
-
     return NextResponse.json({
-      courses: buildQuizCourses(courses, completedLessonIds, quizInputs, attempts),
+      courses: buildQuizCourses(courses, completedLessonIds, quizzes, attempts),
     });
   } catch (error) {
     console.error("GET /api/quizzes error:", safeErrorSummary(error).name);
