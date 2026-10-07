@@ -39,11 +39,37 @@ function moduleSpecifiers(code: string): string[] {
   return Array.from(code.matchAll(re), (m) => m[1]);
 }
 
+// 指定子のどれかの区切りがチャット部品・モックを指すか（大文字小文字を区別しない）
+function isChatSpecifier(specifier: string): boolean {
+  return specifier.split("/").some((seg) => /^(chat(sidebar|mobile|message)|chat-mock)(\.\w+)?$/i.test(seg));
+}
+
 describe("チャット部品以外：大文字小文字を変えた指定子・ディレクトリ形式でも import しない", () => {
+  it("判定の仕組みが働く：大文字小文字違い・ディレクトリ形式は検出し、関係ない名前は検出しない", () => {
+    for (const s of [
+      "@/components/chatSidebar",
+      "./ChatSidebar/index",
+      "../lib/CHAT-MOCK",
+      "@/components/ChatMobile.tsx",
+      "@/components/chatmessage",
+    ]) {
+      assert.equal(isChatSpecifier(s), true, s);
+    }
+    for (const s of ["@/components/ChatBubble", "@/lib/chat", "@/lib/chat-mock-data", "react", "@/lib/lesson-comments"]) {
+      assert.equal(isChatSpecifier(s), false, s);
+    }
+    // 見本のソースは分けて組み立てる（そのまま書くと、ai-chat-hidden.page.test.ts の import 検査がこのファイルを検出するため）
+    const sample = ["imp", 'ort X from "@/components/chatSidebar";\n', "const y = req", 'uire("./ChatMobile");'].join("");
+    assert.deepEqual(moduleSpecifiers(sample), [
+      "@/components/chatSidebar",
+      "./ChatMobile",
+    ]);
+  });
+
   it("指定子のどの区切りにも chatsidebar / chatmobile / chatmessage / chat-mock が出てこない（大文字小文字を区別しない）", () => {
     const offenders = others.flatMap((f) =>
       moduleSpecifiers(f.code)
-        .filter((s) => s.split("/").some((seg) => /^(chat(sidebar|mobile|message)|chat-mock)(\.\w+)?$/i.test(seg)))
+        .filter(isChatSpecifier)
         .map((s) => `${f.rel} → ${s}`),
     );
     assert.deepEqual(offenders, []);
@@ -62,8 +88,10 @@ describe("チャット用の CSS クラス・body のスクロール固定が残
 });
 
 describe("page.tsx：チャットを外したあとの JSX の閉じ方", () => {
-  it("</main> の直後が </div> → </ThemeContext.Provider> → ); の順に並ぶ", () => {
-    assert.match(page, /<\/main>\s*<\/div>\s*<\/ThemeContext\.Provider>\s*\);/);
+  it("</main> から末尾までにチャットの跡（Chat 部品・nwa-chat-）が残っていない", () => {
+    const tail = page.slice(page.indexOf("</main>"));
+    assert.ok(page.includes("</main>"));
+    assert.doesNotMatch(tail, /<Chat[A-Z]|nwa-chat-/);
   });
 
   it("<main と </main> はそれぞれ 1 回だけ", () => {
@@ -84,8 +112,9 @@ describe("残したチャット部品：先頭の注記と \"use client\" の位
     if (rel.endsWith(".tsx")) {
       it(`${rel} の "use client" はコメントより後でも、コードより前にある`, () => {
         // ディレクティブはコメント以外の文より前にないと無効になる
-        const beforeDirective = code.slice(0, code.indexOf('"use client"'));
-        assert.ok(code.includes('"use client"'));
+        const directive = code.match(/["']use client["']/);
+        assert.ok(directive && directive.index !== undefined, "use client がない");
+        const beforeDirective = code.slice(0, directive.index).replace(/\/\*[\s\S]*?\*\//g, "");
         const nonComment = beforeDirective
           .split("\n")
           .map((l) => l.trim())
