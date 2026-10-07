@@ -1,3 +1,5 @@
+// AI chat is hidden in the release (#32) and no screen uses it.
+// It is a mock that returns sample answers; do not put it back on production screens.
 export async function sendChatMessage(message: string): Promise<string> {
   await new Promise(r => setTimeout(r, 1500));
   const responses = [

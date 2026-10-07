@@ -1,3 +1,5 @@
+// AI chat is hidden in the release (#32) and no screen uses it.
+// It is a mock that returns sample answers; do not put it back on production screens.
 "use client";
 
 import { useEffect, useState } from "react";
