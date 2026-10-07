@@ -1,9 +1,13 @@
 import { before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { installFakeAuth, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 
 // #32 確認テストの API：GET /api/quizzes、GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit。
+// submit は QUIZ_ATTEMPTS_ENABLED が false の間 503 を返すので、採点・保存は本体の handleQuizSubmit に
+// attemptsEnabled: true を渡して確かめる（route の POST 経由は 401 / 503 だけ）。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
 // （受け取った引数を記録し、where（値の一致）・orderBy・select（入れ子のリレーションと _count）を最低限だけ再現する）。
 // NextAuth は installFakeAuth で差し替える。データはすべてダミー（example.com）。
@@ -34,6 +38,13 @@ let db: {
 let LIST: () => Promise<Response>;
 let GET_ONE: (req: Request, ctx: { params: Promise<{ quizId: string }> }) => Promise<Response>;
 let SUBMIT: (req: Request, ctx: { params: Promise<{ quizId: string }> }) => Promise<Response>;
+let HANDLE_SUBMIT: (
+  userId: string,
+  req: Request,
+  ctx: { params: Promise<{ quizId: string }> },
+  opts: { attemptsEnabled: boolean }
+) => Promise<Response>;
+let ATTEMPTS_ENABLED: boolean;
 
 // ───────────── 偽 prisma ─────────────
 
@@ -142,6 +153,8 @@ before(async () => {
   ({ GET: LIST } = await import("../../src/app/api/quizzes/route"));
   ({ GET: GET_ONE } = await import("../../src/app/api/quizzes/[quizId]/route"));
   ({ POST: SUBMIT } = await import("../../src/app/api/quizzes/[quizId]/submit/route"));
+  ({ handleQuizSubmit: HANDLE_SUBMIT } = await import("../../src/lib/quiz-submit"));
+  ({ QUIZ_ATTEMPTS_ENABLED: ATTEMPTS_ENABLED } = await import("../../src/lib/student-quizzes"));
 });
 
 const at = (minutesAgo: number) => new Date(BASE - minutesAgo * 60_000);
@@ -211,15 +224,17 @@ beforeEach(() => {
 
 const ctx = (quizId: string) => ({ params: Promise.resolve({ quizId }) });
 const getOne = (quizId: string) => GET_ONE(new Request(`https://nwa-lms.example.com/api/quizzes/${encodeURIComponent(quizId)}`), ctx(quizId));
+const submitRequest = (quizId: string, body: unknown, raw?: string) =>
+  new Request(`https://nwa-lms.example.com/api/quizzes/${encodeURIComponent(quizId)}/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw ?? JSON.stringify(body),
+  });
+/** route の POST（QUIZ_ATTEMPTS_ENABLED の値のまま） */
+const submitRoute = (quizId: string, body: unknown, raw?: string) => SUBMIT(submitRequest(quizId, body, raw), ctx(quizId));
+/** 本体に attemptsEnabled: true を渡す（受験を公開したあとの動き）。userId は route と同じくセッションの値 */
 const submit = (quizId: string, body: unknown, raw?: string) =>
-  SUBMIT(
-    new Request(`https://nwa-lms.example.com/api/quizzes/${encodeURIComponent(quizId)}/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: raw ?? JSON.stringify(body),
-    }),
-    ctx(quizId)
-  );
+  HANDLE_SUBMIT(session!.user.id!, submitRequest(quizId, body, raw), ctx(quizId), { attemptsEnabled: true });
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
 
 function captureLogs() {
@@ -472,13 +487,62 @@ describe("GET /api/quizzes/[quizId]：エラー", () => {
 
 // ───────────── POST /api/quizzes/[quizId]/submit ─────────────
 
-describe("POST submit：認証・入力", () => {
+describe("POST submit：route（受験の公開前）", () => {
+  it("前提：QUIZ_ATTEMPTS_ENABLED は false", () => {
+    assert.equal(ATTEMPTS_ENABLED, false);
+  });
+
   it("セッションがなければ 401 で、DB を読まない", async () => {
     session = null;
-    assert.equal((await submit("fin1", { answers: [1, 0, 2] })).status, 401);
+    assert.equal((await submitRoute("fin1", { answers: [1, 0, 2] })).status, 401);
     assert.equal(calls.length, 0);
   });
 
+  it("user.id のないセッションも 401 で、DB を読まない", async () => {
+    session = { user: { role: "STUDENT" } };
+    assert.equal((await submitRoute("fin1", { answers: [1, 0, 2] })).status, 401);
+    assert.equal(calls.length, 0);
+  });
+
+  it("ログイン済みでも 503 attempts_disabled で、DB を読まず・書かない", async () => {
+    const res = await submitRoute("fin1", { answers: [1, 0, 2] });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { error: "Quiz attempts are not available yet", reason: "attempts_disabled" });
+    assert.equal(calls.length, 0);
+    assert.equal(db.attempts.length, 5);
+  });
+
+  for (const [label, quizId, raw] of [
+    ["壊れた JSON", "fin1", "{ answers: [1,"],
+    ["空の quizId", "", '{"answers":[0]}'],
+    ["存在しないクイズ", "missing", '{"answers":[0]}'],
+    ["問題 0 件のクイズ", "empty", '{"answers":[0]}'],
+  ] as Array<[string, string, string]>) {
+    it(`${label}でも（入力を見ずに）503 で、DB を読まない`, async () => {
+      const res = await submitRoute(quizId, undefined, raw);
+      assert.equal(res.status, 503);
+      assert.equal((await res.json()).reason, "attempts_disabled");
+      assert.equal(calls.length, 0);
+    });
+  }
+
+  it("本体に attemptsEnabled: false を渡しても 503 で、DB を読まない", async () => {
+    const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers: [1, 0, 2] }), ctx("fin1"), { attemptsEnabled: false });
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).reason, "attempts_disabled");
+    assert.equal(calls.length, 0);
+  });
+
+  it("route はセッションの user.id と QUIZ_ATTEMPTS_ENABLED を本体に渡す（ソース）", () => {
+    const source = readFileSync(join(process.cwd(), "src/app/api/quizzes/[quizId]/submit/route.ts"), "utf8");
+    assert.match(source, /handleQuizSubmit\(session\.user\.id, request, context, \{ attemptsEnabled: QUIZ_ATTEMPTS_ENABLED \}\)/);
+    assert.doesNotMatch(source, /prisma/);
+    // route ファイルは POST だけを export する
+    assert.deepEqual(Array.from(source.matchAll(/^export\s+(?:async\s+)?(?:function|const)\s+(\w+)/gm)).map((m) => m[1]), ["POST"]);
+  });
+});
+
+describe("POST submit：認証・入力（attemptsEnabled: true）", () => {
   it("quizId が空・65 文字なら 400 で、DB を読まない", async () => {
     assert.equal((await submit("", { answers: [0] })).status, 400);
     assert.equal((await submit("a".repeat(65), { answers: [0] })).status, 400);
@@ -551,7 +615,7 @@ describe("POST submit：認証・入力", () => {
   }
 });
 
-describe("POST submit：採点と保存", () => {
+describe("POST submit：採点と保存（attemptsEnabled: true）", () => {
   // fin1 の並び（[order, id]）：qz（正解 1）→ qa（正解 0）→ qb（正解 2）
   it("採点はサーバーで、GET と同じ並び。応答は score / passed / total / correct / results だけ", async () => {
     const res = await submit("fin1", { answers: [1, 0, 0] });
@@ -600,7 +664,7 @@ describe("POST submit：採点と保存", () => {
   });
 });
 
-describe("POST submit：エラー", () => {
+describe("POST submit：エラー（attemptsEnabled: true）", () => {
   it("書き込みの例外なら 500 で、ログに回答・正解・メールアドレス・ID を出さない", async () => {
     failOn = "quizAttempt.create";
     failWith = piiError();
