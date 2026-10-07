@@ -48,19 +48,24 @@ describe("scoreAttempt：総当たり（1〜200 問、正解数 0〜全問）", 
     assert.deepEqual([run(70, 100).score, run(70, 100).passed], [70, true]);
   });
 
-  it(
-    "点数は正解率の四捨五入（ちょうど .5 は切り上げ。例：23/40 = 57.5% は 58 点）",
-    { todo: "不具合：Math.round((correct / total) * 100) の浮動小数の誤差で 23/40 → 57 点、57/200 → 28 点になる（合否には影響なし）" },
-    () => {
-      for (let total = 1; total <= 200; total++) {
-        const key = Array.from({ length: total }, () => 0);
-        for (let correct = 0; correct <= total; correct++) {
-          const r = scoreAttempt(key.map((_, i) => (i < correct ? 0 : 1)), key);
-          assert.equal(r.score, exactRound(correct, total), `${correct}/${total}`);
-        }
+  it("点数は正解率の四捨五入（ちょうど .5 は切り上げ。例：23/40 = 57.5% は 58 点）", () => {
+    for (let total = 1; total <= 200; total++) {
+      const key = Array.from({ length: total }, () => 0);
+      for (let correct = 0; correct <= total; correct++) {
+        const r = scoreAttempt(key.map((_, i) => (i < correct ? 0 : 1)), key);
+        assert.equal(r.score, exactRound(correct, total), `${correct}/${total}`);
       }
     }
-  );
+  });
+
+  it("浮動小数で誤差が出ていた例（23/40 は 58 点、57/200 は 29 点）", () => {
+    const run = (correct: number, total: number) => {
+      const key = Array.from({ length: total }, () => 0);
+      return scoreAttempt(key.map((_, i) => (i < correct ? 0 : 1)), key);
+    };
+    assert.equal(run(23, 40).score, 58);
+    assert.equal(run(57, 200).score, 29);
+  });
 });
 
 describe("parseSubmitAnswers：境界", () => {

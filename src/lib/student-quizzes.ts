@@ -150,7 +150,8 @@ export function scoreAttempt(answers: ReadonlyArray<number>, correctIndexes: Rea
   return {
     correct,
     total,
-    score: Math.round((correct / total) * 100),
+    // 浮動小数の誤差を避けるため整数だけで四捨五入する（ちょうど .5 は切り上げ。23/40 = 57.5% → 58）
+    score: Math.floor((200 * correct + total) / (2 * total)),
     passed: correct * 100 >= PASSING_PERCENT * total,
     results,
   };
