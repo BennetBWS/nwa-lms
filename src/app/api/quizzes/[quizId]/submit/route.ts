@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { safeErrorSummary } from "@/lib/safe-error";
+import { handleQuizSubmit } from "@/lib/quiz-submit";
+import { QUIZ_ATTEMPTS_ENABLED } from "@/lib/student-quizzes";
 
+// 回答の送信と採点（#32）。本体は src/lib/quiz-submit.ts。
+// QUIZ_ATTEMPTS_ENABLED が false の間は、認証のあと DB を読まずに 503 attempts_disabled を返す。
+// userId はセッションの値（body の userId は読まない）
 export async function POST(
   request: Request,
-  { params }: { params: Promise<{ quizId: string }> }
+  context: { params: Promise<{ quizId: string }> }
 ) {
   try {
     const session = await auth();
@@ -12,54 +17,9 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { quizId } = await params;
-    const { answers } = await request.json();
-
-    if (!Array.isArray(answers)) {
-      return NextResponse.json(
-        { error: "answers must be an array" },
-        { status: 400 }
-      );
-    }
-
-    const quiz = await prisma.quiz.findUnique({
-      where: { id: quizId },
-      include: {
-        questions: {
-          orderBy: { order: "asc" },
-        },
-      },
-    });
-
-    if (!quiz) {
-      return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
-    }
-
-    const total = quiz.questions.length;
-    let correct = 0;
-
-    for (let i = 0; i < total; i++) {
-      if (answers[i] === quiz.questions[i].correctIndex) {
-        correct++;
-      }
-    }
-
-    const score = total > 0 ? Math.round((correct / total) * 100) : 0;
-    const passed = score >= 70;
-
-    await prisma.quizAttempt.create({
-      data: {
-        userId: session.user.id,
-        quizId,
-        score,
-        passed,
-        answers,
-      },
-    });
-
-    return NextResponse.json({ score, passed, total, correct });
+    return await handleQuizSubmit(session.user.id, request, context, { attemptsEnabled: QUIZ_ATTEMPTS_ENABLED });
   } catch (error) {
-    console.error("POST /api/quizzes/[quizId]/submit error:", error);
+    console.error("POST /api/quizzes/[quizId]/submit error:", safeErrorSummary(error).name);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

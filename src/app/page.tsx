@@ -45,6 +45,15 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
+import {
+  PASSING_PERCENT,
+  QUIZ_ATTEMPTS_ENABLED,
+  buildSubmitBody,
+  quizResultTitle,
+  toQuizCourseItems,
+  toQuizResultView,
+  toQuizTakeView,
+} from "@/lib/student-quizzes";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -1673,168 +1682,407 @@ const AdminDashboard = () => {
 // QUIZ PAGE — 確認テスト受講
 // ═══════════════════════════════════════════
 const QuizPage = () => {
-  const [activeQuiz, setActiveQuiz] = useState(null);
-  const [selectedAnswer, setSelectedAnswer] = useState(null);
-  const [showResult, setShowResult] = useState(false);
+  // コースのアイコン。icon が "constructor" や "valueOf" などでも Object の組み込みを拾わないよう、
+  // CourseIcons 自身が持つキーだけを使う（ほかの画面の同じ参照はこの PR では変えない）
+  const quizCourseIcon = (icon) =>
+    typeof icon === "string" && Object.prototype.hasOwnProperty.call(CourseIcons, icon) ? CourseIcons[icon] : null;
+
+  // ── 一覧（/api/quizzes） ──
+  const [quizData, setQuizData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const quizzesInFlight = useRef(false);
+
+  // Same approach as loadNotifications: an expired session is handled by authFetch
+  // (sign out and go to /login), so keep the loading screen and do not fetch again.
+  // Any other redirect, non-ok response or a body without a courses array is a failure.
+  const loadQuizzes = () => {
+    if (quizzesInFlight.current) return;
+    quizzesInFlight.current = true;
+    setLoading(true);
+    setLoadFailed(false);
+    let sessionExpired = false;
+    authFetch("/api/quizzes").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      if (data && Array.isArray(data.courses)) setQuizData(data);
+      else setLoadFailed(true);
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      quizzesInFlight.current = false;
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => { loadQuizzes(); }, []);
+
+  // ── 受験（QUIZ_ATTEMPTS_ENABLED が false の間は開けない。#8 のあとに公開） ──
+  const [activeQuizId, setActiveQuizId] = useState(null);
+  const [takeQuiz, setTakeQuiz] = useState(null);
+  const [takeLoading, setTakeLoading] = useState(false);
+  const [takeFailed, setTakeFailed] = useState(false);
+  const [answers, setAnswers] = useState([]);
   const [currentQ, setCurrentQ] = useState(0);
-  const [score, setScore] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitFailed, setSubmitFailed] = useState(false);
+  const [result, setResult] = useState(null);
 
-  const steps = [
-    {
-      name: "STEP1 ITリテラシー", color: "#6366F1", icon: "it",
-      stepQuiz: { title: "STEP1 修了テスト", questions: 10, time: "15分", passed: true, score: 90 },
-      miniQuizzes: [
-        { title: "L1: PC基本操作", passed: true, score: 100 },
-        { title: "L4: ファイル管理", passed: true, score: 80 },
-        { title: "L8: ネットリテラシー", passed: true, score: 90 },
-        { title: "L12: ツール活用", passed: true, score: 85 },
-      ],
-    },
-    {
-      name: "STEP2 HTML", color: "#EF4444", icon: "html",
-      stepQuiz: { title: "STEP2 修了テスト", questions: 10, time: "15分", passed: true, score: 85 },
-      miniQuizzes: [
-        { title: "L3: HTML基本構造", passed: true, score: 90 },
-        { title: "L7: テキスト・リスト", passed: true, score: 95 },
-        { title: "L10: セマンティックタグ", passed: true, score: 80 },
-        { title: "L12: リンク・画像・テーブル", passed: true, score: 85 },
-      ],
-    },
-    {
-      name: "STEP3 CSS", color: "#3B82F6", icon: "css",
-      stepQuiz: { title: "STEP3 修了テスト", questions: 12, time: "20分", passed: false, score: null },
-      miniQuizzes: [
-        { title: "L2: セレクター・プロパティ", passed: true, score: 85 },
-        { title: "L3: ボックスモデル", passed: true, score: 90 },
-        { title: "L5: Flexbox", passed: false, score: 60 },
-        { title: "L7: レスポンシブデザイン", passed: null, score: null },
-      ],
-    },
-  ];
+  // Bumped on every open / close: responses of a quiz that is no longer shown are dropped.
+  const takeSeq = useRef(0);
+  // Guards against a second submit while one is in flight (double clicks).
+  const submitInFlight = useRef(false);
 
-  // Demo quiz questions for active quiz
-  const demoQuestions = [
-    { q: "Flexboxで主軸方向を変更するプロパティは？", options: ["flex-direction", "justify-content", "align-items", "flex-wrap"], correct: 0 },
-    { q: "flex-grow: 1 の意味は？", options: ["固定サイズ", "余白を均等に分配", "縮小を許可", "折り返しを有効化"], correct: 1 },
-    { q: "align-items: center の効果は？", options: ["主軸方向の中央揃え", "交差軸方向の中央揃え", "テキストの中央揃え", "マージンの自動調整"], correct: 1 },
-    { q: "gap プロパティの役割は？", options: ["要素の外側の余白", "Flex/Grid子要素間の余白", "テキストの行間", "ボーダーの太さ"], correct: 1 },
-    { q: "flex-shrink: 0 を設定すると？", options: ["要素が拡大される", "要素が縮小されなくなる", "要素が非表示になる", "要素が折り返される"], correct: 1 },
-  ];
+  const openQuiz = (quizId) => {
+    if (!QUIZ_ATTEMPTS_ENABLED) return;
+    takeSeq.current += 1;
+    const seq = takeSeq.current;
+    setActiveQuizId(quizId);
+    setTakeQuiz(null);
+    setTakeLoading(true);
+    setTakeFailed(false);
+    setAnswers([]);
+    setCurrentQ(0);
+    setSubmitFailed(false);
+    setResult(null);
+    let sessionExpired = false;
+    authFetch(`/api/quizzes/${encodeURIComponent(quizId)}`).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired || takeSeq.current !== seq) return;
+      const view = toQuizTakeView(data);
+      if (view) { setTakeQuiz(view); setAnswers(view.questions.map(() => null)); }
+      else setTakeFailed(true);
+    }).catch(() => { if (takeSeq.current === seq) setTakeFailed(true); }).finally(() => {
+      if (sessionExpired || takeSeq.current !== seq) return;
+      setTakeLoading(false);
+    });
+  };
 
-  if (activeQuiz) {
-    const q = demoQuestions[currentQ];
+  const closeQuiz = () => {
+    if (submitInFlight.current) return;
+    takeSeq.current += 1;
+    setActiveQuizId(null);
+    setTakeQuiz(null);
+    setTakeLoading(false);
+    setTakeFailed(false);
+    setAnswers([]);
+    setCurrentQ(0);
+    setSubmitFailed(false);
+    setResult(null);
+  };
+
+  const selectAnswer = (oi) => {
+    if (submitInFlight.current) return;
+    setAnswers(prev => prev.map((a, i) => (i === currentQ ? oi : a)));
+  };
+
+  // Sends all answers once. Scoring is done by the server only; the page shows its result.
+  // On failure the answers are kept so that the same answers can be sent again.
+  const submitQuiz = () => {
+    if (!QUIZ_ATTEMPTS_ENABLED || submitInFlight.current || !takeQuiz) return;
+    const body = buildSubmitBody(answers);
+    if (!body) return;
+    submitInFlight.current = true;
+    const seq = takeSeq.current;
+    const questionCount = takeQuiz.questions.length;
+    setSubmitting(true);
+    setSubmitFailed(false);
+    let sessionExpired = false;
+    authFetch(`/api/quizzes/${encodeURIComponent(takeQuiz.id)}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      const view = toQuizResultView(data, questionCount);
+      if (!view) { if (takeSeq.current === seq) setSubmitFailed(true); return; }
+      if (takeSeq.current === seq) setResult(view);
+      // The best score and pass / fail in the list have changed.
+      loadQuizzes();
+    }).catch(() => { if (takeSeq.current === seq) setSubmitFailed(true); }).finally(() => {
+      if (sessionExpired) return;
+      submitInFlight.current = false;
+      setSubmitting(false);
+    });
+  };
+
+  const retakeQuiz = () => {
+    if (submitInFlight.current || !takeQuiz) return;
+    setAnswers(takeQuiz.questions.map(() => null));
+    setCurrentQ(0);
+    setSubmitFailed(false);
+    setResult(null);
+  };
+
+  const spinner = (
+    <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+      <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+      <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
+  if (QUIZ_ATTEMPTS_ENABLED && activeQuizId !== null) {
+    const questions = takeQuiz ? takeQuiz.questions : [];
+    const q = questions[currentQ];
+    const isLast = currentQ === questions.length - 1;
+    const selectedAnswer = answers[currentQ] ?? null;
+    const submitBody = buildSubmitBody(answers);
+
+    let takeBody;
+    if (takeLoading) {
+      takeBody = spinner;
+    } else if (takeFailed || !takeQuiz) {
+      takeBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>テストを読み込めませんでした</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+          <Button size="sm" onClick={() => openQuiz(activeQuizId)} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+            再読み込み
+          </Button>
+        </div>
+      );
+    } else if (result) {
+      takeBody = (
+        <div style={{ ...glassStyle(), borderRadius: 22, padding: "40px 32px" }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ width: 100, height: 100, margin: "0 auto 24px" }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadialBarChart innerRadius={32} outerRadius={48} data={[{ value: result.score, fill: result.passed ? T.success : T.danger }]} startAngle={90} endAngle={-270}>
+                  <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+                  <RadialBar background={{ fill: T.borderSubtle }} dataKey="value" cornerRadius={14} angleAxisId={0} />
+                  <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 20, fontWeight: 800, fill: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{result.score}</text>
+                  <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 10, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>点</text>
+                </RadialBarChart>
+              </ResponsiveContainer>
+            </div>
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: result.passed ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif", margin: "0 0 8px" }}>
+              {quizResultTitle(result.passed)}
+            </h2>
+            <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 4px" }}>{result.score}点（{result.total}問中 {result.correct}問正解）</p>
+            <p style={{ fontSize: 13, color: T.textSecondary, margin: "0 0 24px" }}>{PASSING_PERCENT}%以上の正解で合格です。</p>
+          </div>
+          <ol style={{ listStyle: "none", padding: 0, margin: "0 0 28px", borderTop: `1px solid ${T.borderSubtle}` }}>
+            {questions.map((x, i) => (
+              <li key={x.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 4px", borderBottom: `1px solid ${T.borderSubtle}` }}>
+                <span style={{ fontSize: 12, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", minWidth: 48 }}>問題 {i + 1}</span>
+                <span style={{ flex: 1, fontSize: 13, color: T.textPrimary, overflowWrap: "anywhere" }}>{x.question}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, flexShrink: 0, color: result.results[i] ? T.success : T.danger }}>{result.results[i] ? "正解" : "不正解"}</span>
+              </li>
+            ))}
+          </ol>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+            <Button variant="outline" onClick={retakeQuiz}
+              style={{ borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600 }}>もう一度受ける</Button>
+            <Button onClick={closeQuiz}
+              style={{ background: T.accent, borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600, boxShadow: `0 4px 16px ${T.accent}30` }}>テスト一覧に戻る</Button>
+          </div>
+        </div>
+      );
+    } else {
+      takeBody = (
+        <div style={{ ...glassStyle(), borderRadius: 22, overflow: "hidden" }}>
+          {/* Progress header */}
+          <div style={{ padding: "20px 28px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.accent, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{takeQuiz.title}</div>
+              <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>問題 {currentQ + 1} / {questions.length}</div>
+            </div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }} aria-hidden="true">
+              {questions.map((x, i) => (
+                <div key={x.id} style={{ width: 20, height: 4, borderRadius: 99, background: i <= currentQ ? T.accent : T.borderSubtle, transition: "background 0.3s" }} />
+              ))}
+            </div>
+          </div>
+
+          {/* Question */}
+          <div style={{ padding: "32px 28px" }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: T.dark, margin: "0 0 28px", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", lineHeight: 1.5, overflowWrap: "anywhere" }}>{q.question}</h2>
+            <div role="radiogroup" aria-label={`問題 ${currentQ + 1} の選択肢`} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {q.options.map((opt, oi) => {
+                const selected = selectedAnswer === oi;
+                return (
+                  <button key={oi} type="button" role="radio" aria-checked={selected} disabled={submitting} onClick={() => selectAnswer(oi)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 14, padding: "16px 20px",
+                      borderRadius: 14, border: `2px solid ${selected ? T.accent : T.borderSubtle}`,
+                      background: selected ? `${T.accent}08` : "transparent",
+                      cursor: submitting ? "default" : "pointer", transition: "all 0.2s", textAlign: "left", width: "100%",
+                    }}
+                  >
+                    <div style={{
+                      width: 24, height: 24, borderRadius: "50%", border: `2px solid ${selected ? T.accent : T.textMuted}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                      background: selected ? T.accent : "transparent", transition: "all 0.2s",
+                    }}>
+                      {selected && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff" }} />}
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: selected ? 600 : 450, color: selected ? T.dark : T.textSecondary, overflowWrap: "anywhere" }}>{opt}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {submitFailed && (
+              <div role="alert" style={{ marginTop: 20, fontSize: 13, color: T.danger }}>
+                送信できませんでした。回答はそのまま残っています。もう一度送信してください。
+              </div>
+            )}
+
+            <div style={{ marginTop: 32, display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <Button variant="outline" disabled={currentQ === 0 || submitting} onClick={() => setCurrentQ(currentQ - 1)}
+                style={{ borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14 }}>
+                前へ
+              </Button>
+              {!isLast ? (
+                <Button
+                  disabled={selectedAnswer === null}
+                  onClick={() => setCurrentQ(currentQ + 1)}
+                  style={{ background: selectedAnswer !== null ? T.accent : T.border, borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14, padding: "10px 28px", gap: 6 }}
+                >
+                  次へ <ChevronRight size={16} />
+                </Button>
+              ) : (
+                <Button
+                  disabled={!submitBody || submitting}
+                  onClick={submitQuiz}
+                  style={{ background: submitBody && !submitting ? T.accent : T.border, borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14, padding: "10px 28px", gap: 6 }}
+                >
+                  {submitting ? "送信中..." : submitFailed ? "もう一度送信する" : "回答を送信する"}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <ScrollArea style={{ height: "100%" }}>
         <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 760 }}>
           <FadeIn>
-            <Button variant="ghost" size="sm" onClick={() => { setActiveQuiz(null); setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-              style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginBottom: 20 }}>
+            <Button variant="ghost" size="sm" onClick={closeQuiz} disabled={submitting}
+              style={{ gap: 4, color: T.textSecondary, fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif", marginBottom: 8 }}>
               <ArrowLeft size={16} /> テスト一覧に戻る
             </Button>
+            {!result && (
+              <p style={{ fontSize: 12, color: T.textMuted, margin: "0 0 16px" }}>回答は最後の問題で送信したときに保存されます。途中で戻ると、それまでの回答は保存されません。</p>
+            )}
           </FadeIn>
-
-          {!showResult ? (
-            <FadeIn>
-              <div style={{ ...glassStyle(), borderRadius: 22, overflow: "hidden" }}>
-                {/* Progress header */}
-                <div style={{ padding: "20px 28px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{activeQuiz}</span>
-                    <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Question {currentQ + 1} / {demoQuestions.length}</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {demoQuestions.map((_, i) => (
-                      <div key={i} style={{ width: 28, height: 4, borderRadius: 99, background: i <= currentQ ? T.accent : T.borderSubtle, transition: "background 0.3s" }} />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Question */}
-                <div style={{ padding: "32px 28px" }}>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: T.dark, margin: "0 0 28px", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", lineHeight: 1.5 }}>{q.q}</h2>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {q.options.map((opt, oi) => {
-                      const selected = selectedAnswer === oi;
-                      return (
-                        <button key={oi} onClick={() => setSelectedAnswer(oi)}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 14, padding: "16px 20px",
-                            borderRadius: 14, border: `2px solid ${selected ? T.accent : T.borderSubtle}`,
-                            background: selected ? `${T.accent}08` : "transparent",
-                            cursor: "pointer", transition: "all 0.2s", textAlign: "left", width: "100%",
-                          }}
-                          onMouseEnter={e => { if (!selected) e.currentTarget.style.borderColor = `${T.accent}40`; }}
-                          onMouseLeave={e => { if (!selected) e.currentTarget.style.borderColor = T.borderSubtle; }}
-                        >
-                          <div style={{
-                            width: 24, height: 24, borderRadius: "50%", border: `2px solid ${selected ? T.accent : T.textMuted}`,
-                            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                            background: selected ? T.accent : "transparent", transition: "all 0.2s",
-                          }}>
-                            {selected && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff" }} />}
-                          </div>
-                          <span style={{ fontSize: 14, fontWeight: selected ? 600 : 450, color: selected ? T.dark : T.textSecondary }}>{opt}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div style={{ marginTop: 32, display: "flex", justifyContent: "flex-end" }}>
-                    <Button
-                      disabled={selectedAnswer === null}
-                      onClick={() => {
-                        const newScore = score + (selectedAnswer === q.correct ? 1 : 0);
-                        setScore(newScore);
-                        if (currentQ < demoQuestions.length - 1) {
-                          setCurrentQ(currentQ + 1);
-                          setSelectedAnswer(null);
-                        } else {
-                          setShowResult(true);
-                        }
-                      }}
-                      style={{
-                        background: selectedAnswer !== null ? T.accent : T.border,
-                        borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14,
-                        padding: "10px 28px", gap: 6,
-                        boxShadow: selectedAnswer !== null ? `0 4px 16px ${T.accent}30` : "none",
-                      }}
-                    >
-                      {currentQ < demoQuestions.length - 1 ? "次へ" : "結果を見る"} <ChevronRight size={16} />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </FadeIn>
-          ) : (
-            <FadeIn>
-              <div style={{ ...glassStyle(), borderRadius: 22, textAlign: "center", padding: "48px 32px" }}>
-                <div style={{ width: 100, height: 100, margin: "0 auto 24px" }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RadialBarChart innerRadius={32} outerRadius={48} data={[{ value: Math.round(score / demoQuestions.length * 100), fill: score / demoQuestions.length >= 0.7 ? T.success : T.danger }]} startAngle={90} endAngle={-270}>
-                      <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-                      <RadialBar background={{ fill: T.borderSubtle }} dataKey="value" cornerRadius={14} angleAxisId={0} />
-                      <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 20, fontWeight: 800, fill: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{Math.round(score / demoQuestions.length * 100)}</text>
-                      <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 10, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>%</text>
-                    </RadialBarChart>
-                  </ResponsiveContainer>
-                </div>
-                <h2 style={{ fontSize: 22, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", margin: "0 0 8px" }}>
-                  {score / demoQuestions.length >= 0.7 ? "合格！🎉" : "不合格…"}
-                </h2>
-                <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 8px" }}>{score} / {demoQuestions.length} 正解</p>
-                <p style={{ fontSize: 13, color: T.textSecondary, margin: "0 0 28px" }}>
-                  {score / demoQuestions.length >= 0.7 ? "素晴らしい結果です！次のステップに進みましょう。" : "70%以上で合格です。もう一度チャレンジしてみましょう。"}
-                </p>
-                <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-                  <Button variant="outline" onClick={() => { setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-                    style={{ borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600 }}>もう一度受ける</Button>
-                  <Button onClick={() => { setActiveQuiz(null); setCurrentQ(0); setScore(0); setShowResult(false); setSelectedAnswer(null); }}
-                    style={{ background: T.accent, borderRadius: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 600, boxShadow: `0 4px 16px ${T.accent}30` }}>テスト一覧に戻る</Button>
-                </div>
-              </div>
-            </FadeIn>
-          )}
+          {takeBody}
         </div>
       </ScrollArea>
+    );
+  }
+
+  const courses = toQuizCourseItems(quizData);
+
+  const quizRow = (quiz, course, isFinal, isLastRow) => (
+    <div key={quiz.id}
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: isFinal ? "16px 26px" : "12px 26px 12px 42px",
+        borderBottom: isLastRow ? "none" : `1px solid ${T.borderSubtle}`,
+        background: quiz.status === "passed" ? `${T.success}04` : "transparent",
+      }}
+    >
+      {quiz.status === "passed" ? (
+        <CheckCircle2 size={isFinal ? 18 : 16} aria-hidden="true" style={{ color: T.success, flexShrink: 0 }} />
+      ) : isFinal ? (
+        <Award size={18} aria-hidden="true" style={{ color: course.color || T.accent, flexShrink: 0 }} />
+      ) : (
+        <div aria-hidden="true" style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${quiz.status === "failed" ? T.danger : T.textMuted}`, flexShrink: 0, opacity: quiz.status === "failed" ? 1 : 0.4 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: isFinal ? 14 : 13, fontWeight: isFinal ? 600 : 500, color: T.textPrimary, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", overflowWrap: "anywhere" }}>{quiz.title}</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>
+          {quiz.lessonTitle ? `${quiz.lessonTitle} · ` : ""}{quiz.questionCount}問{quiz.attemptCount > 0 ? ` · 受験 ${quiz.attemptCount}回` : ""}
+        </div>
+      </div>
+      {quiz.bestScore !== null && (
+        <span style={{ fontSize: 13, fontWeight: 700, color: quiz.status === "passed" ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif", flexShrink: 0 }}>最高 {quiz.bestScore}点</span>
+      )}
+      <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0, color: quiz.status === "passed" ? T.success : quiz.status === "failed" ? T.danger : T.textMuted }}>{quiz.statusLabel}</span>
+      {QUIZ_ATTEMPTS_ENABLED && !course.locked && (
+        <Button size="sm" onClick={() => openQuiz(quiz.id)} style={{ background: course.color || T.accent, color: "#fff", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, flexShrink: 0 }}>
+          {quiz.attemptCount > 0 ? "もう一度受ける" : "受験する"}
+        </Button>
+      )}
+    </div>
+  );
+
+  let body;
+  if (loading) {
+    body = spinner;
+  } else if (loadFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>確認テストを読み込めませんでした</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={loadQuizzes} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else if (courses.length === 0) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>受けられる確認テストはまだありません</div>
+    );
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        {!QUIZ_ATTEMPTS_ENABLED && (
+          <div role="status" style={{ ...glassStyle(), borderRadius: 16, padding: "14px 20px", fontSize: 13, color: T.textSecondary }}>
+            受験は準備中です。いまは一覧と、これまでの結果だけを表示しています。
+          </div>
+        )}
+        {courses.map((course, ci) => (
+          <FadeIn key={course.id} delay={Math.min(80 * ci, 400)}>
+            <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden", opacity: course.locked ? 0.6 : 1 }}>
+              {/* Course header */}
+              <div style={{ padding: "22px 26px", display: "flex", alignItems: "center", gap: 16, borderBottom: `1px solid ${T.borderSubtle}` }}>
+                <div style={{ width: 46, height: 46, borderRadius: 14, background: `${course.color || T.accent}0A`, border: `1.5px solid ${course.color || T.accent}18`, display: "flex", alignItems: "center", justifyContent: "center", color: course.color || T.accent, flexShrink: 0 }}>
+                  {quizCourseIcon(course.icon) ? quizCourseIcon(course.icon)({ size: 22 }) : <BookOpen size={22} aria-hidden="true" />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em", overflowWrap: "anywhere" }}>{course.name}</h3>
+                  <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>修了テスト {course.finalQuizzes.length}件 · ミニテスト {course.miniQuizzes.length}件</span>
+                </div>
+                {course.locked && (
+                  <Badge variant="secondary" style={{ fontSize: 11, fontWeight: 700, background: T.borderSubtle, color: T.textMuted, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                    <Lock size={12} aria-hidden="true" style={{ marginRight: 4 }} /> 前のコースを終えると受けられます
+                  </Badge>
+                )}
+              </div>
+
+              {course.finalQuizzes.length > 0 && (
+                <div>
+                  <div style={{ padding: "10px 26px 4px", fontSize: 11, fontWeight: 600, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>修了テスト</div>
+                  {course.finalQuizzes.map((quiz, i) => quizRow(quiz, course, true, i === course.finalQuizzes.length - 1 && course.miniQuizzes.length === 0))}
+                </div>
+              )}
+
+              {course.miniQuizzes.length > 0 && (
+                <div style={{ borderTop: course.finalQuizzes.length > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                  <div style={{ padding: "10px 26px 4px", fontSize: 11, fontWeight: 600, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>ミニテスト</div>
+                  {course.miniQuizzes.map((quiz, i) => quizRow(quiz, course, false, i === course.miniQuizzes.length - 1))}
+                </div>
+              )}
+            </div>
+          </FadeIn>
+        ))}
+      </div>
     );
   }
 
@@ -1846,104 +2094,9 @@ const QuizPage = () => {
             <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Assessment</span>
             <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>確認テスト受講</h1>
           </div>
-          <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 32px" }}>各STEPの修了テストとレッスンごとのミニテストを受けられます。STEP1〜3のみテストが用意されています。</p>
+          <p style={{ fontSize: 14, color: T.textMuted, margin: "0 0 32px" }}>コースごとの修了テストと、レッスンごとのミニテストです。{PASSING_PERCENT}%以上の正解で合格です。</p>
         </FadeIn>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          {steps.map((step, si) => (
-            <FadeIn key={si} delay={80 * si}>
-              <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
-                {/* Step Header */}
-                <div style={{ padding: "22px 26px", display: "flex", alignItems: "center", gap: 16, borderBottom: `1px solid ${T.borderSubtle}` }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 14, background: `${step.color}0A`, border: `1.5px solid ${step.color}18`, display: "flex", alignItems: "center", justifyContent: "center", color: step.color, flexShrink: 0 }}>
-                    {CourseIcons[step.icon] ? CourseIcons[step.icon]({ size: 22 }) : null}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em" }}>{step.name}</h3>
-                    <span style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>修了テスト + ミニテスト {step.miniQuizzes.length}件</span>
-                  </div>
-                  {step.stepQuiz.passed && (
-                    <Badge variant="secondary" style={{ fontSize: 11, fontWeight: 700, background: `${T.success}12`, color: T.success, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-                      <CheckCircle2 size={12} style={{ marginRight: 4 }} /> STEP完了
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Step Final Quiz */}
-                <div
-                  onClick={() => setActiveQuiz(`${step.name} 修了テスト`)}
-                  style={{
-                    padding: "18px 26px", display: "flex", alignItems: "center", gap: 14,
-                    background: step.stepQuiz.passed ? `${T.success}04` : step.stepQuiz.score !== null ? `${T.danger}04` : "transparent",
-                    borderBottom: `1px solid ${T.borderSubtle}`, cursor: "pointer", transition: "background 0.15s",
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = `${T.accent}06`}
-                  onMouseLeave={e => e.currentTarget.style.background = step.stepQuiz.passed ? `${T.success}04` : step.stepQuiz.score !== null ? `${T.danger}04` : "transparent"}
-                >
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 10,
-                    background: step.stepQuiz.passed ? `${T.success}12` : `${step.color}0C`,
-                    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                  }}>
-                    {step.stepQuiz.passed ? <CheckCircle2 size={18} style={{ color: T.success }} /> : <Award size={18} style={{ color: step.color }} />}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{step.stepQuiz.title}</div>
-                    <div style={{ fontSize: 12, color: T.textMuted, marginTop: 2, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{step.stepQuiz.questions}問 · {step.stepQuiz.time}</div>
-                  </div>
-                  {step.stepQuiz.score !== null && (
-                    <span style={{ fontSize: 16, fontWeight: 800, color: step.stepQuiz.passed ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{step.stepQuiz.score}点</span>
-                  )}
-                  {step.stepQuiz.score === null && (
-                    <Button size="sm" style={{ background: step.color, color: "#fff", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${step.color}30` }}>
-                      受験する
-                    </Button>
-                  )}
-                </div>
-
-                {/* Mini Quizzes */}
-                <div style={{ padding: "6px 0" }}>
-                  {step.miniQuizzes.map((mq, mi) => (
-                    <div key={mi}
-                      onClick={() => setActiveQuiz(`${step.name} - ${mq.title}`)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 12, padding: "12px 26px 12px 42px",
-                        cursor: "pointer", transition: "background 0.15s",
-                        borderBottom: mi < step.miniQuizzes.length - 1 ? `1px solid ${T.borderSubtle}` : "none",
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    >
-                      {mq.passed === true ? (
-                        <CheckCircle2 size={16} style={{ color: T.success, flexShrink: 0 }} />
-                      ) : mq.passed === false ? (
-                        <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${T.danger}`, flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${T.textMuted}`, flexShrink: 0, opacity: 0.4 }} />
-                      )}
-                      <span style={{ flex: 1, fontSize: 13, color: T.textPrimary, fontWeight: mq.passed === null ? 400 : 500 }}>ミニテスト: {mq.title}</span>
-                      {mq.score !== null && (
-                        <span style={{ fontSize: 13, fontWeight: 700, color: mq.passed ? T.success : T.danger, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{mq.score}点</span>
-                      )}
-                      {mq.score === null && (
-                        <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>未受験</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </FadeIn>
-          ))}
-
-          {/* STEP4以降の説明 */}
-          <FadeIn delay={300}>
-            <div style={{ ...glassStyle(), borderRadius: 18, padding: "24px 28px", textAlign: "center", opacity: 0.7 }}>
-              <div style={{ fontSize: 20, marginBottom: 10 }}>📝</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.textSecondary, marginBottom: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>STEP4〜8 はテストなし</div>
-              <div style={{ fontSize: 13, color: T.textMuted }}>STEP4（AIコーディング）以降は実践課題で評価されます。</div>
-            </div>
-          </FadeIn>
-        </div>
+        {body}
       </div>
     </ScrollArea>
   );
