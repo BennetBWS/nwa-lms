@@ -46,6 +46,7 @@ import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
+import { pickInitialLesson } from "@/lib/initial-lesson";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -935,12 +936,9 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
       )
     );
     setCompletedIds(ids);
-    for (const sec of courseData.sections || []) {
-      for (const l of sec.lessons || []) {
-        if (!l.completed) { setActiveLesson(l); return; }
-      }
-    }
-    if (courseData.sections?.[0]?.lessons?.[0]) setActiveLesson(courseData.sections[0].lessons[0]);
+    // First incomplete lesson, else the first lesson of any section (null only when the course has no lessons)
+    const first = pickInitialLesson(courseData.sections, l => !!l.completed);
+    if (first) setActiveLesson(first);
   }, [courseData]);
 
   const allLessons = useMemo(() =>
