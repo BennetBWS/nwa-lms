@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { inspect } from "node:util";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { classifyAuthFailure } from "./client-session";
@@ -87,8 +88,11 @@ function res(body: unknown, p: Partial<FakeRes> = {}): FakeRes {
 
 type Req = { url: string; init?: RequestInit; release: (r: FakeRes) => void; fail: (e: unknown) => void };
 
-/** QuizPage を描画する小さな器。enabled で QUIZ_ATTEMPTS_ENABLED の値を差し替える（ほかの lib 関数は本物） */
-function mount(enabled: boolean, initial: Record<string, unknown> = {}) {
+/**
+ * QuizPage を描画する小さな器。enabled で QUIZ_ATTEMPTS_ENABLED の値を差し替える（ほかの lib 関数は本物）。
+ * courseIcons は page.tsx の CourseIcons の代わり（既定は空のオブジェクト。Object の組み込みは prototype から見える）
+ */
+function mount(enabled: boolean, initial: Record<string, unknown> = {}, courseIcons: Record<string, unknown> = {}) {
   const states: unknown[] = [];
   const refs: Array<{ current: unknown }> = [];
   let si = 0;
@@ -134,7 +138,7 @@ function mount(enabled: boolean, initial: Record<string, unknown> = {}) {
     quizResultTitle,
     T,
     glassStyle: () => ({}),
-    CourseIcons: {},
+    CourseIcons: courseIcons,
     ...COMPONENTS,
   };
   const names = Object.keys(scope);
@@ -228,8 +232,8 @@ const TAKE = {
   passed: null,
 };
 
-async function loadedList(enabled: boolean, body: unknown = LIST) {
-  const m = mount(enabled);
+async function loadedList(enabled: boolean, body: unknown = LIST, courseIcons: Record<string, unknown> = {}) {
+  const m = mount(enabled, {}, courseIcons);
   m.render();
   assert.equal(m.reqs.length, 1);
   m.reqs[0].release(res(body));
@@ -376,6 +380,58 @@ describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(m.reqs.length, 2);
     assert.equal(m.reqs[1].url, "/api/quizzes/mini%2F1");
     assert.equal(m.state("activeQuizId"), "mini/1");
+  });
+});
+
+describe("QuizPage 描画：コースのアイコン", () => {
+  const IconIt = stub("IconIt");
+  const ICONS = { it: (p: Record<string, unknown>) => h(IconIt, p) };
+  const BUILTINS = ["constructor", "valueOf", "toString", "hasOwnProperty", "__proto__"];
+  // クイズの id はコースをまたいで重複すると飛ばされるので、コースごとに変える
+  const withIcons = (icons: string[]) => ({
+    courses: icons.map((icon, i) => ({
+      ...LIST.courses[0],
+      id: `c${i}`,
+      name: `コース${i}`,
+      icon,
+      finalQuizzes: LIST.courses[0].finalQuizzes.map((q) => ({ ...q, id: `${q.id}_${i}` })),
+      miniQuizzes: [],
+    })),
+  });
+  /** 要素・文字列・数値以外（React では子にできず例外になるオブジェクト）が木に混ざっていないか */
+  function assertRenderable(n: Node) {
+    if (typeof n === "string" || typeof n === "number") return;
+    assert.ok(n && typeof n === "object" && "type" in n && Array.isArray(n.children), `描画できない子: ${inspect(n)}`);
+    for (const c of n.children) assertRenderable(c);
+  }
+  const iconCount = (tree: El, type: unknown) => findAll(tree, (e) => e.type === type).length;
+
+  it("登録されたアイコン（it）はその部品を出す", async () => {
+    const m = await loadedList(false, withIcons(["it"]), ICONS);
+    const tree = m.render();
+    assertRenderable(tree);
+    assert.equal(iconCount(tree, IconIt), 1);
+  });
+
+  for (const icon of BUILTINS) {
+    it(`icon が ${icon} のコースでも例外を出さず、Object の組み込みを使わずに既定のアイコン（BookOpen）を出す`, async () => {
+      const m = await loadedList(false, withIcons([icon, "it"]), ICONS);
+      let tree: El | undefined;
+      assert.doesNotThrow(() => {
+        tree = m.render();
+      });
+      assertRenderable(tree!);
+      assert.ok(text(tree).includes("コース0"));
+      assert.equal(iconCount(tree!, IconIt), 1);
+      assert.equal(iconCount(tree!, COMPONENTS.BookOpen), 1);
+    });
+  }
+
+  it("CourseIcons が空のときも icon が constructor のコースで例外を出さない", async () => {
+    const m = await loadedList(false, withIcons(["constructor"]));
+    const tree = m.render();
+    assertRenderable(tree);
+    assert.equal(iconCount(tree, COMPONENTS.BookOpen), 1);
   });
 });
 

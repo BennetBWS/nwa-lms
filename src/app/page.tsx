@@ -1682,6 +1682,11 @@ const AdminDashboard = () => {
 // QUIZ PAGE — 確認テスト受講
 // ═══════════════════════════════════════════
 const QuizPage = () => {
+  // コースのアイコン。icon が "constructor" や "valueOf" などでも Object の組み込みを拾わないよう、
+  // CourseIcons 自身が持つキーだけを使う（ほかの画面の同じ参照はこの PR では変えない）
+  const quizCourseIcon = (icon) =>
+    typeof icon === "string" && Object.prototype.hasOwnProperty.call(CourseIcons, icon) ? CourseIcons[icon] : null;
+
   // ── 一覧（/api/quizzes） ──
   const [quizData, setQuizData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2048,7 +2053,7 @@ const QuizPage = () => {
               {/* Course header */}
               <div style={{ padding: "22px 26px", display: "flex", alignItems: "center", gap: 16, borderBottom: `1px solid ${T.borderSubtle}` }}>
                 <div style={{ width: 46, height: 46, borderRadius: 14, background: `${course.color || T.accent}0A`, border: `1.5px solid ${course.color || T.accent}18`, display: "flex", alignItems: "center", justifyContent: "center", color: course.color || T.accent, flexShrink: 0 }}>
-                  {CourseIcons[course.icon] ? CourseIcons[course.icon]({ size: 22 }) : <BookOpen size={22} aria-hidden="true" />}
+                  {quizCourseIcon(course.icon) ? quizCourseIcon(course.icon)({ size: 22 }) : <BookOpen size={22} aria-hidden="true" />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.02em", overflowWrap: "anywhere" }}>{course.name}</h3>
