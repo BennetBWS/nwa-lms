@@ -58,11 +58,11 @@ describe("チャット部品以外：大文字小文字を変えた指定子・�
     for (const s of ["@/components/ChatBubble", "@/lib/chat", "@/lib/chat-mock-data", "react", "@/lib/lesson-comments"]) {
       assert.equal(isChatSpecifier(s), false, s);
     }
-    // 見本のソースは分けて組み立てる（そのまま書くと、ai-chat-hidden.page.test.ts の import 検査がこのファイルを検出するため）
-    const sample = ["imp", 'ort X from "@/components/chatSidebar";\n', "const y = req", 'uire("./ChatMobile");'].join("");
+    // このファイルは ai-chat-hidden.page.test.ts の import 検査の対象外なので、見本をそのまま書ける
+    const sample = 'import X from "@/components/ChatSidebar";\nconst y = require("./chatMobile");';
     assert.deepEqual(moduleSpecifiers(sample), [
-      "@/components/chatSidebar",
-      "./ChatMobile",
+      "@/components/ChatSidebar",
+      "./chatMobile",
     ]);
   });
 
@@ -89,8 +89,8 @@ describe("チャット用の CSS クラス・body のスクロール固定が残
 
 describe("page.tsx：チャットを外したあとの JSX の閉じ方", () => {
   it("</main> から末尾までにチャットの跡（Chat 部品・nwa-chat-）が残っていない", () => {
-    const tail = page.slice(page.indexOf("</main>"));
     assert.ok(page.includes("</main>"));
+    const tail = page.slice(page.indexOf("</main>"));
     assert.doesNotMatch(tail, /<Chat[A-Z]|nwa-chat-/);
   });
 
@@ -112,7 +112,8 @@ describe("残したチャット部品：先頭の注記と \"use client\" の位
     if (rel.endsWith(".tsx")) {
       it(`${rel} の "use client" はコメントより後でも、コードより前にある`, () => {
         // ディレクティブはコメント以外の文より前にないと無効になる
-        const directive = code.match(/["']use client["']/);
+        // 行全体がディレクティブである行に限る（コメントの中の "use client" を拾わない）
+        const directive = code.match(/^\s*["']use client["'];?\s*$/m);
         assert.ok(directive && directive.index !== undefined, "use client がない");
         const beforeDirective = code.slice(0, directive.index).replace(/\/\*[\s\S]*?\*\//g, "");
         const nonComment = beforeDirective

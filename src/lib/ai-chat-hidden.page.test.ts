@@ -69,8 +69,10 @@ describe("src/：チャット部品を使うのはチャット部品どうしだ
   });
 
   it("チャット部品以外のファイルは Chat 部品・chat-mock を import しない", () => {
+    // ai-chat-hidden.page.edge.test.ts は判定の確認用に import の見本を文字列で持つので対象外
+    const SAMPLE_TESTS = ["lib/ai-chat-hidden.page.edge.test.ts"];
     const offenders = files
-      .filter((f) => !CHAT_FILES.includes(f.rel))
+      .filter((f) => !CHAT_FILES.includes(f.rel) && !SAMPLE_TESTS.includes(f.rel))
       .flatMap((f) => moduleSpecifiers(f.code).filter(isChatModule).map((s) => `${f.rel} → ${s}`));
     assert.deepEqual(offenders, []);
   });
