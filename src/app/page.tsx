@@ -23,8 +23,6 @@ import {
   Plus, TrendingUp, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
   LogOut, Target, Zap, Sparkles, ArrowUpRight, User
 } from "lucide-react";
-import ChatSidebar from "@/components/ChatSidebar";
-import ChatMobile from "@/components/ChatMobile";
 import {
   DEFAULT_STUDENT_TAB,
   STUDENT_TABS,
@@ -2449,8 +2447,6 @@ export default function NWALearningPlatform() {
             {pages[page] || pages["dashboard"]}
           </div>
         </main>
-        <ChatSidebar theme={T} />
-        <ChatMobile theme={T} />
       </div>
     </ThemeContext.Provider>
   );
