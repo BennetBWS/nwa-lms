@@ -2,8 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { inspect } from "node:util";
-import { createRequire } from "node:module";
 import { join } from "node:path";
+import ts from "typescript";
 import { classifyAuthFailure } from "./client-session";
 import {
   PASSING_PERCENT,
@@ -15,13 +15,18 @@ import {
   toQuizTakeView,
 } from "./student-quizzes";
 
-// #32 確認テストのページ：page.tsx（// @ts-nocheck）の QuizPage 全体を esbuild（tsx の依存）で JSX から変換し、
-// 偽の React（useState / useRef / useEffect と要素の木）で「描画」して、表示される文言・ボタン・状態遷移を確かめる。
+// #32 確認テストのページ：page.tsx（// @ts-nocheck）の QuizPage 全体を typescript（devDependencies）の
+// transpileModule で JSX から変換し、偽の React（useState / useRef / useEffect と要素の木）で「描画」して、
+// 表示される文言・ボタン・状態遷移を確かめる。
 // quiz-page.page.test.ts（ソースの検査と関数単位の実行）の補強。DOM・DB・ネットワークなし。データはすべてダミー。
-
-const esbuild = createRequire(__filename)("esbuild") as {
-  transformSync: (code: string, opts: Record<string, unknown>) => { code: string };
-};
+//
+// テストの範囲：本物の React ではなく偽の React で描画する。そのため次のことは検証しない。
+// - useEffect の依存配列（最初の描画の後に 1 回だけ実行する）と cleanup（呼ばない）
+// - setState による再描画（state を書き換えるだけ。描画はテストが render() を呼んだときだけ）
+// - key の重複や欠け
+// - hook の呼び出し順が描画ごとに変わらないこと（呼ばれた順に番号で state を割り当てるだけ）
+// 検証するのは、各描画の結果（要素の木）と、ボタンなどのハンドラを呼んだ後の state・リクエスト。
+// 木に React が子にできないオブジェクトが混ざっていないか（assertRenderable）は、描画のたびに確かめる。
 
 const src = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
 
@@ -34,7 +39,21 @@ function component(name: string): string {
 }
 
 const quizPageSrc = component("QuizPage");
-const compiled = esbuild.transformSync(quizPageSrc, { loader: "jsx", jsxFactory: "h", jsxFragment: "Frag" }).code;
+// JSX を h(type, props, ...children) / Frag に変換する。module は ESNext（import / export を足さない）、
+// target は ES2022（構文をそのまま残す）。結果は new Function の本体として評価する
+const transpiled = ts.transpileModule(quizPageSrc, {
+  fileName: "QuizPage.jsx",
+  reportDiagnostics: true,
+  compilerOptions: {
+    jsx: ts.JsxEmit.React,
+    jsxFactory: "h",
+    jsxFragmentFactory: "Frag",
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+    allowJs: true,
+  },
+});
+const compiled = transpiled.outputText;
 
 // useState の並び（ソースの順）。名前で初期値を差し替えられるようにする
 const STATE_NAMES = Array.from(quizPageSrc.matchAll(/const \[(\w+), set\w+\] = useState\(/g)).map((m) => m[1]);
@@ -75,6 +94,13 @@ function h(type: unknown, props: Record<string, unknown> | null, ...children: un
   return { type, props: props ?? {}, children: flat };
 }
 const Frag = "Frag";
+
+/** 要素・文字列・数値以外（React では子にできず例外になるオブジェクト）が木に混ざっていないか */
+function assertRenderable(n: Node) {
+  if (typeof n === "string" || typeof n === "number") return;
+  assert.ok(n && typeof n === "object" && "type" in n && Array.isArray(n.children), `描画できない子: ${inspect(n)}`);
+  for (const c of n.children) assertRenderable(c);
+}
 
 type FakeRes = { status: number; ok: boolean; redirected: boolean; url: string; json: () => Promise<unknown> };
 const ORIGIN = "https://nwa-lms.example.com";
@@ -148,6 +174,7 @@ function mount(enabled: boolean, initial: Record<string, unknown> = {}, courseIc
     si = 0;
     ri = 0;
     const tree = QuizPage();
+    assertRenderable(tree);
     if (first) {
       first = false;
       for (const e of effects) e();
@@ -246,6 +273,12 @@ async function loadedList(enabled: boolean, body: unknown = LIST, courseIcons: R
 describe("QuizPage 描画：前提", () => {
   it("本番の QUIZ_ATTEMPTS_ENABLED は false（以下の false の描画が本番と同じ）", () => {
     assert.equal(QUIZ_ATTEMPTS_ENABLED, false);
+  });
+
+  it("JSX の変換：診断なしで、import / export を含まない（new Function で評価できる）", () => {
+    assert.deepEqual(transpiled.diagnostics ?? [], []);
+    assert.doesNotMatch(compiled, /^\s*(import|export)\b/m);
+    assert.match(compiled, /\bh\(/);
   });
 
   it("useState の並びが取れている（器の前提）", () => {
@@ -398,12 +431,6 @@ describe("QuizPage 描画：コースのアイコン", () => {
       miniQuizzes: [],
     })),
   });
-  /** 要素・文字列・数値以外（React では子にできず例外になるオブジェクト）が木に混ざっていないか */
-  function assertRenderable(n: Node) {
-    if (typeof n === "string" || typeof n === "number") return;
-    assert.ok(n && typeof n === "object" && "type" in n && Array.isArray(n.children), `描画できない子: ${inspect(n)}`);
-    for (const c of n.children) assertRenderable(c);
-  }
   const iconCount = (tree: El, type: unknown) => findAll(tree, (e) => e.type === type).length;
 
   it("登録されたアイコン（it）はその部品を出す", async () => {
