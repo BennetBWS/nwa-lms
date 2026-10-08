@@ -733,6 +733,46 @@ describe("Questions 描画（追加）：もっと見る", () => {
     assert.equal(threadButtons(tree).length, 3);
   });
 
+  it("1 ページ目が 0 件でも nextCursor があれば、空の案内の代わりに「もっと見る」を出し、続きを読める", async () => {
+    const m = mount();
+    m.render();
+    click(tab(m.render(), "未回答"));
+    m.reqs[1].release(res({ threads: [], nextCursor: "1000.t9" }));
+    await settle();
+    let tree = m.render();
+    assert.ok(!text(tree).includes(threadsEmptyMessage("unanswered")), "続きがあるのに空の案内が出ている");
+    assert.equal(threadButtons(tree).length, 0);
+    click(button(tree, "もっと見る"));
+    assert.equal(m.reqs.length, 3);
+    assert.equal(m.reqs[2].url, "/api/comments?status=unanswered&cursor=1000.t9");
+    m.reqs[2].release(res({ threads: [thread("t9")], nextCursor: null }));
+    await settle();
+    tree = m.render();
+    assert.ok(text(tree).includes("t9 の質問本文"), "続きの行が出ていない");
+    assert.equal(buttonLabels(tree).includes("もっと見る"), false);
+  });
+
+  it("続きも 0 件で nextCursor がなくなったら、空の案内を出す", async () => {
+    const m = await loaded({ threads: [], nextCursor: "1000.t9" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.ok(text(tree).includes("まだ質問はありません"), "空の案内が出ていない");
+    assert.equal(buttonLabels(tree).includes("もっと見る"), false);
+  });
+
+  it("0 件で続きの読み込みに失敗したら、alert と「もっと見る」を出す（空の案内は出さない）", async () => {
+    const m = await loaded({ threads: [], nextCursor: "1000.t9" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 1);
+    assert.ok(!text(tree).includes("まだ質問はありません"), "空の案内が出ている");
+    assert.ok(buttonLabels(tree).includes("もっと見る"), "もっと見るがない");
+  });
+
   it("1 ページ目の失敗のときは「もっと見る」を出さない", async () => {
     const m = mount();
     m.render();

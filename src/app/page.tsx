@@ -2297,7 +2297,8 @@ const Questions = () => {
         </Button>
       </div>
     );
-  } else if (items.length === 0) {
+  } else if (items.length === 0 && nextCursor === null) {
+    // 未回答タブはサーバーで判定して絞るため、0 件でも続き（nextCursor）がありうる。そのときは下の「もっと見る」を出す
     body = (
       <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{threadsEmptyMessage(tab)}</div>
     );
