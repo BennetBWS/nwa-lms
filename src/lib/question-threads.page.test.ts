@@ -6,6 +6,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { classifyAuthFailure } from "./client-session";
 import {
+  firstPageRowCount,
   QUESTION_TABS,
   readThreadPage,
   THREADS_PAGE_SIZE,
@@ -62,7 +63,7 @@ describe("Questions：配線・読み取りだけ", () => {
     const m = src.match(/import \{([^}]*)\} from "@\/lib\/question-threads";/);
     assert.ok(m, "import がない");
     const names = m[1].split(",").map((s) => s.trim());
-    for (const n of ["QUESTION_TABS", "readThreadPage", "threadListUrl", "threadRowDelay", "threadsEmptyMessage", "toQuestionThreadItems"]) {
+    for (const n of ["firstPageRowCount", "QUESTION_TABS", "readThreadPage", "threadListUrl", "threadRowDelay", "threadsEmptyMessage", "toQuestionThreadItems"]) {
       assert.ok(names.includes(n), n);
     }
   });
@@ -191,6 +192,7 @@ function mount() {
     useEffect,
     authFetch,
     classifyAuthFailure,
+    firstPageRowCount,
     QUESTION_TABS,
     readThreadPage,
     threadListUrl,
@@ -307,7 +309,7 @@ describe("Questions 描画：前提", () => {
   });
 
   it("useState の並びが取れている", () => {
-    for (const n of ["tab", "threadRows", "nextCursor", "loading", "loadFailed", "loadingMore", "moreFailed", "expandedIds"]) {
+    for (const n of ["tab", "threadRows", "nextCursor", "loading", "loadFailed", "loadingMore", "moreFailed", "expandedIds", "firstPageCount"]) {
       assert.ok(STATE_NAMES.includes(n), n);
     }
   });
@@ -836,6 +838,52 @@ describe("Questions 描画（追加）：表示の遅れ", () => {
     assert.deepEqual(delays.slice(0, 3), [0, 50, 100]);
     assert.equal(Math.max(...(delays as number[])), 500);
     assert.deepEqual(delays.slice(THREADS_PAGE_SIZE), [0, 0, 0]);
+  });
+
+  const delaysOf = (tree: El) =>
+    findAll(tree, (e) => e.type === COMPONENTS.FadeIn && typeof e.props.delay === "number").map((f) => f.props.delay);
+
+  it("未回答タブで 1 ページ目が 3 件なら、足した行（4 行目以降）は遅らせない", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "未回答"));
+    m.reqs[1].release(res({ threads: [thread("u1"), thread("u2"), thread("u3")], nextCursor: "5.u3" }));
+    await settle();
+    assert.deepEqual(delaysOf(m.render()), [0, 50, 100]);
+    click(button(m.render(), "もっと見る"));
+    m.reqs[2].release(res({ threads: [thread("u4"), thread("u5")], nextCursor: null }));
+    await settle();
+    assert.deepEqual(delaysOf(m.render()), [0, 50, 100, 0, 0]);
+  });
+
+  it("未回答タブで 1 ページ目が 0 件なら、足した行はすべて遅らせない", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "未回答"));
+    m.reqs[1].release(res({ threads: [], nextCursor: "5.u0" }));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    m.reqs[2].release(res({ threads: [thread("u1"), thread("u2"), thread("u3")], nextCursor: null }));
+    await settle();
+    assert.deepEqual(delaysOf(m.render()), [0, 0, 0]);
+  });
+
+  it("1 ページ目の壊れた要素・重複は境界に数えない", async () => {
+    const m = await loaded({ threads: [thread("a"), null, thread("a"), thread("b")], nextCursor: "5.b" });
+    assert.equal(m.state("firstPageCount"), 2);
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [thread("c")], nextCursor: null }));
+    await settle();
+    assert.deepEqual(delaysOf(m.render()), [0, 50, 0]);
+  });
+
+  it("タブを切り替えたら境界を 1 ページ目の件数で更新する", async () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => thread(`p${i}`));
+    const m = await loaded({ threads: many(THREADS_PAGE_SIZE), nextCursor: "1000.p19" });
+    assert.equal(m.state("firstPageCount"), THREADS_PAGE_SIZE);
+    click(tab(m.render(), "未回答"));
+    assert.equal(m.state("firstPageCount"), 0);
+    m.reqs[1].release(res({ threads: [thread("u1")], nextCursor: null }));
+    await settle();
+    assert.equal(m.state("firstPageCount"), 1);
   });
 });
 

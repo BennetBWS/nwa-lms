@@ -6,6 +6,7 @@ import {
   answeredLabel,
   decodeThreadCursor,
   encodeThreadCursor,
+  firstPageRowCount,
   isAnswered,
   parseThreadListQuery,
   readThreadPage,
@@ -326,12 +327,37 @@ describe("readThreadPage", () => {
 });
 
 describe("threadRowDelay", () => {
-  it("1 ページ目は 50ms ずつ、最大 500ms", () => {
-    assert.deepEqual([0, 1, 5, 10, 11, 19].map(threadRowDelay), [0, 50, 250, 500, 500, 500]);
+  it("1 ページ目（20 件）は 50ms ずつ、最大 500ms", () => {
+    assert.deepEqual([0, 1, 5, 10, 11, 19].map((i) => threadRowDelay(i, THREADS_PAGE_SIZE)), [0, 50, 250, 500, 500, 500]);
   });
 
-  it("「もっと見る」で足した行（THREADS_PAGE_SIZE 行目以降）は 0", () => {
-    for (const i of [THREADS_PAGE_SIZE, THREADS_PAGE_SIZE + 1, THREADS_PAGE_SIZE * 2 + 5, 1000]) assert.equal(threadRowDelay(i), 0, String(i));
+  it("1 ページ目が 20 件なら、足した行（20 行目以降）は 0", () => {
+    for (const i of [THREADS_PAGE_SIZE, THREADS_PAGE_SIZE + 1, THREADS_PAGE_SIZE * 2 + 5, 1000]) {
+      assert.equal(threadRowDelay(i, THREADS_PAGE_SIZE), 0, String(i));
+    }
+  });
+
+  it("1 ページ目が 3 件なら、3 行目以降（足した行）は 0", () => {
+    assert.deepEqual([0, 1, 2, 3, 4, 19, 20].map((i) => threadRowDelay(i, 3)), [0, 50, 100, 0, 0, 0, 0]);
+  });
+
+  it("1 ページ目が 0 件なら、すべての行（足した行）が 0", () => {
+    for (const i of [0, 1, 5, 19, 20]) assert.equal(threadRowDelay(i, 0), 0, String(i));
+  });
+});
+
+describe("firstPageRowCount", () => {
+  const row = (id: unknown) => ({ id, content: "本文", createdAt: new Date(0).toISOString(), author: { name: "受講生エー", isInstructor: false } });
+
+  it("表示される行の数（壊れた要素と重複を除く）", () => {
+    assert.equal(firstPageRowCount([]), 0);
+    assert.equal(firstPageRowCount([row("a"), row("b"), row("c")]), 3);
+    assert.equal(firstPageRowCount([row("a"), null, row(5), row(""), row("a"), row("b")]), 2);
+  });
+
+  it("toQuestionThreadItems の行数と同じ", () => {
+    const rows = [row("a"), "x", row("a"), row("b")];
+    assert.equal(firstPageRowCount(rows), toQuestionThreadItems(rows, new Date()).length);
   });
 });
 

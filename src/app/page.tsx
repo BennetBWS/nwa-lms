@@ -45,7 +45,7 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
-import { QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
+import { firstPageRowCount, QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -2208,6 +2208,8 @@ const Questions = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreFailed, setMoreFailed] = useState(false);
   const [expandedIds, setExpandedIds] = useState([]);
+  // 1 ページ目の行数（表示の遅れの境界。未回答タブでは 20 件未満・0 件もある）
+  const [firstPageCount, setFirstPageCount] = useState(0);
 
   // One request at a time (reload button, double clicks). A newer request (switching tabs)
   // makes the older one stale: its response is dropped and it no longer owns the in-flight flag.
@@ -2247,13 +2249,14 @@ const Questions = () => {
     setThreadRows([]);
     setNextCursor(null);
     setExpandedIds([]);
+    setFirstPageCount(0);
     setLoading(true);
     setLoadFailed(false);
     setLoadingMore(false);
     setMoreFailed(false);
     requestThreads(
       threadListUrl(forTab, null),
-      page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); },
+      page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); setFirstPageCount(firstPageRowCount(page.threads)); },
       () => setLoadFailed(true),
       () => setLoading(false)
     );
@@ -2310,7 +2313,7 @@ const Questions = () => {
           const regionId = `question-thread-${x.id}`;
           const place = [x.courseName, x.lessonTitle].filter(Boolean).join(" / ");
           return (
-            <FadeIn key={x.id} delay={threadRowDelay(i)}>
+            <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
                 <button type="button" aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
                   <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>

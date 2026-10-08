@@ -226,10 +226,19 @@ export function threadsEmptyMessage(tab: QuestionTab): string {
 
 /**
  * 一覧の i 行目（0 始まり）の表示の遅れ（ミリ秒。FadeIn の delay）。
- * 1 ページ目の行は 50ms ずつ、最大 500ms。「もっと見る」で足した行（THREADS_PAGE_SIZE 行目以降）は 0（押した後に待たせない）
+ * firstPageCount は 1 ページ目の行数（firstPageRowCount）。未回答タブでは 20 件未満（0 件もある）になるため、
+ * 行番号ではなくこの境界で判定する。1 ページ目の行は 50ms ずつ、最大 500ms。「もっと見る」で足した行は 0（押した後に待たせない）
  */
-export function threadRowDelay(i: number): number {
-  return i < THREADS_PAGE_SIZE ? Math.min(50 * i, 500) : 0;
+export function threadRowDelay(i: number, firstPageCount: number): number {
+  return i < firstPageCount ? Math.min(50 * i, 500) : 0;
+}
+
+/**
+ * 1 ページ目の応答（threads）から表示される行の数。壊れた要素・重複は toQuestionThreadItems と同じ規則で除く。
+ * 重複は先に出たものを残すので、表示の先頭からこの数の行が 1 ページ目の行になる
+ */
+export function firstPageRowCount(pageThreads: unknown[]): number {
+  return toQuestionThreadItems(pageThreads, new Date(0)).length;
 }
 
 /** 状態のバッジの文言 */
