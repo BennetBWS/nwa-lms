@@ -206,3 +206,161 @@ export function confirmMessage(action: StatusAction, name: string): string {
   }
   return `${name} さんを再有効化しますか？ 再びログインできるようになります。パスワードは変わりません。以前のログイン状態は戻らないため、本人に再ログインを依頼してください。`;
 }
+
+// ───────────── 生徒管理（#32）：表の行・検索・Course 列・詳細表示 ─────────────
+
+/** 検索用の正規化：NFKC（全角英数→半角など）、小文字化、前後の空白を除く */
+export function normalizeSearchText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().trim();
+}
+
+/**
+ * 名前・メールの部分一致で絞り込む（#32）。空（空白だけを含む）の検索語なら全件を返す。
+ * 並び順は変えず、入力の配列も書き換えない。
+ */
+export function filterStudentsByQuery<T extends { name: string; email?: string | null }>(
+  students: ReadonlyArray<T>,
+  query: string
+): T[] {
+  const q = normalizeSearchText(query);
+  if (q === "") return [...students];
+  return students.filter(
+    (s) => normalizeSearchText(s.name).includes(q) || normalizeSearchText(s.email ?? "").includes(q)
+  );
+}
+
+export const ALL_COURSES_COMPLETED_LABEL = "全コース修了";
+export const EMPTY_VALUE_LABEL = "—";
+
+/**
+ * Course 列・詳細の「現在のコース」の表示。
+ * currentCourse が null のとき、レッスンが 1 件以上あれば「全コース修了」、レッスンがなければ「—」
+ * （終える対象がないので修了とは言えない）。
+ */
+export function currentCourseLabel(
+  currentCourse: { name: string } | null | undefined,
+  totalLessons: number
+): string {
+  if (currentCourse && typeof currentCourse.name === "string") return currentCourse.name;
+  return totalLessons > 0 ? ALL_COURSES_COMPLETED_LABEL : EMPTY_VALUE_LABEL;
+}
+
+/** 完了数 ÷ 総数 の % を四捨五入する。総数が 0 なら 0 */
+export function progressPercent(completed: number, total: number): number {
+  if (!(total > 0) || !(completed > 0)) return 0;
+  return Math.min(100, Math.round((completed / total) * 100));
+}
+
+/** "YYYY/MM/DD"（日本時間）。null や解釈できない値は "" */
+export function formatJstDate(iso: string | null): string {
+  return formatDeactivatedDate(iso);
+}
+
+export type ProgressStatus = "good" | "warn" | "alert";
+
+/** GET /api/admin/students の 1 行（画面で使う項目） */
+export type AdminStudentApiRow = {
+  id: string;
+  name: string;
+  email: string;
+  completedLessons: number;
+  totalLessons: number;
+  lastActive: string | null;
+  status: string;
+  deactivatedAt: string | null;
+  currentCourse?: { id: string; name: string } | null;
+};
+
+/** 表の 1 行 */
+export type AdminStudentListItem = {
+  id: string;
+  name: string;
+  email: string;
+  course: string;
+  progress: number;
+  /** 最終学習日（最後にレッスンを完了した日、日本時間）。なければ "—" */
+  last: string;
+  progressStatus: ProgressStatus;
+  status: StudentStatusValue;
+  deactivatedAt: string | null;
+};
+
+export function toAdminStudentListItem(row: AdminStudentApiRow): AdminStudentListItem {
+  const progress = progressPercent(row.completedLessons, row.totalLessons);
+  const progressStatus: ProgressStatus = progress >= 50 ? "good" : progress >= 20 ? "warn" : "alert";
+  return {
+    id: row.id,
+    name: row.name,
+    email: typeof row.email === "string" ? row.email : "",
+    course: currentCourseLabel(row.currentCourse, row.totalLessons),
+    progress,
+    last: formatJstDate(row.lastActive) || EMPTY_VALUE_LABEL,
+    progressStatus,
+    status: row.status === "deactivated" ? "deactivated" : "active",
+    deactivatedAt: row.deactivatedAt ?? null,
+  };
+}
+
+export const STUDENTS_EMPTY_MESSAGE = "受講生はまだいません";
+export const STUDENTS_NO_MATCH_MESSAGE = "該当する受講生はいません";
+
+/** 表が空のときの文言。検索語があれば「該当する受講生はいません」 */
+export function studentsEmptyMessage(totalCount: number, query: string): string {
+  if (normalizeSearchText(query) !== "") return STUDENTS_NO_MATCH_MESSAGE;
+  return totalCount === 0 ? STUDENTS_EMPTY_MESSAGE : STUDENTS_NO_MATCH_MESSAGE;
+}
+
+/** 詳細 API の URL（id は encodeURIComponent する） */
+export function studentDetailUrl(id: string): string {
+  return `/api/admin/students/${encodeURIComponent(id)}`;
+}
+
+export const DETAIL_NOT_FOUND_MESSAGE = "この受講生が見つかりません。一覧に戻って確認してください。";
+export const DETAIL_LOAD_FAILED_MESSAGE = "受講生の情報を読み込めませんでした";
+
+/**
+ * 詳細 API の本文を確かめる。requested の受講生で、必要な配列がそろっていれば本文を返し、
+ * そうでなければ null（読み込みの失敗として扱う）。
+ */
+export function readStudentDetail(body: unknown, requestedId: string): StudentDetailView | null {
+  if (typeof body !== "object" || body === null) return null;
+  const b = body as Record<string, unknown>;
+  if (b.id !== requestedId || typeof b.name !== "string") return null;
+  if (!Array.isArray(b.courseProgress) || !Array.isArray(b.quizAttempts) || !Array.isArray(b.assignments)) return null;
+  return body as StudentDetailView;
+}
+
+/** 画面で使う詳細の形（API の AdminStudentDetail と同じ。lib 同士の依存を増やさないためここで定義） */
+export type StudentDetailView = {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: string;
+  status: StudentStatusValue;
+  deactivatedAt: string | null;
+  currentCourse: { id: string; name: string } | null;
+  courseProgress: Array<{ courseId: string; courseName: string; totalLessons: number; completedLessons: number; lastCompletedAt: string | null }>;
+  quizAttempts: Array<{ id: string; quizTitle: string; quizType: string; score: number; passed: boolean; createdAt: string }>;
+  assignments: Array<{ id: string; title: string; courseName: string; status: string; deadline: string | null; createdAt: string }>;
+};
+
+/** 詳細表示の「現在のコース」。全コースのレッスン総数で「全コース修了」と「—」を分ける */
+export function detailCurrentCourseLabel(detail: Pick<StudentDetailView, "currentCourse" | "courseProgress">): string {
+  const total = detail.courseProgress.reduce((n, c) => n + (c.totalLessons > 0 ? c.totalLessons : 0), 0);
+  return currentCourseLabel(detail.currentCourse, total);
+}
+
+export function quizTypeLabel(type: string): string {
+  return type === "FINAL" ? "修了テスト" : type === "MINI" ? "ミニテスト" : "テスト";
+}
+
+const ASSIGNMENT_STATUS_LABELS: Record<string, string> = {
+  LOCKED: "未開放",
+  WORKING: "取り組み中",
+  REVIEW: "確認待ち",
+  APPROVED: "承認済み",
+};
+
+export function assignmentStatusLabel(status: string): string {
+  return Object.prototype.hasOwnProperty.call(ASSIGNMENT_STATUS_LABELS, status) ? ASSIGNMENT_STATUS_LABELS[status] : "不明";
+}
