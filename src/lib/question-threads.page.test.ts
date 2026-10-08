@@ -507,13 +507,15 @@ describe("Questions 描画：タブ", () => {
     assert.ok(text(tree).includes("まだ質問していません"));
   });
 
-  it("「未回答」は status=unanswered。空なら「まだ質問はありません」", async () => {
+  it("「未回答」は status=unanswered。空なら「未回答の質問はありません」", async () => {
     const m = await loaded();
     click(tab(m.render(), "未回答"));
     assert.equal(m.reqs[1].url, "/api/comments?status=unanswered");
     m.reqs[1].release(res({ threads: [], nextCursor: null }));
     await settle();
-    assert.ok(text(m.render()).includes("まだ質問はありません"));
+    const t = text(m.render());
+    assert.ok(t.includes("未回答の質問はありません"), "未回答タブの空の案内がない");
+    assert.ok(!t.includes("まだ質問はありません"), "「すべて」の空の案内が出ている");
   });
 
   it("選ばれているタブを押しても読み直さない", async () => {

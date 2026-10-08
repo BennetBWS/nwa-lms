@@ -219,7 +219,9 @@ export function threadListUrl(tab: QuestionTab, cursor: string | null): string {
 
 /** 一覧が空のときの文言 */
 export function threadsEmptyMessage(tab: QuestionTab): string {
-  return tab === "mine" ? "まだ質問していません" : "まだ質問はありません";
+  if (tab === "mine") return "まだ質問していません";
+  if (tab === "unanswered") return "未回答の質問はありません";
+  return "まだ質問はありません";
 }
 
 /** 状態のバッジの文言 */

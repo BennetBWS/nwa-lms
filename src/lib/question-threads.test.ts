@@ -295,7 +295,7 @@ describe("タブ・URL・文言", () => {
 
   it("空の文言", () => {
     assert.equal(threadsEmptyMessage("all"), "まだ質問はありません");
-    assert.equal(threadsEmptyMessage("unanswered"), "まだ質問はありません");
+    assert.equal(threadsEmptyMessage("unanswered"), "未回答の質問はありません");
     assert.equal(threadsEmptyMessage("mine"), "まだ質問していません");
   });
 
