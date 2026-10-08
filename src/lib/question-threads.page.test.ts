@@ -444,19 +444,25 @@ describe("Questions 描画：展開", () => {
     // 全文は領域に出し、返信より前
     assert.ok(rt.includes("1行目\n2行目\n3行目\n4行目"), "領域に全文がない");
     assert.ok(rt.indexOf("4行目") < rt.indexOf("講師の回答"), "全文が返信より後にある");
-    // 開いてもボタンの中は要約のまま（全文・返信を入れない）
+    // 開いたらボタンの中に要約を出さない（本文は領域の全文だけ。二重に出さない）。全文・返信も入れない
     const bt = text(cards[0]);
-    assert.ok(bt.includes("1行目\n2行目\n3行目…"), "開いたボタンに要約がない");
-    assert.ok(!bt.includes("4行目"), "ボタンの中に全文がある");
+    assert.equal(body(tree), undefined, "開いたボタンに要約が残っている");
+    assert.ok(!bt.includes("1行目"), "開いたボタンの中に本文がある");
     assert.ok(!bt.includes("講師の回答"), "ボタンの中に返信がある");
-    assert.equal((body(tree).props.style as Record<string, unknown>).WebkitLineClamp, 3);
+    assert.equal(rt.split("1行目").length - 1, 1, "開いた領域の本文が 1 回でない");
+    assert.equal(text(tree).split("1行目").length - 1, 1, "画面に本文が二重に出ている");
+    // 開いたボタンの名前は投稿者・状態・日時・場所・返信数で通じる
+    for (const s2 of ["受講生", "回答済み", "3時間前", "STEP1 / レッスン1", "返信 2件"]) assert.ok(bt.includes(s2), `開いたボタンに「${s2}」がない`);
+    // 閉じていないもう 1 つのカードは要約のまま
+    assert.ok(text(cards[1]).includes("t2 の質問本文"), "閉じたカードの要約が消えた");
     // 領域はボタンの外（ボタンの子孫でない）
     assert.equal(findAll(cards[0], (e) => e.props.id === regionId).length, 0);
 
     click(cards[0]);
     tree = m.render();
     assert.deepEqual(threadButtons(tree).map((c) => c.props["aria-expanded"]), [false, false]);
-    assert.ok(!text(tree).includes("講師の回答"));
+    assert.ok(!text(tree).includes("講師の回答"), "閉じたのに返信が出ている");
+    assert.ok(body(tree), "閉じたのに要約が戻らない");
   });
 
   it("長い本文（2000 字）でも、ボタンの中は上限の文字数までで、全文は開いた領域にだけある", async () => {
@@ -470,6 +476,7 @@ describe("Questions 描画：展開", () => {
     tree = m.render();
     card = threadButtons(tree)[0];
     assert.ok(!text(card).includes(long), "開いたボタンの中に全文がある");
+    assert.ok(!text(card).includes("あ"), "開いたボタンの中に要約がある");
     const region = findAll(tree, (e) => e.props.id === card.props["aria-controls"]);
     assert.equal(region.length, 1);
     assert.ok(text(region[0]).includes(long), "領域に全文がない");

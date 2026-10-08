@@ -2331,8 +2331,9 @@ const Questions = () => {
                     </span>
                     <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
                   </span>
-                  {/* ボタンの中は要約だけ（ボタン名として全文を読み上げさせない。全文は下の領域に出す） */}
-                  <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.summary}</span>
+                  {/* ボタンの中は閉じているときの要約だけ（ボタン名として全文を読み上げさせない）。開いたら全文を下の領域に出すので、要約は出さない（本文を二重に出さない）。
+                      開いたときのボタン名は投稿者・状態・日時・場所・返信数になる */}
+                  {!open && <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.summary}</span>}
                   <span style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                     {place && <span style={{ overflowWrap: "anywhere" }}><BookOpen size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> {place}</span>}
                     <span><MessageSquare size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> 返信 {x.replyCount}件</span>
