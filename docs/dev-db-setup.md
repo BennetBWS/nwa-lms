@@ -52,7 +52,7 @@ Docker Desktop が起動していなければ起動する。
 
 ## 2. ローカル DB を起動する
 
-リポジトリ直下で実行する（`supabase/config.toml` を使う。Postgres 17、Studio 以外の機能は無効）。
+リポジトリ直下で実行する（`supabase/config.toml` を使う。Postgres 17。Studio と、Studio が使う API（`[api]`）以外の機能は無効）。
 
 ```sh
 supabase start
