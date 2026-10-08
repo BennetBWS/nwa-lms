@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  addedThreadCount,
   QUESTION_TABS,
   THREADS_PAGE_SIZE,
   answeredLabel,
@@ -14,7 +15,9 @@ import {
   threadListUrl,
   threadRowDelay,
   threadSummary,
+  threadsAddedMessage,
   threadsEmptyMessage,
+  threadsMoreHint,
   toQuestionThreadItems,
   toQuestionThreadView,
   unlockedCourseIds,
@@ -301,6 +304,31 @@ describe("タブ・URL・文言", () => {
     assert.equal(threadsEmptyMessage("all"), "まだ質問はありません");
     assert.equal(threadsEmptyMessage("unanswered"), "未回答の質問はありません");
     assert.equal(threadsEmptyMessage("mine"), "まだ質問していません");
+  });
+
+  it("0 件で続きがあるときの説明（タブごと）", () => {
+    assert.equal(threadsMoreHint("all"), "ここまでに表示できる質問はありません。古い質問を続けて確認できます");
+    assert.equal(threadsMoreHint("unanswered"), "ここまでに未回答の質問はありません。古い質問を続けて確認できます");
+    assert.equal(threadsMoreHint("mine"), "ここまでに自分の質問はありません。古い質問を続けて確認できます");
+    const hints = QUESTION_TABS.map((t) => threadsMoreHint(t.key));
+    assert.equal(new Set(hints).size, hints.length, "タブごとに文言が違うはず");
+    for (const t of QUESTION_TABS) {
+      assert.notEqual(threadsMoreHint(t.key), threadsEmptyMessage(t.key), `${t.key}：空の案内と同じ文言になっている`);
+    }
+  });
+
+  it("読み足した結果の知らせ", () => {
+    assert.equal(threadsAddedMessage(1), "1 件を追加しました");
+    assert.equal(threadsAddedMessage(20), "20 件を追加しました");
+    assert.equal(threadsAddedMessage(0), "追加できる質問はありませんでした");
+  });
+
+  it("addedThreadCount：増えた表示の行の数（壊れた要素と、前のページとの重複を除く）", () => {
+    const row = (id: unknown) => ({ id, content: "本文", createdAt: new Date(0).toISOString(), author: { name: "受講生エー", isInstructor: false } });
+    assert.equal(addedThreadCount([], []), 0);
+    assert.equal(addedThreadCount([], [row("a"), row("b")]), 2);
+    assert.equal(addedThreadCount([row("a")], [row("a"), row("b"), null, row("")]), 1);
+    assert.equal(addedThreadCount([row("a"), row("b")], [row("b")]), 0);
   });
 
   it("answeredLabel", () => {

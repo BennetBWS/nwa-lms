@@ -225,6 +225,29 @@ export function threadsEmptyMessage(tab: QuestionTab): string {
 }
 
 /**
+ * 表示できる行が 0 件で、続き（nextCursor）があるときに「もっと見る」の上に出す説明。
+ * 未回答タブはサーバーで判定して絞るため、1 ページ分を読んでも 0 件になることがある
+ */
+export function threadsMoreHint(tab: QuestionTab): string {
+  if (tab === "mine") return "ここまでに自分の質問はありません。古い質問を続けて確認できます";
+  if (tab === "unanswered") return "ここまでに未回答の質問はありません。古い質問を続けて確認できます";
+  return "ここまでに表示できる質問はありません。古い質問を続けて確認できます";
+}
+
+/**
+ * 「もっと見る」で読んだページを足したとき、表示の行が何件増えるか（壊れた要素・重複は toQuestionThreadItems と同じ規則で除く）
+ */
+export function addedThreadCount(prevRows: unknown[], pageRows: unknown[]): number {
+  const now = new Date(0);
+  return toQuestionThreadItems([...prevRows, ...pageRows], now).length - toQuestionThreadItems(prevRows, now).length;
+}
+
+/** 「もっと見る」で読み足した結果の知らせ（role="status" で読み上げる） */
+export function threadsAddedMessage(count: number): string {
+  return count > 0 ? `${count} 件を追加しました` : "追加できる質問はありませんでした";
+}
+
+/**
  * 一覧の i 行目（0 始まり）の表示の遅れ（ミリ秒。FadeIn の delay）。
  * firstPageCount は 1 ページ目の行数（firstPageRowCount）。未回答タブでは 20 件未満（0 件もある）になるため、
  * 行番号ではなくこの境界で判定する。1 ページ目の行は 50ms ずつ、最大 500ms。「もっと見る」で足した行は 0（押した後に待たせない）

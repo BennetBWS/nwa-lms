@@ -6,13 +6,16 @@ import { join } from "node:path";
 import ts from "typescript";
 import { classifyAuthFailure } from "./client-session";
 import {
+  addedThreadCount,
   firstPageRowCount,
   QUESTION_TABS,
   readThreadPage,
   THREADS_PAGE_SIZE,
   threadListUrl,
   threadRowDelay,
+  threadsAddedMessage,
   threadsEmptyMessage,
+  threadsMoreHint,
   toQuestionThreadItems,
 } from "./question-threads";
 
@@ -63,7 +66,7 @@ describe("Questions：配線・読み取りだけ", () => {
     const m = src.match(/import \{([^}]*)\} from "@\/lib\/question-threads";/);
     assert.ok(m, "import がない");
     const names = m[1].split(",").map((s) => s.trim());
-    for (const n of ["firstPageRowCount", "QUESTION_TABS", "readThreadPage", "threadListUrl", "threadRowDelay", "threadsEmptyMessage", "toQuestionThreadItems"]) {
+    for (const n of ["addedThreadCount", "firstPageRowCount", "QUESTION_TABS", "readThreadPage", "threadListUrl", "threadRowDelay", "threadsAddedMessage", "threadsEmptyMessage", "threadsMoreHint", "toQuestionThreadItems"]) {
       assert.ok(names.includes(n), n);
     }
   });
@@ -192,12 +195,15 @@ function mount() {
     useEffect,
     authFetch,
     classifyAuthFailure,
+    addedThreadCount,
     firstPageRowCount,
     QUESTION_TABS,
     readThreadPage,
     threadListUrl,
     threadRowDelay,
+    threadsAddedMessage,
     threadsEmptyMessage,
+    threadsMoreHint,
     toQuestionThreadItems,
     T,
     glassStyle: () => ({}),
@@ -253,6 +259,9 @@ const tab = (tree: El, label: string) => {
 };
 const click = (b: El) => (b.props.onClick as (e?: unknown) => void)({ preventDefault() {} });
 const byRole = (tree: El, role: string) => findAll(tree, (e) => e.props.role === role);
+// 空の案内の要素（文言がちょうど一致するもの。0 件で続きがあるときの説明は、未回答タブの空の案内を部分に含むため部分一致では見ない）
+const emptyNotices = (tree: El, key: "all" | "mine" | "unanswered") =>
+  findAll(tree, (e) => typeof e.type === "string" && text(e) === threadsEmptyMessage(key));
 
 // ───────────── データ（ダミー） ─────────────
 
@@ -309,7 +318,7 @@ describe("Questions 描画：前提", () => {
   });
 
   it("useState の並びが取れている", () => {
-    for (const n of ["tab", "threadRows", "nextCursor", "loading", "loadFailed", "loadingMore", "moreFailed", "expandedIds", "firstPageCount"]) {
+    for (const n of ["tab", "threadRows", "nextCursor", "loading", "loadFailed", "loadingMore", "moreFailed", "expandedIds", "firstPageCount", "moreStatus"]) {
       assert.ok(STATE_NAMES.includes(n), n);
     }
   });
@@ -776,7 +785,7 @@ describe("Questions 描画（追加）：もっと見る", () => {
     m.reqs[1].release(res({ threads: [], nextCursor: "1000.t9" }));
     await settle();
     let tree = m.render();
-    assert.ok(!text(tree).includes(threadsEmptyMessage("unanswered")), "続きがあるのに空の案内が出ている");
+    assert.equal(emptyNotices(tree, "unanswered").length, 0, "続きがあるのに空の案内が出ている");
     assert.equal(threadButtons(tree).length, 0);
     click(button(tree, "もっと見る"));
     assert.equal(m.reqs.length, 3);
@@ -940,5 +949,97 @@ describe("Questions（追加）：ソースの検査（変数の取り違え）"
 
   it("古い応答は seq で捨て、失効のときは in-flight を外さない", () => {
     assert.match(questionsSrc, /if \(sessionExpired \|\| seq !== threadsSeq\.current\) return;\n\s*threadsInFlight\.current = false;/);
+  });
+});
+
+describe("Questions 描画（追加）：0 件で続きがあるときの説明と、読み足した結果の知らせ", () => {
+  const statusOf = (tree: El) => {
+    const st = byRole(tree, "status");
+    assert.equal(st.length, 1, "role=status が 1 つでない");
+    assert.equal(st[0].props["aria-live"], "polite");
+    return text(st[0]);
+  };
+
+  for (const t of QUESTION_TABS) {
+    it(`${t.label}：0 件で続きがあれば、「もっと見る」と同じ囲みに説明を出す`, async () => {
+      const m = await loaded();
+      if (t.key !== "all") {
+        click(tab(m.render(), t.label));
+        m.reqs[1].release(res({ threads: [], nextCursor: "9.x" }));
+      } else {
+        click(tab(m.render(), "自分の質問"));
+        click(tab(m.render(), "すべて"));
+        m.reqs[2].release(res({ threads: [], nextCursor: "9.x" }));
+      }
+      await settle();
+      const tree = m.render();
+      const hint = findAll(tree, (e) => typeof e.type === "string" && text(e) === threadsMoreHint(t.key));
+      assert.equal(hint.length, 1, "説明がない");
+      const box = findAll(tree, (e) => e.children.includes(hint[0]))[0];
+      assert.ok(buttons(box).some((b) => text(b).trim() === "もっと見る"), "説明と「もっと見る」が同じ囲みにない");
+      assert.ok(text(box).indexOf(threadsMoreHint(t.key)) < text(box).indexOf("もっと見る"), "説明がボタンより後にある");
+      assert.equal(emptyNotices(tree, t.key).length, 0, "空の案内が出ている");
+    });
+  }
+
+  it("行があるときは説明を出さない", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    const t = text(m.render());
+    for (const q of QUESTION_TABS) assert.ok(!t.includes(threadsMoreHint(q.key)), `${q.key} の説明が出ている`);
+  });
+
+  it("role=status は最初から 1 つあり、空。読み足したら「n 件を追加しました」（重複は数えない）", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    assert.equal(statusOf(m.render()), "");
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [thread("t2"), thread("t3"), thread("t4")], nextCursor: "9.t4" }));
+    await settle();
+    assert.equal(statusOf(m.render()), "2 件を追加しました");
+    // 次に押したら、いったん消してから新しい結果を出す
+    click(button(m.render(), "もっと見る"));
+    assert.equal(statusOf(m.render()), "");
+    m.reqs[2].release(res({ threads: [thread("t5")], nextCursor: null }));
+    await settle();
+    assert.equal(statusOf(m.render()), "1 件を追加しました");
+  });
+
+  it("0 件で続きを読んでも 0 件なら「追加できる質問はありませんでした」。続きがあれば説明は残る", async () => {
+    const m = await loaded({ threads: [], nextCursor: "1000.t9" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [], nextCursor: "500.t8" }));
+    await settle();
+    const tree = m.render();
+    assert.equal(statusOf(tree), threadsAddedMessage(0));
+    assert.ok(text(tree).includes(threadsMoreHint("all")), "続きがあるのに説明が消えた");
+  });
+
+  it("読み足して 0 件で続きもなくなったら、空の案内に切り替わっても知らせは残る", async () => {
+    const m = await loaded({ threads: [], nextCursor: "1000.t9" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.equal(emptyNotices(tree, "all").length, 1, "空の案内がない");
+    assert.equal(statusOf(tree), "追加できる質問はありませんでした");
+  });
+
+  it("続きの読み込みに失敗したら知らせは空（alert で知らせる）", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    const tree = m.render();
+    assert.equal(statusOf(tree), "");
+    assert.equal(byRole(tree, "alert").length, 1);
+  });
+
+  it("タブを切り替えたら知らせを消す", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [thread("t3")], nextCursor: null }));
+    await settle();
+    assert.equal(statusOf(m.render()), "1 件を追加しました");
+    click(tab(m.render(), "未回答"));
+    assert.equal(statusOf(m.render()), "");
   });
 });

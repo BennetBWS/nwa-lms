@@ -45,7 +45,7 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
-import { firstPageRowCount, QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
+import { addedThreadCount, firstPageRowCount, QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsAddedMessage, threadsEmptyMessage, threadsMoreHint, toQuestionThreadItems } from "@/lib/question-threads";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -2210,6 +2210,8 @@ const Questions = () => {
   const [expandedIds, setExpandedIds] = useState([]);
   // 1 ページ目の行数（表示の遅れの境界。未回答タブでは 20 件未満・0 件もある）
   const [firstPageCount, setFirstPageCount] = useState(0);
+  // 「もっと見る」で読み足した結果の知らせ（role="status" で読み上げる）
+  const [moreStatus, setMoreStatus] = useState("");
 
   // One request at a time (reload button, double clicks). A newer request (switching tabs)
   // makes the older one stale: its response is dropped and it no longer owns the in-flight flag.
@@ -2254,6 +2256,7 @@ const Questions = () => {
     setLoadFailed(false);
     setLoadingMore(false);
     setMoreFailed(false);
+    setMoreStatus("");
     requestThreads(
       threadListUrl(forTab, null),
       page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); setFirstPageCount(firstPageRowCount(page.threads)); },
@@ -2266,9 +2269,10 @@ const Questions = () => {
     if (threadsExpired.current || threadsInFlight.current || nextCursor === null) return;
     setLoadingMore(true);
     setMoreFailed(false);
+    setMoreStatus("");
     requestThreads(
       threadListUrl(tab, nextCursor),
-      page => { setThreadRows(prev => [...prev, ...page.threads]); setNextCursor(page.nextCursor); },
+      page => { setMoreStatus(threadsAddedMessage(addedThreadCount(threadRows, page.threads))); setThreadRows(prev => [...prev, ...page.threads]); setNextCursor(page.nextCursor); },
       () => setMoreFailed(true),
       () => setLoadingMore(false)
     );
@@ -2366,6 +2370,9 @@ const Questions = () => {
         })}
         {nextCursor !== null && (
           <div style={{ marginTop: 4, textAlign: "center" }}>
+            {items.length === 0 && (
+              <div style={{ ...glassStyle(), borderRadius: 20, padding: "20px 24px", marginBottom: 12, fontSize: 13, color: T.textMuted }}>{threadsMoreHint(tab)}</div>
+            )}
             {moreFailed && (
               <div role="alert" style={{ fontSize: 12, color: T.textMuted, marginBottom: 10 }}>続きを読み込めませんでした。もう一度お試しください。</div>
             )}
@@ -2391,6 +2398,8 @@ const Questions = () => {
           ))}
         </div>
         {body}
+        {/* 一覧が空の案内に切り替わっても消えないよう、body の外に置く */}
+        <div role="status" aria-live="polite" className="sr-only">{moreStatus}</div>
       </div>
     </ScrollArea>
   );
