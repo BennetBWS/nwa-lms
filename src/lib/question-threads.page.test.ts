@@ -336,9 +336,11 @@ describe("Questions 描画：読み込み", () => {
     const m = await loaded();
     const tree = m.render();
     const t = text(tree);
-    for (const s of ["受講生", "講師シー", "3時間前", "2時間前", "1行目\n2行目\n3行目\n4行目", "t2 の質問本文", "STEP1 / レッスン1", "返信 2件", "返信 0件"]) {
+    for (const s of ["受講生", "講師シー", "3時間前", "2時間前", "1行目\n2行目\n3行目…", "t2 の質問本文", "STEP1 / レッスン1", "返信 2件", "返信 0件"]) {
       assert.ok(t.includes(s), s);
     }
+    // 閉じているときは 4 行目以降を出さない（要約だけ）
+    assert.ok(!t.includes("4行目"), "閉じているのに 4 行目が出ている");
     const badges = findAll(tree, (e) => e.type === Badge).map(text);
     assert.deepEqual(badges, ["回答済み", "講師", "未回答"]);
     // 閉じているときは返信を出さない
@@ -402,15 +404,16 @@ describe("Questions 描画：読み込み", () => {
 });
 
 describe("Questions 描画：展開", () => {
-  it("カードは aria-expanded のボタン。押すと全文と返信をその場で出し、もう一度押すと閉じる", async () => {
+  it("カードは aria-expanded のボタン。押すと全文と返信をその場（ボタンの外の領域）に出し、もう一度押すと閉じる", async () => {
     const m = await loaded();
     let tree = m.render();
     let cards = threadButtons(tree);
     assert.equal(cards.length, 2);
     assert.deepEqual(cards.map((c) => c.props["aria-expanded"]), [false, false]);
     assert.equal(cards[0].props["aria-controls"], undefined);
-    // 閉じているときは本文を 3 行で切る
-    const body = (tree2: El) => findAll(threadButtons(tree2)[0], (e) => text(e) === "1行目\n2行目\n3行目\n4行目" && e.type === "span")[0];
+    // ボタンの中は要約（3 行で切る）
+    const body = (tree2: El) => findAll(threadButtons(tree2)[0], (e) => text(e) === "1行目\n2行目\n3行目…" && e.type === "span")[0];
+    assert.ok(body(tree), "ボタンの中に要約がない");
     assert.equal((body(tree).props.style as Record<string, unknown>).WebkitLineClamp, 3);
 
     click(cards[0]);
@@ -423,13 +426,39 @@ describe("Questions 描画：展開", () => {
     assert.equal(region.length, 1);
     const rt = text(region[0]);
     for (const s of ["講師ビー", "講師", "講師の回答", "30分前", "受講生", "ありがとうございます", "10分前"]) assert.ok(rt.includes(s), s);
-    assert.ok(rt.indexOf("講師の回答") < rt.indexOf("ありがとうございます"));
-    assert.equal((body(tree).props.style as Record<string, unknown>).WebkitLineClamp, undefined);
+    assert.ok(rt.indexOf("講師の回答") < rt.indexOf("ありがとうございます"), "返信の順序が違う");
+    // 全文は領域に出し、返信より前
+    assert.ok(rt.includes("1行目\n2行目\n3行目\n4行目"), "領域に全文がない");
+    assert.ok(rt.indexOf("4行目") < rt.indexOf("講師の回答"), "全文が返信より後にある");
+    // 開いてもボタンの中は要約のまま（全文・返信を入れない）
+    const bt = text(cards[0]);
+    assert.ok(bt.includes("1行目\n2行目\n3行目…"), "開いたボタンに要約がない");
+    assert.ok(!bt.includes("4行目"), "ボタンの中に全文がある");
+    assert.ok(!bt.includes("講師の回答"), "ボタンの中に返信がある");
+    assert.equal((body(tree).props.style as Record<string, unknown>).WebkitLineClamp, 3);
+    // 領域はボタンの外（ボタンの子孫でない）
+    assert.equal(findAll(cards[0], (e) => e.props.id === regionId).length, 0);
 
     click(cards[0]);
     tree = m.render();
     assert.deepEqual(threadButtons(tree).map((c) => c.props["aria-expanded"]), [false, false]);
     assert.ok(!text(tree).includes("講師の回答"));
+  });
+
+  it("長い本文（2000 字）でも、ボタンの中は上限の文字数までで、全文は開いた領域にだけある", async () => {
+    const long = "あ".repeat(2000);
+    const m = await loaded({ threads: [thread("t1", { content: long })], nextCursor: null });
+    let tree = m.render();
+    let card = threadButtons(tree)[0];
+    assert.ok(!text(tree).includes(long), "閉じているのに全文が出ている");
+    assert.ok(text(card).length < 400, `ボタンの中が長すぎる: ${text(card).length}`);
+    click(card);
+    tree = m.render();
+    card = threadButtons(tree)[0];
+    assert.ok(!text(card).includes(long), "開いたボタンの中に全文がある");
+    const region = findAll(tree, (e) => e.props.id === card.props["aria-controls"]);
+    assert.equal(region.length, 1);
+    assert.ok(text(region[0]).includes(long), "領域に全文がない");
   });
 
   it("返信がなければ「まだ返信はありません」", async () => {

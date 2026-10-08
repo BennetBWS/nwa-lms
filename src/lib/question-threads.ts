@@ -239,7 +239,29 @@ export function readThreadPage(data: unknown): { threads: unknown[]; nextCursor:
   return { threads: data.threads, nextCursor };
 }
 
+/** 折りたたんだ本文（カードのボタンの中身）の最大の文字数 */
+export const THREAD_SUMMARY_MAX_CHARS = 140;
+
+/**
+ * 折りたたんだときにボタンの中に出す本文の要約。ボタンの名前として読み上げられるので、全文（最大 2000 字）を入れない。
+ * 最初の 3 行まで、かつ THREAD_SUMMARY_MAX_CHARS 文字まで（サロゲートペアを分けない）。切ったときは末尾に「…」を付ける。
+ * 見た目の 3 行の切り詰めは画面の CSS で行う
+ */
+export function threadSummary(content: string): string {
+  const lines = content.split("\n");
+  let out = lines.slice(0, 3).join("\n");
+  let cut = lines.length > 3;
+  const chars = Array.from(out);
+  if (chars.length > THREAD_SUMMARY_MAX_CHARS) {
+    out = chars.slice(0, THREAD_SUMMARY_MAX_CHARS).join("");
+    cut = true;
+  }
+  return cut ? `${out.trimEnd()}…` : out;
+}
+
 export type QuestionThreadItem = CommentItem & {
+  /** 折りたたんだ本文（threadSummary） */
+  summary: string;
   courseName: string;
   lessonTitle: string;
   replyCount: number;
@@ -265,8 +287,10 @@ export function toQuestionThreadItems(rows: unknown, now: Date): QuestionThreadI
     const course = isPlainObject(r.course) ? r.course : {};
     const lesson = isPlainObject(r.lesson) ? r.lesson : {};
     const answered = r.answered === true;
+    const item = toItem(r, now);
     return {
-      ...toItem(r, now),
+      ...item,
+      summary: threadSummary(item.content),
       courseName: typeof course.name === "string" ? course.name : "",
       lessonTitle: typeof lesson.title === "string" ? lesson.title : "",
       replyCount: isNonNegativeInt(r.replyCount) ? r.replyCount : replies.length,

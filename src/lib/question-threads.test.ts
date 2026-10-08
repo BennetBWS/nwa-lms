@@ -9,7 +9,9 @@ import {
   isAnswered,
   parseThreadListQuery,
   readThreadPage,
+  THREAD_SUMMARY_MAX_CHARS,
   threadListUrl,
+  threadSummary,
   threadsEmptyMessage,
   toQuestionThreadItems,
   toQuestionThreadView,
@@ -322,6 +324,31 @@ describe("readThreadPage", () => {
   });
 });
 
+describe("threadSummary", () => {
+  it("3 行以内・上限以内ならそのまま", () => {
+    assert.equal(threadSummary("1行目\n2行目\n3行目"), "1行目\n2行目\n3行目");
+    assert.equal(threadSummary(""), "");
+  });
+
+  it("4 行目以降は切って「…」を付ける", () => {
+    assert.equal(threadSummary("1行目\n2行目\n3行目\n4行目"), "1行目\n2行目\n3行目…");
+    assert.equal(threadSummary("a\nb\n\n\nc"), "a\nb…");
+  });
+
+  it("上限の文字数で切る（2000 字でも上限まで）", () => {
+    const long = "あ".repeat(2000);
+    const s = threadSummary(long);
+    assert.equal(s, `${"あ".repeat(THREAD_SUMMARY_MAX_CHARS)}…`);
+    assert.equal(threadSummary("あ".repeat(THREAD_SUMMARY_MAX_CHARS)), "あ".repeat(THREAD_SUMMARY_MAX_CHARS));
+  });
+
+  it("サロゲートペアを途中で分けない", () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const s = threadSummary(emoji.repeat(THREAD_SUMMARY_MAX_CHARS + 5));
+    assert.equal(s, `${emoji.repeat(THREAD_SUMMARY_MAX_CHARS)}…`);
+  });
+});
+
 describe("toQuestionThreadItems", () => {
   const api = (over: Record<string, unknown> = {}) => ({
     id: "c1",
@@ -348,6 +375,7 @@ describe("toQuestionThreadItems", () => {
       time: "2時間前",
       content: "質問本文",
       mine: true,
+      summary: "質問本文",
       courseName: "STEP1",
       lessonTitle: "レッスン1",
       replyCount: 0,

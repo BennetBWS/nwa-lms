@@ -2324,7 +2324,8 @@ const Questions = () => {
                     </span>
                     <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
                   </span>
-                  <span style={{ display: open ? "block" : "-webkit-box", WebkitLineClamp: open ? undefined : 3, WebkitBoxOrient: open ? undefined : "vertical", overflow: open ? "visible" : "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</span>
+                  {/* ボタンの中は要約だけ（ボタン名として全文を読み上げさせない。全文は下の領域に出す） */}
+                  <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.summary}</span>
                   <span style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                     {place && <span style={{ overflowWrap: "anywhere" }}><BookOpen size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> {place}</span>}
                     <span><MessageSquare size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> 返信 {x.replyCount}件</span>
@@ -2332,6 +2333,7 @@ const Questions = () => {
                 </button>
                 {open && (
                   <div id={regionId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
+                    <div style={{ paddingTop: 14, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
                     {x.replies.length === 0 ? (
                       <div style={{ fontSize: 12, color: T.textMuted, paddingTop: 14 }}>まだ返信はありません</div>
                     ) : (
