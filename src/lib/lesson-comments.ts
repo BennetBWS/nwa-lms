@@ -160,7 +160,8 @@ function toDateInput(value: unknown): DateInput {
   return typeof value === "string" || typeof value === "number" || value instanceof Date ? value : null;
 }
 
-function toItem(row: Record<string, unknown>, now: Date): CommentItem {
+/** 1 件を画面の行にする（質問スレッド一覧 question-threads でも使う） */
+export function toItem(row: Record<string, unknown>, now: Date): CommentItem {
   const author = isPlainObject(row.author) ? row.author : {};
   const isInstructor = author.isInstructor === true;
   const shown = displayName(author.name);
@@ -175,8 +176,11 @@ function toItem(row: Record<string, unknown>, now: Date): CommentItem {
   };
 }
 
-/** id（空でない string、まだ出ていない）と content（string）がある要素だけを残す */
-function validRows(rows: unknown, seen: Set<string>): Array<Record<string, unknown>> {
+/**
+ * id（空でない string、まだ出ていない）と content（string）がある要素だけを残す。
+ * 残した id は seen に足す（質問スレッド一覧 question-threads でも使う）
+ */
+export function validRows(rows: unknown, seen: Set<string>): Array<Record<string, unknown>> {
   if (!Array.isArray(rows)) return [];
   const out: Array<Record<string, unknown>> = [];
   for (const r of rows) {
