@@ -648,6 +648,10 @@ describe("supabase/config.toml", () => {
     assert.equal(values.get("studio.enabled"), "true");
   });
 
+  it("has no experimental pg-delta section (not used)", () => {
+    assert.doesNotMatch(raw, /^\s*\[experimental\.pgdelta\]/m);
+  });
+
   it("does not expose new public tables to anon / authenticated (#2)", () => {
     assert.equal(values.get("api.auto_expose_new_tables"), "false");
   });
