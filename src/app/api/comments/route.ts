@@ -25,6 +25,8 @@ const COMMENT_SELECT = {
 // 質問スレッド一覧（#32）。親の質問を新しい順に 20 件ずつ（カーソル方式）。読み取りだけ（投稿は #46）。
 // 受講生には、自分にとってロック中のコースの質問を返さない（自分の質問は常に返す）。講師はロックなし。
 // 絞り込み：mine（自分の質問）・status（answered / unanswered）・courseId
+// status の回答済み／未回答は、DB で 21 件読んだ後に JS で「親と同じレッスンの返信」だけで判定して絞る。
+// そのため 1 ページが 20 件より少ないことも、0 件なのに nextCursor があることもある（画面は続きを読めるようにする）
 export async function GET(request: Request) {
   try {
     const session = await auth();
@@ -57,9 +59,9 @@ export async function GET(request: Request) {
     }
     if (mine) and.push({ userId });
     if (courseId !== null) and.push({ lesson: { section: { courseId } } });
-    // DB では別レッスンの返信も含めて絞る。下で同じレッスンの返信だけで判定し直す
+    // answered は DB で別レッスンの返信も含めて絞り、下で同じレッスンの返信だけで判定し直す。
+    // unanswered は DB では講師の返信で絞らない（別レッスンの講師の返信しかない質問を落とさないため）。下の判定だけで絞る
     if (status === "answered") and.push({ replies: { some: { user: { role: "INSTRUCTOR" } } } });
-    if (status === "unanswered") and.push({ replies: { none: { user: { role: "INSTRUCTOR" } } } });
     if (cursor !== null) {
       and.push({ OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] });
     }

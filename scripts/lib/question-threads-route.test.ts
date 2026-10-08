@@ -450,12 +450,14 @@ describe("GET /api/comments：絞り込み", () => {
     assert.deepEqual(and.AND[1], { replies: { some: { user: { role: "INSTRUCTOR" } } } });
   });
 
-  it("status=unanswered：講師の返信がないもの", async () => {
+  it("status=unanswered：同じレッスンに講師の返信がないもの（別レッスンの講師の返信しかない q6 も含む）", async () => {
     const body = await (await get("?status=unanswered")).json();
-    assert.deepEqual(ids(body), ["q2"]);
-    assert.ok(body.threads.every((t: { answered: boolean }) => !t.answered));
+    assert.deepEqual(ids(body), ["q6", "q2"]);
+    assert.ok(body.threads.every((t: { answered: boolean }) => !t.answered), "未回答でないものが出ている");
+    // DB では講師の返信で絞らない（ロックの条件だけ）
     const and = commentCall().where as { AND: unknown[] };
-    assert.deepEqual(and.AND[1], { replies: { none: { user: { role: "INSTRUCTOR" } } } });
+    assert.equal(and.AND.length, 1);
+    assert.ok(!JSON.stringify(and.AND).includes("replies"), `replies の条件がある: ${inspect(and.AND)}`);
   });
 
   it("status=all は全部（answered の値は同じレッスンの講師の返信で決まる）", async () => {
@@ -909,9 +911,25 @@ describe("GET /api/comments（追加）：回答済みの判定", () => {
     assert.equal(second.nextCursor, null);
   });
 
-  // 不具合（報告済み）：別レッスンにしか講師の返信がない質問は、「すべて」では answered: false（未回答）と表示されるのに、
-  // status=unanswered（画面の「未回答」タブ）では DB の replies.none で除かれて出てこない。
-  it("不整合データ：「すべて」で未回答の q6 は status=unanswered にも出るべき", { todo: "本番コードの不具合として報告（route の unanswered 条件）" }, async () => {
+  it("status=unanswered：1 ページ目の 20 件がすべて回答済みなら threads は空で、nextCursor で続きを読める", async () => {
+    comments = [];
+    for (let i = 0; i < 25; i++) {
+      const id = `u${String(i).padStart(2, "0")}`;
+      comments.push({ id, userId: "stu_b", lessonId: "l1", content: id, parentId: null, createdAt: at(i) });
+      // u00〜u19（新しい 20 件）は同じレッスンの講師の返信あり、u20〜u24 は返信なし
+      if (i < 20) comments.push({ id: `r_${id}`, userId: "ins_1", lessonId: "l1", content: "回答", parentId: id, createdAt: at(i) });
+    }
+    const first = await (await get("?status=unanswered")).json();
+    assert.deepEqual(first.threads, []);
+    assert.equal(first.nextCursor, `${at(19).getTime()}.u19`);
+    const second = await (await get(`?status=unanswered&cursor=${encodeURIComponent(first.nextCursor)}`)).json();
+    assert.deepEqual(ids(second), ["u20", "u21", "u22", "u23", "u24"]);
+    assert.equal(second.nextCursor, null);
+  });
+
+  // 別レッスンにしか講師の返信がない質問は、「すべて」では answered: false（未回答）と表示される。
+  // status=unanswered（画面の「未回答」タブ）にも出る（DB では講師の返信で絞らない）
+  it("不整合データ：「すべて」で未回答の q6 は status=unanswered にも出る", async () => {
     session = STUDENT_SESSION;
     const all = await (await get()).json();
     const q6 = all.threads.find((t: { id: string }) => t.id === "q6");
