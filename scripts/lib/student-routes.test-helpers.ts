@@ -30,8 +30,28 @@ export type UserRow = {
 
 export type ResetRow = { id: string; userId: string; token: string; expiresAt: Date; used: boolean };
 
-// Child rows that deactivation must keep.
-export type ChildRow = { id: string; userId: string; completed?: boolean; completedAt?: Date | null };
+// Child rows that deactivation must keep. Extra columns (e.g. quizAttempt.answers,
+// assignment.feedback) may be added; child findMany returns rows as they are
+// (select / include are ignored), so a route must pick the fields it returns.
+export type ChildRow = {
+  id: string;
+  userId: string;
+  lessonId?: string;
+  completed?: boolean;
+  completedAt?: Date | null;
+  [column: string]: unknown;
+};
+
+// Course structure for course.findMany (#32). Not filled by seed(): tests that need
+// courses push them (default: no course).
+export type FakeCourse = {
+  id: string;
+  name: string;
+  order: number;
+  color: string;
+  description: string | null;
+  sections: { id: string; title: string; lessons: { id: string; title: string }[] }[];
+};
 
 type Where = Record<string, unknown>;
 
@@ -70,10 +90,65 @@ function project(row: UserRow, select: Record<string, unknown> | undefined, db: 
       out.progress = db.progress
         .filter((p) => p.userId === row.id && matches(p as Record<string, unknown>, spec.where))
         .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0))
-        .map((p) => ({ completedAt: p.completedAt ?? null }));
+        .map((p) => pick({ completedAt: p.completedAt ?? null, lessonId: p.lessonId ?? null }, spec.select ?? { completedAt: true }));
       continue;
     }
     out[k] = (row as Record<string, unknown>)[k];
+  }
+  return out;
+}
+
+function pick(row: Record<string, unknown>, select: Record<string, unknown>) {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(select)) if (v) out[k] = row[k];
+  return out;
+}
+
+type SelectSpec = { select?: Record<string, unknown>; where?: Where };
+
+/**
+ * course.findMany with a select: projects course -> sections -> lessons -> progress
+ * (progress rows from db.progress, filtered by lessonId and the nested where).
+ * Without a select the course rows are returned as they are (sections and lessons
+ * included, no progress).
+ */
+function projectCourse(course: FakeCourse, select: Record<string, unknown> | undefined, db: FakeDb) {
+  if (!select) return structuredClone(course);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(select)) {
+    if (!v) continue;
+    if (k !== "sections") {
+      out[k] = (course as unknown as Record<string, unknown>)[k];
+      continue;
+    }
+    const sectionSel = (v as SelectSpec).select ?? {};
+    out.sections = course.sections.map((section) => {
+      const s: Record<string, unknown> = {};
+      for (const [sk, sv] of Object.entries(sectionSel)) {
+        if (!sv) continue;
+        if (sk !== "lessons") {
+          s[sk] = (section as unknown as Record<string, unknown>)[sk];
+          continue;
+        }
+        const lessonSel = (sv as SelectSpec).select ?? {};
+        s.lessons = section.lessons.map((lesson) => {
+          const l: Record<string, unknown> = {};
+          for (const [lk, lv] of Object.entries(lessonSel)) {
+            if (!lv) continue;
+            if (lk !== "progress") {
+              l[lk] = (lesson as unknown as Record<string, unknown>)[lk];
+              continue;
+            }
+            const spec = lv as SelectSpec;
+            l.progress = db.progress
+              .filter((p) => p.lessonId === lesson.id && matches(p as Record<string, unknown>, spec.where))
+              .map((p) => (spec.select ? pick(p as Record<string, unknown>, spec.select) : { ...p }));
+          }
+          return l;
+        });
+      }
+      return s;
+    });
   }
   return out;
 }
@@ -88,6 +163,7 @@ export type FakeDb = {
   comments: ChildRow[];
   assignments: ChildRow[];
   notifications: ChildRow[];
+  courses: FakeCourse[];
   calls: Call[];
   /** Error thrown by the next user.create (e.g. a P2002 from a concurrent invite). */
   createError: unknown;
@@ -116,6 +192,7 @@ export function createFakeDb(): FakeDb {
     comments: [],
     assignments: [],
     notifications: [],
+    courses: [],
     calls: [],
     createError: undefined,
     beforeTransaction: undefined,
@@ -240,9 +317,9 @@ export function createFakeDb(): FakeDb {
     assignment: child("assignment", () => db.assignments),
     notification: child("notification", () => db.notifications),
     course: {
-      async findMany(args: unknown) {
+      async findMany(args: { select?: Record<string, unknown>; orderBy?: unknown } | undefined) {
         rec("course.findMany", args);
-        return [];
+        return [...db.courses].sort((a, b) => a.order - b.order).map((c) => projectCourse(c, args?.select, db));
       },
     },
     lesson: {
@@ -312,9 +389,30 @@ export function seed(db: FakeDb) {
       completed: true,
       completedAt: new Date("2026-09-10T00:00:00.000Z"),
     });
-    db.quizAttempts.push({ id: `q_${userId}`, userId });
+    // Columns that the detail API must not return (answers, quizId, feedback, courseId, userId)
+    // are included on purpose.
+    db.quizAttempts.push({
+      id: `q_${userId}`,
+      userId,
+      quizId: "quiz_dummy",
+      score: 80,
+      passed: true,
+      answers: [0, 1, 2],
+      createdAt: new Date("2026-09-11T00:00:00.000Z"),
+      quiz: { title: "ダミー小テスト", type: "MINI" },
+    });
     db.comments.push({ id: `c_${userId}`, userId });
-    db.assignments.push({ id: `a_${userId}`, userId });
+    db.assignments.push({
+      id: `a_${userId}`,
+      userId,
+      courseId: "course_dummy",
+      title: "ダミー課題",
+      status: "WORKING",
+      deadline: null,
+      feedback: "ダミーの講師コメント",
+      createdAt: new Date("2026-09-12T00:00:00.000Z"),
+      course: { name: "ダミーコース" },
+    });
     db.notifications.push({ id: `n_${userId}`, userId });
   }
 }

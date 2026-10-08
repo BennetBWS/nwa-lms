@@ -1,5 +1,6 @@
 import { afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { ADMIN_STUDENT_DETAIL_KEYS } from "../../src/lib/admin-student-detail";
 import {
   INSTRUCTOR_SESSION,
   STUDENT_SESSION,
@@ -52,7 +53,7 @@ before(async () => {
 
 beforeEach(() => {
   // Reset the shared fake in place (the routes hold a reference to db.client).
-  for (const k of ["users", "resets", "progress", "quizAttempts", "comments", "assignments", "notifications", "calls"] as const) {
+  for (const k of ["users", "resets", "progress", "quizAttempts", "comments", "assignments", "notifications", "courses", "calls"] as const) {
     db[k].length = 0;
   }
   db.createError = undefined;
@@ -215,6 +216,7 @@ describe("GET /api/admin/students (list)", () => {
     "avatar",
     "completedLessons",
     "createdAt",
+    "currentCourse",
     "deactivatedAt",
     "email",
     "id",
@@ -238,6 +240,8 @@ describe("GET /api/admin/students (list)", () => {
     assert.equal(s.totalLessons, 10);
     assert.equal(s.completedLessons, 1);
     assert.equal(s.lastActive, "2026-09-10T00:00:00.000Z");
+    // No course in the fake DB: null (shown as "—" because there is no lesson to finish).
+    assert.equal(s.currentCourse, null);
     assert.ok(!("password" in s) && !("sessionVersion" in s) && !("role" in s));
   });
 
@@ -290,10 +294,10 @@ describe("GET /api/admin/students/[id] (detail)", () => {
     assert.equal(body.deactivatedAt, "2026-09-01T00:00:00.000Z");
     assert.deepEqual(body.quizAttempts.map((q: { id: string }) => q.id), ["q_stu_off"]);
     assert.deepEqual(body.assignments.map((a: { id: string }) => a.id), ["a_stu_off"]);
-    for (const k of ["id", "email", "name", "avatar", "createdAt", "courseProgress", "quizAttempts", "assignments"]) {
+    for (const k of ["id", "email", "name", "createdAt", "courseProgress", "quizAttempts", "assignments"]) {
       assert.ok(k in body, `${k} is kept`);
     }
-    assert.ok(!("password" in body) && !("sessionVersion" in body));
+    assert.ok(!("password" in body) && !("sessionVersion" in body), "password / sessionVersion are not returned");
   });
 
   it("active student: status active, deactivatedAt null", async () => {
@@ -368,5 +372,180 @@ describe("POST /api/admin/students/invite", () => {
     db.createError = Object.assign(new Error("connection lost"), { code: "P1001" });
     const res = await invite(inviteReq({ email: "err-7@example.com", name: "X" }));
     assert.equal(res.status, 500);
+  });
+});
+
+// ---- #32: currentCourse in the list, whitelisted detail ----
+
+/** Two courses (STEP1: l1, l2 / STEP2: l3) plus an empty one between them; dummies only. */
+function seedCourses() {
+  db.courses.push(
+    {
+      id: "c2",
+      name: "STEP2 ダミー",
+      order: 3,
+      color: "#EF4444",
+      description: "説明（返さない）",
+      sections: [{ id: "s2", title: "セクション", lessons: [{ id: "l3", title: "L3" }] }],
+    },
+    {
+      id: "c1",
+      name: "STEP1 ダミー",
+      order: 1,
+      color: "#6366F1",
+      description: "説明（返さない）",
+      sections: [
+        { id: "s1a", title: "セクションA", lessons: [{ id: "l1", title: "L1" }] },
+        { id: "s1b", title: "セクションB", lessons: [{ id: "l2", title: "L2" }] },
+      ],
+    },
+    { id: "c_empty", name: "空のコース", order: 2, color: "#000000", description: null, sections: [] }
+  );
+  // Replace the seeded progress (no lessonId) with progress on real lessons.
+  db.progress.length = 0;
+  db.progress.push(
+    // stu_active: finished STEP1 -> current course is STEP2 (the empty course is skipped)
+    { id: "pa1", userId: "stu_active", lessonId: "l1", completed: true, completedAt: new Date("2026-09-01T00:00:00.000Z") },
+    { id: "pa2", userId: "stu_active", lessonId: "l2", completed: true, completedAt: new Date("2026-09-04T00:00:00.000Z") },
+    // stu_off: started STEP1 only; an incomplete row does not count
+    { id: "po1", userId: "stu_off", lessonId: "l1", completed: true, completedAt: new Date("2026-08-01T00:00:00.000Z") },
+    { id: "po2", userId: "stu_off", lessonId: "l2", completed: false, completedAt: null }
+  );
+}
+
+describe("GET /api/admin/students (list): currentCourse (#32)", () => {
+  it("first course (by order) not finished; { id, name } only", async () => {
+    seedCourses();
+    const body = await (await list(get("?status=all"))).json();
+    const byId = Object.fromEntries(body.map((s: { id: string; currentCourse: unknown }) => [s.id, s.currentCourse]));
+    assert.deepEqual(byId, {
+      stu_active: { id: "c2", name: "STEP2 ダミー" },
+      stu_off: { id: "c1", name: "STEP1 ダミー" },
+    });
+  });
+
+  it("all courses finished: null", async () => {
+    seedCourses();
+    db.progress.push({ id: "pa3", userId: "stu_active", lessonId: "l3", completed: true, completedAt: new Date("2026-09-08T00:00:00.000Z") });
+    const body = await (await list(get())).json();
+    assert.equal(body[0].id, "stu_active");
+    assert.equal(body[0].currentCourse, null);
+  });
+
+  it("reads courses once, in order, with lesson ids only (no user data)", async () => {
+    seedCourses();
+    await list(get("?status=all"));
+    const calls = db.calls.filter((c) => c.method === "course.findMany");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args[0], {
+      select: { id: true, name: true, sections: { select: { lessons: { select: { id: true } } } } },
+      orderBy: { order: "asc" },
+    });
+    const users = db.calls.find((c) => c.method === "user.findMany");
+    assert.ok(users, "user.findMany was not called");
+    const progressSelect = (users.args[0] as { select: { progress: unknown } }).select.progress;
+    assert.deepEqual(progressSelect, {
+      where: { completed: true },
+      select: { completedAt: true, lessonId: true },
+      orderBy: { completedAt: "desc" },
+    });
+  });
+
+  it("existing fields are unchanged by the course data", async () => {
+    seedCourses();
+    const body = await (await list(get())).json();
+    assert.equal(body[0].completedLessons, 2);
+    assert.equal(body[0].lastActive, "2026-09-04T00:00:00.000Z");
+  });
+});
+
+describe("GET /api/admin/students/[id] (detail): whitelist (#32)", () => {
+  /** every key in a JSON value */
+  function allKeys(v: unknown, out = new Set<string>()): Set<string> {
+    if (Array.isArray(v)) for (const x of v) allKeys(x, out);
+    else if (v && typeof v === "object") {
+      for (const [k, x] of Object.entries(v)) {
+        out.add(k);
+        allKeys(x, out);
+      }
+    }
+    return out;
+  }
+
+  it("top-level keys match the whitelist exactly", async () => {
+    seedCourses();
+    const body = await (await detail(get(), params("stu_active"))).json();
+    assert.deepEqual(Object.keys(body).sort(), [...ADMIN_STUDENT_DETAIL_KEYS]);
+  });
+
+  it("no answers / userId / quizId / feedback / avatar / password / sessionVersion anywhere (the fake returns them)", async () => {
+    seedCourses();
+    const res = await detail(get(), params("stu_active"));
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const keys = allKeys(JSON.parse(text));
+    for (const k of ["answers", "userId", "quizId", "feedback", "avatar", "password", "sessionVersion", "role", "description", "color"]) {
+      assert.ok(!keys.has(k), `${k} is in the detail response`);
+    }
+    for (const s of ["ダミーの講師コメント", "$2a$04$", "quiz_dummy", "説明（返さない）"]) {
+      assert.ok(!text.includes(s), `${s} is in the detail response`);
+    }
+  });
+
+  it("quiz attempts and assignments: allowed fields only", async () => {
+    const body = await (await detail(get(), params("stu_active"))).json();
+    assert.deepEqual(body.quizAttempts, [
+      { id: "q_stu_active", quizTitle: "ダミー小テスト", quizType: "MINI", score: 80, passed: true, createdAt: "2026-09-11T00:00:00.000Z" },
+    ]);
+    assert.deepEqual(body.assignments, [
+      { id: "a_stu_active", title: "ダミー課題", courseName: "ダミーコース", status: "WORKING", deadline: null, createdAt: "2026-09-12T00:00:00.000Z" },
+    ]);
+  });
+
+  it("courseProgress per course (in order) with lastCompletedAt, and currentCourse", async () => {
+    seedCourses();
+    const body = await (await detail(get(), params("stu_off"))).json();
+    assert.deepEqual(body.courseProgress, [
+      { courseId: "c1", courseName: "STEP1 ダミー", totalLessons: 2, completedLessons: 1, lastCompletedAt: "2026-08-01T00:00:00.000Z" },
+      { courseId: "c_empty", courseName: "空のコース", totalLessons: 0, completedLessons: 0, lastCompletedAt: null },
+      { courseId: "c2", courseName: "STEP2 ダミー", totalLessons: 1, completedLessons: 0, lastCompletedAt: null },
+    ]);
+    assert.deepEqual(body.currentCourse, { id: "c1", name: "STEP1 ダミー" });
+    const active = await (await detail(get(), params("stu_active"))).json();
+    assert.deepEqual(active.currentCourse, { id: "c2", name: "STEP2 ダミー" });
+  });
+
+  it("queries select only allowed columns; progress is scoped to this student", async () => {
+    await detail(get(), params("stu_active"));
+    const of = (m: string) => db.calls.find((c) => c.method === m)?.args[0] as Record<string, unknown> | undefined;
+    const userArgs = of("user.findFirst");
+    assert.ok(userArgs, "user.findFirst was not called");
+    assert.deepEqual(userArgs.select, { id: true, email: true, name: true, createdAt: true, deactivatedAt: true });
+    const quizArgs = of("quizAttempt.findMany");
+    assert.ok(quizArgs, "quizAttempt.findMany was not called");
+    assert.ok(!("include" in quizArgs), "quizAttempt uses include");
+    assert.ok(!("answers" in (quizArgs.select as object)), "quizAttempt selects answers");
+    const assignArgs = of("assignment.findMany");
+    assert.ok(assignArgs, "assignment.findMany was not called");
+    assert.ok(!("include" in assignArgs), "assignment uses include");
+    assert.ok(!("feedback" in (assignArgs.select as object)), "assignment selects feedback");
+    const courseArgs = of("course.findMany");
+    assert.ok(courseArgs, "course.findMany was not called");
+    assert.match(JSON.stringify(courseArgs), /"where":\{"userId":"stu_active","completed":true\}/);
+  });
+
+  it("DB error: 500 with a generic body", async () => {
+    const quizModel = db.client.quizAttempt as { findMany: unknown };
+    const original = quizModel.findMany;
+    quizModel.findMany = async () => {
+      throw new Error("boom active-7@example.com");
+    };
+    try {
+      const res = await detail(get(), params("stu_active"));
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+    } finally {
+      quizModel.findMany = original;
+    }
   });
 });
