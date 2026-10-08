@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test scripts/lib/*.test.ts src/lib/*.test.ts",
     "db:seed": "npx tsx prisma/seed.ts",
-    "db:migrate": "npx prisma migrate dev",
+    "db:where": "tsx scripts/db-local.ts where",
+    "db:local:deploy": "tsx scripts/db-local.ts deploy",
+    "db:local:reset": "tsx scripts/db-local.ts reset",
     "db:generate": "npx prisma generate",
     "postinstall": "npx prisma generate"
   },
