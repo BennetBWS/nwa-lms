@@ -224,6 +224,14 @@ export function threadsEmptyMessage(tab: QuestionTab): string {
   return "まだ質問はありません";
 }
 
+/**
+ * 一覧の i 行目（0 始まり）の表示の遅れ（ミリ秒。FadeIn の delay）。
+ * 1 ページ目の行は 50ms ずつ、最大 500ms。「もっと見る」で足した行（THREADS_PAGE_SIZE 行目以降）は 0（押した後に待たせない）
+ */
+export function threadRowDelay(i: number): number {
+  return i < THREADS_PAGE_SIZE ? Math.min(50 * i, 500) : 0;
+}
+
 /** 状態のバッジの文言 */
 export function answeredLabel(answered: boolean): string {
   return answered ? "回答済み" : "未回答";

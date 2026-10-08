@@ -45,7 +45,7 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
-import { QUESTION_TABS, readThreadPage, threadListUrl, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
+import { QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -2310,7 +2310,7 @@ const Questions = () => {
           const regionId = `question-thread-${x.id}`;
           const place = [x.courseName, x.lessonTitle].filter(Boolean).join(" / ");
           return (
-            <FadeIn key={x.id} delay={Math.min(50 * i, 500)}>
+            <FadeIn key={x.id} delay={threadRowDelay(i)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
                 <button type="button" aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
                   <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>

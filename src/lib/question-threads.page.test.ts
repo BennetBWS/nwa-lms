@@ -8,7 +8,9 @@ import { classifyAuthFailure } from "./client-session";
 import {
   QUESTION_TABS,
   readThreadPage,
+  THREADS_PAGE_SIZE,
   threadListUrl,
+  threadRowDelay,
   threadsEmptyMessage,
   toQuestionThreadItems,
 } from "./question-threads";
@@ -60,7 +62,7 @@ describe("Questions：配線・読み取りだけ", () => {
     const m = src.match(/import \{([^}]*)\} from "@\/lib\/question-threads";/);
     assert.ok(m, "import がない");
     const names = m[1].split(",").map((s) => s.trim());
-    for (const n of ["QUESTION_TABS", "readThreadPage", "threadListUrl", "threadsEmptyMessage", "toQuestionThreadItems"]) {
+    for (const n of ["QUESTION_TABS", "readThreadPage", "threadListUrl", "threadRowDelay", "threadsEmptyMessage", "toQuestionThreadItems"]) {
       assert.ok(names.includes(n), n);
     }
   });
@@ -192,6 +194,7 @@ function mount() {
     QUESTION_TABS,
     readThreadPage,
     threadListUrl,
+    threadRowDelay,
     threadsEmptyMessage,
     toQuestionThreadItems,
     T,
@@ -817,6 +820,22 @@ describe("Questions 描画（追加）：もっと見る", () => {
       const m = await loaded({ ...PAGE1, nextCursor: nc });
       assert.equal(buttonLabels(m.render()).includes("もっと見る"), false, String(nc));
     }
+  });
+});
+
+describe("Questions 描画（追加）：表示の遅れ", () => {
+  it("1 ページ目の行は 50ms ずつ（最大 500ms）、「もっと見る」で足した行は遅らせない", async () => {
+    const many = (from: number, n: number) => Array.from({ length: n }, (_, i) => thread(`p${from + i}`));
+    const m = await loaded({ threads: many(0, THREADS_PAGE_SIZE), nextCursor: "1000.p19" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: many(THREADS_PAGE_SIZE, 3), nextCursor: null }));
+    await settle();
+    const fades = findAll(m.render(), (e) => e.type === COMPONENTS.FadeIn && typeof e.props.delay === "number");
+    assert.equal(fades.length, THREADS_PAGE_SIZE + 3);
+    const delays = fades.map((f) => f.props.delay);
+    assert.deepEqual(delays.slice(0, 3), [0, 50, 100]);
+    assert.equal(Math.max(...(delays as number[])), 500);
+    assert.deepEqual(delays.slice(THREADS_PAGE_SIZE), [0, 0, 0]);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   readThreadPage,
   THREAD_SUMMARY_MAX_CHARS,
   threadListUrl,
+  threadRowDelay,
   threadSummary,
   threadsEmptyMessage,
   toQuestionThreadItems,
@@ -321,6 +322,16 @@ describe("readThreadPage", () => {
 
   it("壊れた応答は null", () => {
     for (const v of [null, undefined, [], "x", {}, { threads: "x" }, { threads: null }]) assert.equal(readThreadPage(v), null);
+  });
+});
+
+describe("threadRowDelay", () => {
+  it("1 ページ目は 50ms ずつ、最大 500ms", () => {
+    assert.deepEqual([0, 1, 5, 10, 11, 19].map(threadRowDelay), [0, 50, 250, 500, 500, 500]);
+  });
+
+  it("「もっと見る」で足した行（THREADS_PAGE_SIZE 行目以降）は 0", () => {
+    for (const i of [THREADS_PAGE_SIZE, THREADS_PAGE_SIZE + 1, THREADS_PAGE_SIZE * 2 + 5, 1000]) assert.equal(threadRowDelay(i), 0, String(i));
   });
 });
 
