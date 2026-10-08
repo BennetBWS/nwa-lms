@@ -45,6 +45,7 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
+import { QUESTION_TABS, readThreadPage, threadListUrl, threadsEmptyMessage, toQuestionThreadItems } from "@/lib/question-threads";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -2199,40 +2200,191 @@ const Notifications = () => {
 };
 
 const Questions = () => {
-  const t = [
-    { author: "佐藤", q: "レスポンシブでタブレット表示が崩れる", course: "AIコーディング（AG）", time: "3h", replies: 2, ok: false },
-    { author: "鈴木", q: "Flexboxで縦中央揃えができない", course: "JS", time: "1d", replies: 4, ok: true },
-    { author: "田中", q: "模擬案件挑戦の進め方について", course: "模擬案件挑戦", time: "2d", replies: 1, ok: false },
-  ];
+  const [tab, setTab] = useState("all");
+  const [threadRows, setThreadRows] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const [expandedIds, setExpandedIds] = useState([]);
+
+  // One request at a time (reload button, double clicks). A newer request (switching tabs)
+  // makes the older one stale: its response is dropped and it no longer owns the in-flight flag.
+  const threadsInFlight = useRef(false);
+  const threadsSeq = useRef(0);
+  // Once the session has expired, authFetch signs out and goes to /login: keep the loading
+  // state and do not fetch again (same approach as Notifications).
+  const threadsExpired = useRef(false);
+
+  const requestThreads = (url, onPage, onFail, onDone) => {
+    const seq = ++threadsSeq.current;
+    threadsInFlight.current = true;
+    let sessionExpired = false;
+    authFetch(url).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; threadsExpired.current = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired || seq !== threadsSeq.current) return;
+      const page = readThreadPage(data);
+      if (page) onPage(page);
+      else onFail();
+    }).catch(() => {
+      if (!sessionExpired && seq === threadsSeq.current) onFail();
+    }).finally(() => {
+      if (sessionExpired || seq !== threadsSeq.current) return;
+      threadsInFlight.current = false;
+      onDone();
+    });
+  };
+
+  // First page of a tab. Switching tabs starts over from the first page and drops the previous tab's response.
+  const loadThreads = (forTab) => {
+    if (threadsExpired.current) return;
+    if (threadsInFlight.current && forTab === tab) return;
+    setTab(forTab);
+    setThreadRows([]);
+    setNextCursor(null);
+    setExpandedIds([]);
+    setLoading(true);
+    setLoadFailed(false);
+    setLoadingMore(false);
+    setMoreFailed(false);
+    requestThreads(
+      threadListUrl(forTab, null),
+      page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); },
+      () => setLoadFailed(true),
+      () => setLoading(false)
+    );
+  };
+
+  const loadMore = () => {
+    if (threadsExpired.current || threadsInFlight.current || nextCursor === null) return;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    requestThreads(
+      threadListUrl(tab, nextCursor),
+      page => { setThreadRows(prev => [...prev, ...page.threads]); setNextCursor(page.nextCursor); },
+      () => setMoreFailed(true),
+      () => setLoadingMore(false)
+    );
+  };
+
+  const toggleThread = (id) => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  useEffect(() => { loadThreads("all"); }, []);
+
+  const now = new Date();
+  const items = toQuestionThreadItems(threadRows, now);
+
+  let body;
+  if (loading) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+        <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+        <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  } else if (loadFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>質問を読み込めませんでした</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={() => loadThreads(tab)} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else if (items.length === 0) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{threadsEmptyMessage(tab)}</div>
+    );
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {items.map((x, i) => {
+          const open = expandedIds.includes(x.id);
+          const regionId = `question-thread-${x.id}`;
+          const place = [x.courseName, x.lessonTitle].filter(Boolean).join(" / ");
+          return (
+            <FadeIn key={x.id} delay={Math.min(50 * i, 500)}>
+              <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
+                <button type="button" aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
+                  <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
+                      <Avatar aria-hidden="true" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                        <AvatarFallback style={{ background: x.isInstructor ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.initial ?? <User size={14} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
+                      </Avatar>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{x.name}</span>
+                      {x.isInstructor && <Badge variant="outline" style={{ padding: "1px 8px", fontSize: 10, color: T.accent, borderColor: `${T.accent}40` }}>講師</Badge>}
+                      <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.answered ? `${T.success}12` : `${T.warning}12`, color: x.answered ? T.success : T.warning, border: "none" }}>{x.answeredLabel}</Badge>
+                    </span>
+                    <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
+                  </span>
+                  <span style={{ display: open ? "block" : "-webkit-box", WebkitLineClamp: open ? undefined : 3, WebkitBoxOrient: open ? undefined : "vertical", overflow: open ? "visible" : "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</span>
+                  <span style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                    {place && <span style={{ overflowWrap: "anywhere" }}><BookOpen size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> {place}</span>}
+                    <span><MessageSquare size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> 返信 {x.replyCount}件</span>
+                  </span>
+                </button>
+                {open && (
+                  <div id={regionId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
+                    {x.replies.length === 0 ? (
+                      <div style={{ fontSize: 12, color: T.textMuted, paddingTop: 14 }}>まだ返信はありません</div>
+                    ) : (
+                      x.replies.map(r => (
+                        <div key={r.id} style={{ display: "flex", gap: 12, marginTop: 14 }}>
+                          <Avatar aria-hidden="true" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                            <AvatarFallback style={{ background: r.isInstructor ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.initial ?? <User size={15} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
+                          </Avatar>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ ...glassStyle(8), borderRadius: 14, padding: "12px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{r.name}</span>
+                                {r.isInstructor && <Badge variant="outline" style={{ padding: "1px 8px", fontSize: 10, color: T.accent, borderColor: `${T.accent}40` }}>講師</Badge>}
+                              </div>
+                              <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{r.content}</div>
+                            </div>
+                            <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </FadeIn>
+          );
+        })}
+        {nextCursor !== null && (
+          <div style={{ marginTop: 4, textAlign: "center" }}>
+            {moreFailed && (
+              <div role="alert" style={{ fontSize: 12, color: T.textMuted, marginBottom: 10 }}>続きを読み込めませんでした。もう一度お試しください。</div>
+            )}
+            <Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore} style={{ borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+              {loadingMore ? "読み込み中..." : "もっと見る"}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <ScrollArea style={{ height: "100%" }}>
       <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 980 }}>
         <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Support</span>
-          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 28px", letterSpacing: "-0.04em" }}>質問スレッド</h1></FadeIn>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {t.map((x, i) => (
-            <FadeIn key={i} delay={70 * i}>
-              <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.ok ? T.success : T.warning}`, cursor: "pointer", transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)", padding: "20px 24px" }}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateX(6px)"; e.currentTarget.style.boxShadow = "0 12px 40px rgba(10,22,40,0.07)"; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(10,22,40,0.04), 0 8px 32px rgba(10,22,40,0.03)"; }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar style={{ width: 28, height: 28 }}><AvatarFallback style={{ background: `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.author.charAt(0)}</AvatarFallback></Avatar>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.author}</span>
-                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.ok ? `${T.success}12` : `${T.warning}12`, color: x.ok ? T.success : T.warning, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.ok ? "Resolved" : "Open"}</Badge>
-                  </div>
-                  <span style={{ fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: T.dark, marginBottom: 10, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.q}</div>
-                <div style={{ display: "flex", gap: 16, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-                  <span><BookOpen size={12} style={{ verticalAlign: "middle" }} /> {x.course}</span>
-                  <span><MessageSquare size={12} style={{ verticalAlign: "middle" }} /> {x.replies} replies</span>
-                </div>
-              </div>
-            </FadeIn>
+          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 20px", letterSpacing: "-0.04em" }}>質問スレッド</h1></FadeIn>
+        <div role="group" aria-label="質問の絞り込み" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+          {QUESTION_TABS.map(t => (
+            <button key={t.key} type="button" aria-pressed={tab === t.key} onClick={() => { if (t.key !== tab) loadThreads(t.key); }} style={{ padding: "6px 14px", borderRadius: 999, border: `1px solid ${tab === t.key ? T.accent : T.border}`, background: tab === t.key ? `${T.accent}12` : "transparent", color: tab === t.key ? T.accent : T.textSecondary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+              {t.label}
+            </button>
           ))}
         </div>
+        {body}
       </div>
     </ScrollArea>
   );
