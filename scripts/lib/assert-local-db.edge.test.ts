@@ -97,6 +97,35 @@ describe("assertLocalDatabase (edge cases)", () => {
       });
     }
 
+    // An unencoded "#", "/" or "?" in the password ends the authority early, so the URL
+    // parser would read "user:<password digits>" as host:port and the message would name
+    // the username as the host. Such URLs are refused as unparsable instead.
+    for (const sep of ["#", "/", "?"]) {
+      for (const host of [REMOTE_HOST, "localhost", "127.0.0.1"]) {
+        it(`unencoded "${sep}" in the password (host ${host}) is refused as unparsable`, () => {
+          const url = `postgresql://${USER}:1234${sep}${SECRET}@${host}:5432/db`;
+          const msg = messageOf(() => assertLocalDatabase([url]));
+          assert.match(msg, /^Refusing to run: database URL #1 could not be parsed\.$/);
+          assertNoLeak(msg, url);
+          assert.ok(!msg.includes("1234"), `message must not contain the password digits: ${msg}`);
+          assert.ok(!msg.includes(host), `message must not contain the host: ${msg}`);
+        });
+      }
+    }
+
+    it("an unencoded \"#\" in the password of DIRECT_URL is refused even when DATABASE_URL is local", () => {
+      const msg = messageOf(() =>
+        assertLocalDatabase([LOCAL_URL, `postgresql://${USER}:1234#${SECRET}@localhost:5432/db`])
+      );
+      assert.match(msg, /#2 could not be parsed/);
+      assert.ok(!msg.includes("1234"), msg);
+    });
+
+    it("percent-encoded \"#\" \"/\" \"?\" in the password are still accepted for a local host", () => {
+      const pw = encodeURIComponent(`1234#/?${SECRET}`);
+      assert.doesNotThrow(() => assertLocalDatabase([`postgresql://${USER}:${pw}@localhost:5432/db`]));
+    });
+
     it("NODE_ENV=production message does not include the URL", () => {
       setEnv("NODE_ENV", "production");
       const url = `postgresql://${USER}:${SECRET}@localhost:5432/db`;
@@ -186,10 +215,12 @@ describe("assertLocalDatabase (edge cases)", () => {
         () => assertLocalDatabase([`postgresql://u:p@localhost@${REMOTE_HOST}/db`]),
         /db\.example\.invalid/
       );
-      assert.throws(
-        () => assertLocalDatabase([`postgresql://${REMOTE_HOST}#@localhost/db`]),
-        /db\.example\.invalid/
-      );
+      // "#" before the last "@" is treated as an unencoded "#" in the userinfo:
+      // refused as unparsable, without showing any part of the URL.
+      const msg = messageOf(() => assertLocalDatabase([`postgresql://${REMOTE_HOST}#@localhost/db`]));
+      assert.match(msg, /#1 could not be parsed/);
+      assert.ok(!msg.includes(REMOTE_HOST), msg);
+      assert.ok(!msg.includes("localhost"), msg);
     });
   });
 

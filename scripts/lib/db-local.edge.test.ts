@@ -125,23 +125,30 @@ describe("describeDatabaseUrl: URL forms", () => {
       assertNoLeak(out, ["localhost", "db.example.invalid", "/var/run"]);
     });
   }
+});
 
-  // KNOWN ISSUE (reported, production code not changed by the tester):
-  // an UNENCODED "#", "/" or "?" in the password ends the authority early, so WHATWG URL
-  // parses "user:<digits>" as host:port. db:where then prints the username (and the
-  // leading digits of the password) as "host:port", and the guard message prints the
-  // username as the "database host". CLAUDE.md requires URL-encoding, so this only
-  // happens with a misconfigured .env, which is exactly when db:where is used.
+describe("unencoded \"#\" \"/\" \"?\" in the password", () => {
+  withLocalProcessEnv();
+
+  // An UNENCODED "#", "/" or "?" in the password ends the authority early, so WHATWG URL
+  // would parse "user:<digits>" as host:port. Such URLs are reported as unparsable and
+  // nothing from them (not even the real host) is printed; the guard refuses them.
   for (const sep of ["#", "/", "?"]) {
-    it(
-      `does not print the username when the password contains an unencoded "${sep}"`,
-      { todo: "known issue: username / password digits shown as host:port (reported for #8)" },
-      () => {
-        const raw = `postgresql://${USER}:1234${sep}${SECRET}@db.example.invalid:5432/${DB_NAME}`;
-        const out = formatDatabaseTargets({ DATABASE_URL: raw, DIRECT_URL: raw }).join("\n");
-        assertNoLeak(out, ["1234"]);
-      }
-    );
+    it(`does not print the username when the password contains an unencoded "${sep}"`, () => {
+      const raw = `postgresql://${USER}:1234${sep}${SECRET}@db.example.invalid:5432/${DB_NAME}`;
+      assert.equal(describeDatabaseUrl(raw), "解析できない URL");
+      const lines = formatDatabaseTargets({ DATABASE_URL: raw, DIRECT_URL: raw });
+      assert.match(lines[2], /ガード: 拒否.*#1 could not be parsed/);
+      assertNoLeak(lines.join("\n"), ["1234", "db.example.invalid"]);
+    });
+
+    it(`treats a local-looking URL with an unencoded "${sep}" in the password as unparsable`, () => {
+      const raw = `postgresql://${USER}:1234${sep}${SECRET}@127.0.0.1:54322/${DB_NAME}`;
+      assert.equal(describeDatabaseUrl(raw), "解析できない URL");
+      const lines = formatDatabaseTargets({ DATABASE_URL: LOCAL_URL, DIRECT_URL: raw });
+      assert.match(lines[2], /ガード: 拒否.*#2 could not be parsed/);
+      assertNoLeak(lines.join("\n"), ["1234"]);
+    });
   }
 });
 

@@ -11,7 +11,7 @@
  * Nothing here may print a username, password, database name or query string.
  */
 
-import { assertLocalDatabase } from "./assert-local-db";
+import { assertLocalDatabase, parseDatabaseUrl } from "./assert-local-db";
 
 export type DbEnv = Record<string, string | undefined>;
 
@@ -28,12 +28,10 @@ export function describeDatabaseUrl(raw: string | undefined): string {
   if (raw === undefined) return "未設定";
   if (raw === "") return "空（解析できない URL）";
 
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return "解析できない URL";
-  }
+  // Also null when an unencoded "#", "/" or "?" in the password would make the
+  // username appear as the host (see parseDatabaseUrl).
+  const parsed = parseDatabaseUrl(raw);
+  if (parsed === null) return "解析できない URL";
 
   const host = parsed.hostname === "" ? "(ホストなし)" : parsed.hostname.toLowerCase();
   const port = parsed.port === "" ? "(ポート指定なし)" : parsed.port;
