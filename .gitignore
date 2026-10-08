@@ -28,9 +28,10 @@ yarn-error.log*
 # local-only data (real user data; never commit)
 /supabase/private/
 
-# local env files
-.env
-.env*.local
+# env files: ignore every .env* (.env, .env.local, .env.development, .env.production, ...)
+# and allow only the value-free sample .env.example.
+.env*
+!.env.example
 
 # vercel
 .vercel

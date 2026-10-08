@@ -665,6 +665,15 @@ describe("supabase/config.toml", () => {
     assert.doesNotMatch(raw, /\beyJ[A-Za-z0-9_-]{10,}|\bsk_(live|test)_|\bsb_secret_|postgres(ql)?:\/\/[^\s"]*@/);
   });
 
+  it("the root .gitignore ignores every .env* except .env.example", () => {
+    const ignored = (file: string): boolean =>
+      spawnSync("git", ["check-ignore", "-q", "--no-index", file], { cwd: ROOT }).status === 0;
+    for (const file of [".env", ".env.local", ".env.development", ".env.production", ".env.development.local"]) {
+      assert.equal(ignored(file), true, `${file} must be ignored`);
+    }
+    assert.equal(ignored(".env.example"), false, ".env.example must not be ignored");
+  });
+
   it("supabase/.gitignore keeps local env files out of git", () => {
     const gi = readFileSync(path.join(ROOT, "supabase", ".gitignore"), "utf8");
     assert.match(gi, /^\.env\.local$/m);
