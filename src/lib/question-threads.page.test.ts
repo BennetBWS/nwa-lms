@@ -618,3 +618,189 @@ describe("Questions 描画：セッションの失効", () => {
     assert.equal(m.reqs.length, 2);
   });
 });
+
+// ───────────── 追加（tester、#32） ─────────────
+
+describe("Questions 描画（追加）：タブの素早い切り替え", () => {
+  it("すべて → 自分の質問 → 未回答：応答が逆順に届いても最後のタブだけを表示し、それまで読み込み中", async () => {
+    const m = mount();
+    m.render();
+    click(tab(m.render(), "自分の質問"));
+    click(tab(m.render(), "未回答"));
+    assert.deepEqual(m.reqs.map((r) => r.url), ["/api/comments", "/api/comments?mine=1", "/api/comments?status=unanswered"]);
+    m.reqs[1].release(res({ threads: [thread("mine1")], nextCursor: "1.a" }));
+    m.reqs[0].release(res({ threads: [thread("all1")], nextCursor: "1.b" }));
+    await settle();
+    let tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "最後のタブの応答が届くまで読み込み中のはず");
+    assert.equal(m.state("loading"), true);
+    m.reqs[2].release(res({ threads: [thread("un1")], nextCursor: null }));
+    await settle();
+    tree = m.render();
+    const t = text(tree);
+    assert.ok(t.includes("un1 の質問本文"), "未回答の応答がない");
+    assert.ok(!t.includes("mine1") && !t.includes("all1"), "古いタブの応答が混ざった");
+    assert.equal(tab(tree, "未回答").props["aria-pressed"], true);
+    assert.equal(buttonLabels(tree).includes("もっと見る"), false);
+  });
+
+  it("すべて → 自分の質問 → すべて：最初の「すべて」の応答は捨て、3 つ目の応答を出す", async () => {
+    const m = mount();
+    m.render();
+    click(tab(m.render(), "自分の質問"));
+    click(tab(m.render(), "すべて"));
+    assert.equal(m.reqs.length, 3);
+    assert.equal(m.reqs[2].url, "/api/comments");
+    m.reqs[0].release(res({ threads: [thread("old_all")], nextCursor: null }));
+    await settle();
+    assert.ok(text(m.render()).includes("Loading..."), "古い「すべて」の応答を表示した");
+    m.reqs[2].release(res({ threads: [thread("new_all")], nextCursor: null }));
+    m.reqs[1].release(res({ threads: [thread("mine1")], nextCursor: null }));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("new_all の質問本文"), "新しい応答がない");
+    assert.ok(!t.includes("old_all") && !t.includes("mine1"), "古い応答が混ざった");
+  });
+
+  it("古いタブの応答が 401 でも、新しいタブの応答は表示する。その後は読み込まない", async () => {
+    const m = mount();
+    m.render();
+    click(tab(m.render(), "自分の質問"));
+    m.reqs[0].release(res({}, { status: 401, ok: false }));
+    m.reqs[1].release(res({ threads: [thread("mine1")], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.ok(text(tree).includes("mine1 の質問本文"), "新しいタブの応答がない");
+    click(tab(tree, "未回答"));
+    assert.equal(m.reqs.length, 2);
+  });
+});
+
+describe("Questions 描画（追加）：もっと見る", () => {
+  it("「自分の質問」タブの続きは mine=1 とカーソルで読む（タブとカーソルの取り違えがない）", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "自分の質問"));
+    m.reqs[1].release(res({ threads: [thread("mine1")], nextCursor: "1700000000000.mine1" }));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    assert.equal(m.reqs[2].url, "/api/comments?mine=1&cursor=1700000000000.mine1");
+  });
+
+  it("「未回答」タブの続きは status=unanswered とカーソルで読み、次の nextCursor に進む", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "未回答"));
+    m.reqs[1].release(res({ threads: [thread("u1")], nextCursor: "5.u1" }));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    assert.equal(m.reqs[2].url, "/api/comments?status=unanswered&cursor=5.u1");
+    m.reqs[2].release(res({ threads: [thread("u2")], nextCursor: "3.u2" }));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    assert.equal(m.reqs[3].url, "/api/comments?status=unanswered&cursor=3.u2");
+  });
+
+  for (const [label, act] of [
+    ["壊れた応答（threads がない）", (r: Req) => r.release(res({ nextCursor: null }))],
+    ["通信の例外", (r: Req) => r.fail(new TypeError("network"))],
+    ["ログイン以外へのリダイレクト", (r: Req) => r.release(res(PAGE1, { redirected: true, url: `${ORIGIN}/elsewhere` }))],
+  ] as Array<[string, (r: Req) => void]>) {
+    it(`${label}は「続きを読み込めませんでした」。一覧と nextCursor は残る`, async () => {
+      const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+      click(button(m.render(), "もっと見る"));
+      act(m.reqs[1]);
+      await settle();
+      const tree = m.render();
+      const alerts = byRole(tree, "alert");
+      assert.equal(alerts.length, 1);
+      assert.ok(text(alerts[0]).includes("続きを読み込めませんでした"), "文言が違う");
+      assert.equal(threadButtons(tree).length, 2);
+      assert.equal(m.state("nextCursor"), "1000.t2");
+      assert.equal(button(tree, "もっと見る").props.disabled, false);
+    });
+  }
+
+  it("失敗の後の再試行が成功したら、alert を消して続きを足す", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({}, { status: 500, ok: false }));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    assert.equal(m.reqs[2].url, "/api/comments?cursor=1000.t2");
+    m.reqs[2].release(res({ threads: [thread("t3")], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.equal(threadButtons(tree).length, 3);
+  });
+
+  it("1 ページ目の失敗のときは「もっと見る」を出さない", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res({}, { status: 500, ok: false }));
+    await settle();
+    assert.equal(buttonLabels(m.render()).includes("もっと見る"), false);
+  });
+
+  it("nextCursor が空文字・数値なら「もっと見る」を出さない", async () => {
+    for (const nc of ["", 123]) {
+      const m = await loaded({ ...PAGE1, nextCursor: nc });
+      assert.equal(buttonLabels(m.render()).includes("もっと見る"), false, String(nc));
+    }
+  });
+});
+
+describe("Questions 描画（追加）：展開の aria", () => {
+  it("2 つを同時に開ける。aria-controls は開いたカードごとに別の id で、その id の領域が 1 つだけある", async () => {
+    const m = await loaded();
+    click(threadButtons(m.render())[0]);
+    click(threadButtons(m.render())[1]);
+    const tree = m.render();
+    const cards = threadButtons(tree);
+    assert.deepEqual(cards.map((c) => c.props["aria-expanded"]), [true, true]);
+    const ctrl = cards.map((c) => c.props["aria-controls"]);
+    assert.notEqual(ctrl[0], ctrl[1]);
+    for (const id of ctrl) {
+      assert.equal(typeof id, "string");
+      assert.equal(findAll(tree, (e) => e.props.id === id).length, 1, String(id));
+    }
+    // 各領域は、そのカードの返信を持つ
+    assert.ok(text(findAll(tree, (e) => e.props.id === ctrl[0])[0]).includes("講師の回答"), "1 つ目の領域に返信がない");
+    assert.ok(text(findAll(tree, (e) => e.props.id === ctrl[1])[0]).includes("まだ返信はありません"), "2 つ目の領域の文言がない");
+  });
+
+  it("カードは type=button のボタン要素（キーボードで開ける）。タブは aria-pressed、グループに aria-label", async () => {
+    const m = await loaded();
+    const tree = m.render();
+    for (const c of threadButtons(tree)) assert.equal(c.props.type, "button");
+    for (const t of tabButtons(tree)) assert.equal(t.props.type, "button");
+    const group = findAll(tree, (e) => e.props.role === "group");
+    assert.equal(group.length, 1);
+    assert.equal(group[0].props["aria-label"], "質問の絞り込み");
+  });
+
+  it("「もっと見る」で足した行を開いても、既に開いた行は開いたまま", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    click(threadButtons(m.render())[0]);
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [thread("t3")], nextCursor: null }));
+    await settle();
+    click(threadButtons(m.render())[2]);
+    assert.deepEqual(threadButtons(m.render()).map((c) => c.props["aria-expanded"]), [true, false, true]);
+  });
+});
+
+describe("Questions（追加）：ソースの検査（変数の取り違え）", () => {
+  it("loadThreads は引数のタブ（forTab）で URL を作り、loadMore は現在のタブ（tab）と nextCursor で作る", () => {
+    assert.match(questionsSrc, /threadListUrl\(forTab, null\)/);
+    assert.match(questionsSrc, /threadListUrl\(tab, nextCursor\)/);
+  });
+
+  it("1 ページ目は置き換え、続きは前の行に足す", () => {
+    assert.match(questionsSrc, /setThreadRows\(page\.threads\)/);
+    assert.match(questionsSrc, /setThreadRows\(prev => \[\.\.\.prev, \.\.\.page\.threads\]\)/);
+  });
+
+  it("古い応答は seq で捨て、失効のときは in-flight を外さない", () => {
+    assert.match(questionsSrc, /if \(sessionExpired \|\| seq !== threadsSeq\.current\) return;\n\s*threadsInFlight\.current = false;/);
+  });
+});
