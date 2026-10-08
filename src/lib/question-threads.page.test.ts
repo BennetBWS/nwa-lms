@@ -922,6 +922,38 @@ describe("Questions 描画（追加）：展開の aria", () => {
     assert.ok(text(findAll(tree, (e) => e.props.id === ctrl[1])[0]).includes("まだ返信はありません"), "2 つ目の領域の文言がない");
   });
 
+  it("開いた領域は role=region で、aria-labelledby がそのカードのボタンの id を指す。ボタンの id は一意", async () => {
+    const m = await loaded({ ...PAGE1, nextCursor: "1000.t2" });
+    click(button(m.render(), "もっと見る"));
+    m.reqs[1].release(res({ threads: [thread("t3")], nextCursor: null }));
+    await settle();
+    for (const c of threadButtons(m.render())) click(c);
+    const tree = m.render();
+    const cards = threadButtons(tree);
+    const ids = cards.map((c) => c.props.id);
+    for (const id of ids) {
+      assert.equal(typeof id, "string", "ボタンに id がない");
+      assert.equal(findAll(tree, (e) => e.props.id === id).length, 1, `id「${String(id)}」が一意でない`);
+    }
+    assert.equal(new Set(ids).size, cards.length, "ボタンの id が重複している");
+    const regions = byRole(tree, "region");
+    assert.equal(regions.length, cards.length, "開いた領域の数が違う");
+    cards.forEach((c, i) => {
+      const region = findAll(tree, (e) => e.props.id === c.props["aria-controls"])[0];
+      assert.ok(region, `${i} 番目の領域がない`);
+      assert.equal(region.props.role, "region");
+      assert.equal(region.props["aria-labelledby"], c.props.id);
+      assert.notEqual(region.props.id, c.props.id);
+    });
+  });
+
+  it("閉じているカードには role=region の領域がない", async () => {
+    const m = await loaded();
+    const tree = m.render();
+    assert.equal(byRole(tree, "region").length, 0);
+    for (const c of threadButtons(tree)) assert.equal(typeof c.props.id, "string", "閉じたボタンにも id がある");
+  });
+
   it("カードは type=button のボタン要素（キーボードで開ける）。タブは aria-pressed、グループに aria-label", async () => {
     const m = await loaded();
     const tree = m.render();

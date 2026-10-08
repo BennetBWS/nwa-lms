@@ -2315,11 +2315,12 @@ const Questions = () => {
         {items.map((x, i) => {
           const open = expandedIds.includes(x.id);
           const regionId = `question-thread-${x.id}`;
+          const buttonId = `question-thread-button-${x.id}`;
           const place = [x.courseName, x.lessonTitle].filter(Boolean).join(" / ");
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
-                <button type="button" aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
+                <button type="button" id={buttonId} aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
                   <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
                     <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
                       <Avatar aria-hidden="true" style={{ width: 28, height: 28, flexShrink: 0 }}>
@@ -2340,7 +2341,7 @@ const Questions = () => {
                   </span>
                 </button>
                 {open && (
-                  <div id={regionId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
+                  <div id={regionId} role="region" aria-labelledby={buttonId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
                     <div style={{ paddingTop: 14, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
                     {x.replies.length === 0 ? (
                       <div style={{ fontSize: 12, color: T.textMuted, paddingTop: 14 }}>まだ返信はありません</div>
