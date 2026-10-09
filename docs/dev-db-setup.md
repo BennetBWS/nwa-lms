@@ -47,7 +47,8 @@ Docker Desktop が起動していなければ起動する。
 
    ```sh
    ls -l ~/.nwa-lms-secrets/prod-db.env          # -rw------- であること
-   grep -c '^DATABASE_URL=\|^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env   # 2 であること
+   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env   # 1 であること
+   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env     # 1 であること
    ```
 
 ## 2. ローカル DB を起動する
@@ -173,6 +174,16 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 
 本番の接続情報は、サブシェルの中でだけ読み込む。サブシェルを抜ければ残らない。
 シェルの環境変数は `.env` より優先される（Prisma は `.env` で上書きしない）。
+裏を返すと、`prod-db.env` に**書かれていない変数は `.env`（ローカル DB）の値のまま**になる。
+
+0. 毎回、`prod-db.env` に `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを確かめる（中身は表示しない）
+
+   ```sh
+   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env   # 1 であること
+   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env     # 1 であること
+   ```
+
+   どちらかが 1 でなければ、ここで止める（以降の手順に進まない）。
 
 1. 未適用のマイグレーションと接続先を確かめる
 
@@ -183,6 +194,13 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
    出力の `Datasource "db": ... at "<ホスト>:<ポート>"` の行が**本番のホスト**になっていることを確かめる
    （`127.0.0.1:54322` なら読み込みに失敗している。deploy しない）。
 
+   注意：この `Datasource` の行は**片方の URL しか示さない**。手元の Prisma（6.19）の CLI のソースでは、
+   `directUrl` があればその値（`DIRECT_URL`）からホストを表示しており、`DATABASE_URL` 側は表示されない。
+   `migrate deploy` は `directUrl`（`DIRECT_URL`）で接続するとされているが、実際の接続は Prisma の
+   エンジン側で決まり、手元のソースだけでは確かめきれていない。Prisma のバージョンによって表示する側が
+   変わる可能性もある。そのため、**`Datasource` の行だけで適用先を判断しない**。手順 0 で 2 行がそろっていることと、
+   この行が本番のホストであることの両方を確かめてから進む。
+
 2. 承認（#hq-approval）
 
 3. 適用する
@@ -190,6 +208,8 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
    ```sh
    ( set -a; . ~/.nwa-lms-secrets/prod-db.env; set +a; npx prisma migrate deploy )
    ```
+
+   実行の直前に手順 0 を、もう一度行う。
 
 4. 手順 1 のコマンドをもう一度実行し、未適用が残っていないことを確かめる
 

@@ -38,7 +38,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
   - `vercel env pull` は使わない（本番などの値が手元の .env 系に書き込まれるため）
   - 本番の接続情報はリポジトリの外のファイル（例 `~/.nwa-lms-secrets/prod-db.env`、権限 600）に置き、リポジトリの .env 系には置かない
 - マイグレーション SQL は手で書き、DB を使わずに検証する（例：scratchpad で PGlite を使う）。加えて、ローカル DB に `npm run db:local:deploy` で適用して確認してよい
-- 本番マイグレーションの適用手順（Tec が行う。詳細は `docs/dev-db-setup.md`）：サブシェル `( set -a; . <本番の接続情報のファイル>; set +a; npx prisma migrate status )` で未適用のマイグレーションを確認 → 承認 → 同じ形で `npx prisma migrate deploy`。シェルの環境変数が `.env` より優先されることを、`migrate status` の出力の `Datasource` の行（ホスト:ポート）で確かめてから deploy する。サブシェルを抜ければ本番の接続情報は残らない
+- 本番マイグレーションの適用手順（Tec が行う。詳細は `docs/dev-db-setup.md`）：毎回まず、本番の接続情報のファイルに `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを値を出さずに確かめる（`grep -c '^DATABASE_URL=' <ファイル>` と `grep -c '^DIRECT_URL=' <ファイル>` がどちらも 1。書かれていない変数は `.env` のローカル DB の値のままになる）→ サブシェル `( set -a; . <本番の接続情報のファイル>; set +a; npx prisma migrate status )` で未適用のマイグレーションと、出力の `Datasource` の行（ホスト:ポート）が本番であることを確認 → 承認 → 直前に再度 2 行を確かめ、同じ形で `npx prisma migrate deploy`。`Datasource` の行は片方の URL（手元の Prisma 6.19 の CLI では `DIRECT_URL` 側）しか示さず、`DATABASE_URL` 側は分からないため、この行だけで適用先を判断しない。サブシェルを抜ければ本番の接続情報は残らない
 - テーブルを追加するマイグレーションには、同じファイル内で必ず `ALTER TABLE "<Table>" ENABLE ROW LEVEL SECURITY;` を入れる（FORCE は付けない。ポリシーは作らない）。public スキーマは RLS 有効・anon / authenticated の権限なしが前提（#2）。RLS を DISABLE するマイグレーションは禁止
 - public に関数やビューを作らない（anon から `/rpc` で呼べてしまうため。#5）
 - `prisma/seed.ts` と `scripts/seed-step1.ts` は既存データを削除する破壊的スクリプト。ローカル DB 以外では起動時に拒否される（`scripts/lib/assert-local-db.ts`）。ガードを外さない
