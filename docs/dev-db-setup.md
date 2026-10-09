@@ -36,7 +36,7 @@ Docker Desktop が起動していなければ起動する。
    ```
 
 2. エディタで今の `.env` を開き、`DATABASE_URL` と `DIRECT_URL` の 2 行を `~/.nwa-lms-secrets/prod-db.env` に
-   移す（コピーしてから `.env` 側は後の `## 3.` で書き換える）。値は**シングルクォートで囲む**
+   移す（コピーしてから `.env` 側は後の「`## 3.` `.env` をローカル DB に切り替える」で書き換える）。値は**シングルクォートで囲む**
    （`$` やバッククォートなどがシェルに解釈されないように）。パスワードに記号があれば URL エンコード済みであること
 
    ```
@@ -48,8 +48,8 @@ Docker Desktop が起動していなければ起動する。
 
    ```sh
    ls -l ~/.nwa-lms-secrets/prod-db.env          # -rw------- であること
-   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env   # 1 であること
-   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env     # 1 であること
+   grep -c '^DATABASE_URL=.' ~/.nwa-lms-secrets/prod-db.env  # 1 であること（値が空の行は数えない）
+   grep -c '^DIRECT_URL=.' ~/.nwa-lms-secrets/prod-db.env    # 1 であること（値が空の行は数えない）
    ```
 
 ## 2. ローカル DB を起動する
@@ -100,7 +100,7 @@ DIRECT_URL: 127.0.0.1:54322
 ローカル DB のガード: 通る（...）
 ```
 
-`pooler.supabase.com` などが出たら、`## 3.`・`## 4.` を見直す。
+`pooler.supabase.com` などが出たら、「`## 3.` `.env` をローカル DB に切り替える」と「`## 4.` `.env.local` などから DB の URL を消す」を見直す。
 
 `db:where` が見るのは `.env`（とシェルの環境変数）だけで、`npm run dev`（Next.js）が `.env` より優先する
 `.env.local` / `.env.development` / `.env.development.local` は見ない。`db:where` が 127.0.0.1:54322 を
@@ -184,11 +184,11 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 シェルの環境変数は `.env` より優先される（Prisma は `.env` で上書きしない）。
 裏を返すと、`prod-db.env` に**書かれていない変数は `.env`（ローカル DB）の値のまま**になる。
 
-0. 毎回、`prod-db.env` に `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを確かめる（中身は表示しない）
+0. 毎回、`prod-db.env` に値が空でない `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを確かめる（中身は表示しない）
 
    ```sh
-   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env   # 1 であること
-   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env     # 1 であること
+   grep -c '^DATABASE_URL=.' ~/.nwa-lms-secrets/prod-db.env  # 1 であること（値が空の行は数えない）
+   grep -c '^DIRECT_URL=.' ~/.nwa-lms-secrets/prod-db.env    # 1 であること（値が空の行は数えない）
    ```
 
    どちらかが 1 でなければ、ここで止める（以降の手順に進まない）。
@@ -213,11 +213,11 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 
 3. 適用する
 
+   次のコマンドの前に、手順 0 をもう一度行う（どちらかが 1 でなければ止める）。
+
    ```sh
    ( set -a; . ~/.nwa-lms-secrets/prod-db.env; set +a; npx prisma migrate deploy )
    ```
-
-   実行の直前に手順 0 を、もう一度行う。
 
 4. 手順 1 のコマンドをもう一度実行し、未適用が残っていないことを確かめる
 
@@ -233,9 +233,9 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 3. `npm run db:where` で本番のホストが表示されることを確かめる
 
 この状態では `db:where` の結果が `127.0.0.1:54322` 以外になるので、CLAUDE.md の
-「`db:where` の結果が `127.0.0.1:54322` 以外、またはガードが拒否なら、DB に接続する prisma コマンド・psql・
-`db:` で始まる npm スクリプト（`db:where` を除く）を実行せず Tec に報告する」に従う（`db:local:*` と `db:seed` はガードでも拒否される）。
-戻したことは Claude にも伝える。ローカル DB に戻すときは `## 3.` から行う。
+「`db:where` の結果が `127.0.0.1:54322` 以外、ガードが拒否、または判定できないなら、DB に接続する prisma コマンド・psql・
+`db:` で始まる npm スクリプト（`db:where` と、DB に接続しない `db:generate` を除く）を実行せず Tec に報告する」に従う（`db:local:*` と `db:seed` はガードでも拒否される）。
+戻したことは Claude にも伝える。ローカル DB に戻すときは「`## 3.` `.env` をローカル DB に切り替える」から行う。
 
 ## 注意：git worktree で作業する場合
 
