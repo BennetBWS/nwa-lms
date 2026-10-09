@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 import {
   ALL_COURSES_COMPLETED_LABEL,
   DETAIL_NOT_FOUND_MESSAGE,
@@ -215,5 +218,29 @@ describe("ラベル", () => {
 
   it("404 の文言は日本語で、英語を含まない", () => {
     assert.ok(!/[A-Za-z]{2,}/.test(DETAIL_NOT_FOUND_MESSAGE), "英語が混ざっている");
+  });
+});
+
+describe("admin-student-view の依存（画面側に Prisma の実行コードを入れない）", () => {
+  const source = readFileSync(join(__dirname, "admin-student-view.ts"), "utf8");
+
+  it("admin-student-detail は import type でだけ読む", () => {
+    const imports = source.match(/^import\b[^;]*from\s+"\.\/admin-student-detail";/gm) ?? [];
+    assert.ok(imports.length > 0, "admin-student-detail を読んでいない（StudentDetailView の型の出どころ）");
+    for (const line of imports) assert.ok(/^import type\s/.test(line), `import type でない：${line}`);
+    assert.ok(!/@prisma\/client|from\s+"\.\/prisma"|from\s+"@\/lib\/prisma"/.test(source), "Prisma を直接 import している");
+  });
+
+  it("変換後のコードに admin-student-detail・Prisma の import が残らない", () => {
+    const out = ts.transpileModule(source, {
+      fileName: "admin-student-view.ts",
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, removeComments: true },
+    }).outputText;
+    assert.ok(!out.includes("admin-student-detail"), "変換後に admin-student-detail の import が残っている");
+    assert.ok(!/prisma/i.test(out), "変換後に prisma の import が残っている");
+  });
+
+  it("StudentDetailView を自前で定義しない（AdminStudentDetail の別名）", () => {
+    assert.ok(/export type StudentDetailView = AdminStudentDetail;/.test(source), "StudentDetailView が AdminStudentDetail の別名でない");
   });
 });

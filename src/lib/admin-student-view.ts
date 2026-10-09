@@ -6,6 +6,8 @@
  */
 
 import { stripInvisibleMarks } from "./user-display";
+// 型だけを読む（import type は変換後に消えるので、画面側に Prisma を使う admin-student-detail の実行コードは入らない）
+import type { AdminStudentDetail } from "./admin-student-detail";
 
 export type StudentStatusValue = "active" | "deactivated";
 
@@ -350,19 +352,8 @@ export function readStudentDetail(body: unknown, requestedId: string): StudentDe
   return body as StudentDetailView;
 }
 
-/** 画面で使う詳細の形（API の AdminStudentDetail と同じ。lib 同士の依存を増やさないためここで定義） */
-export type StudentDetailView = {
-  id: string;
-  name: string;
-  email: string;
-  createdAt: string;
-  status: StudentStatusValue;
-  deactivatedAt: string | null;
-  currentCourse: { id: string; name: string } | null;
-  courseProgress: Array<{ courseId: string; courseName: string; totalLessons: number; completedLessons: number; lastCompletedAt: string | null }>;
-  quizAttempts: Array<{ id: string; quizTitle: string; quizType: string; score: number; passed: boolean; createdAt: string }>;
-  assignments: Array<{ id: string; title: string; courseName: string; status: string; deadline: string | null; createdAt: string }>;
-};
+/** 画面で使う詳細の形。API の応答の型（AdminStudentDetail）をそのまま使う */
+export type StudentDetailView = AdminStudentDetail;
 
 /** 詳細表示の「現在のコース」。全コースのレッスン総数で「全コース修了」と「—」を分ける */
 export function detailCurrentCourseLabel(detail: Pick<StudentDetailView, "currentCourse" | "courseProgress">): string {
