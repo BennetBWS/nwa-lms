@@ -25,15 +25,22 @@ const ZWJ_BY_SPACE = new RegExp(" \\u200D+|\\u200D+ ", "g");
 const VISIBLE = new RegExp("[\\p{L}\\p{N}\\p{S}\\p{P}]", "u");
 
 /**
+ * Removes the invisible control / format characters and blank-looking fillers described above
+ * (zero-width space, bidi overrides, BOM, ...). ZWJ and subdivision flags are kept so emoji
+ * stay whole. Nothing else is changed (no whitespace handling, no trimming).
+ */
+export function stripInvisibleMarks(text: string): string {
+  return text.replace(INVISIBLE_OUTSIDE_EMOJI, (_match, flag) => flag ?? "");
+}
+
+/**
  * Name as shown: whitespace runs collapsed to one space, invisible control / format
  * characters removed (they could garble the layout or disguise the name), trimmed.
  * Null when nothing visible is left.
  */
 export function displayName(name: unknown): string | null {
   if (typeof name !== "string") return null;
-  const normalized = name
-    .replace(/\s+/g, " ")
-    .replace(INVISIBLE_OUTSIDE_EMOJI, (_match, flag) => flag ?? "")
+  const normalized = stripInvisibleMarks(name.replace(/\s+/g, " "))
     .replace(ZWJ_BY_SPACE, " ")
     .trim()
     .replace(EDGE_ZWJ, "")
