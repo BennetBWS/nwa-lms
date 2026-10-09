@@ -447,7 +447,6 @@ describe("GET /api/admin/students (list): currentCourse (#32)", () => {
     assert.deepEqual(progressSelect, {
       where: { completed: true },
       select: { completedAt: true, lessonId: true },
-      orderBy: { completedAt: "desc" },
     });
   });
 
@@ -456,6 +455,57 @@ describe("GET /api/admin/students (list): currentCourse (#32)", () => {
     const body = await (await list(get())).json();
     assert.equal(body[0].completedLessons, 2);
     assert.equal(body[0].lastActive, "2026-09-04T00:00:00.000Z");
+  });
+});
+
+describe("GET /api/admin/students (list): lastActive with completedAt NULL rows (#32)", () => {
+  /** Returns progress with NULL completedAt first, like Postgres ORDER BY ... DESC. */
+  function nullsFirst() {
+    const userModel = db.client.user as { findMany: (args: unknown) => Promise<Array<Record<string, unknown>>> };
+    const original = userModel.findMany;
+    userModel.findMany = async (args: unknown) => {
+      const rows = await original(args);
+      return rows.map((r) => {
+        const progress = r.progress as Array<{ completedAt: Date | null }> | undefined;
+        if (!progress) return r;
+        return {
+          ...r,
+          progress: [...progress.filter((p) => p.completedAt === null), ...progress.filter((p) => p.completedAt !== null)],
+        };
+      });
+    };
+    return () => {
+      userModel.findMany = original;
+    };
+  }
+
+  it("a completed row with completedAt NULL does not hide the latest date; it still counts as completed", async () => {
+    seedCourses();
+    db.progress.push({ id: "pa_null", userId: "stu_active", lessonId: "l3", completed: true, completedAt: null });
+    const restore = nullsFirst();
+    try {
+      const body = await (await list(get())).json();
+      assert.equal(body[0].id, "stu_active");
+      assert.equal(body[0].lastActive, "2026-09-04T00:00:00.000Z");
+      // Same count as the student dashboard: every completed row, NULL date or not.
+      assert.equal(body[0].completedLessons, 3);
+      assert.equal(body[0].currentCourse, null);
+    } finally {
+      restore();
+    }
+  });
+
+  it("only completed rows with completedAt NULL: lastActive null", async () => {
+    db.progress.length = 0;
+    db.progress.push({ id: "pn", userId: "stu_active", completed: true, completedAt: null });
+    const restore = nullsFirst();
+    try {
+      const body = await (await list(get())).json();
+      assert.equal(body[0].lastActive, null);
+      assert.equal(body[0].completedLessons, 1);
+    } finally {
+      restore();
+    }
   });
 });
 

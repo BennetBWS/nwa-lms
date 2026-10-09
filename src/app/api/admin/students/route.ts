@@ -16,6 +16,18 @@ const COURSE_LESSON_IDS_SELECT = {
   sections: { select: { lessons: { select: { id: true } } } },
 } satisfies Prisma.CourseSelect;
 
+/**
+ * Latest non-null completedAt, or null. Not `progress[0]` of an orderBy desc: Postgres puts
+ * NULL first in DESC, so a legacy row (completed, completedAt NULL) would hide the date.
+ */
+function latestCompletedAt(progress: ReadonlyArray<{ completedAt: Date | null }>): Date | null {
+  let latest: Date | null = null;
+  for (const { completedAt } of progress) {
+    if (completedAt && (latest === null || completedAt.getTime() > latest.getTime())) latest = completedAt;
+  }
+  return latest;
+}
+
 // ?status=active (default) | deactivated | all (#7). Other values: 400.
 export async function GET(request: Request) {
   try {
@@ -47,10 +59,11 @@ export async function GET(request: Request) {
         avatar: true,
         createdAt: true,
         deactivatedAt: true,
+        // All completed rows (also legacy rows with completedAt NULL) count as completed,
+        // like the student dashboard. No orderBy: lastActive is the max non-null completedAt.
         progress: {
           where: { completed: true },
           select: { completedAt: true, lessonId: true },
-          orderBy: { completedAt: "desc" },
         },
       },
       orderBy: { name: "asc" },
@@ -66,7 +79,7 @@ export async function GET(request: Request) {
         createdAt: student.createdAt,
         completedLessons: student.progress.length,
         totalLessons,
-        lastActive: student.progress[0]?.completedAt ?? null,
+        lastActive: latestCompletedAt(student.progress),
         status,
         deactivatedAt,
         // First course (by order) whose lessons are not all completed; null = all completed (#32).
