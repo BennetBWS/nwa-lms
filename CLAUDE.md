@@ -32,6 +32,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - ユーザー・ロールは Prisma の `User` テーブルに集約する（Supabase Auth は使わない）
 - スキーマ変更は `prisma/schema.prisma` を更新し、`prisma/migrations/<timestamp>_<name>/migration.sql` をコミットする。本番適用は Tec の承認後に Tec が行う（下記「本番マイグレーションの適用手順」）
 - **手元の DB はローカル DB（127.0.0.1:54322）、本番は別の Supabase プロジェクト**（#8）。`.env` の DATABASE_URL / DIRECT_URL はローカル DB を指す。作業前に `npm run db:where` で接続先を確かめる
+  - **`db:where` の結果が `127.0.0.1:54322` 以外、またはガードが「拒否」なら**、DB に接続する prisma コマンド・psql・`npm run db:*`（`db:where` を除く）を実行せず、Tec に報告する（ホスト名・値は報告に書かず、「ローカル以外」「ガード拒否」と伝える）
   - **許すこと**（いずれもローカル DB のガード `scripts/lib/assert-local-db.ts` 付き）：`npm run db:where`、`npm run db:local:deploy`、`npm run db:local:reset`、`npm run db:seed`
   - **引き続き禁止**：本番の接続情報を読み込んだ状態での prisma / psql の実行（本番マイグレーションの適用は Tec の承認後に Tec が行う）、`supabase link` / `supabase db push` / `--linked` の付くコマンド、ガードのない `prisma migrate dev` / `migrate reset` / `db push`（npx などで直接起動しない）
   - DB の URL は `.env` だけに書く。`.env.local` には書かない（Next.js は `.env.local` を優先し、Prisma の CLI は `.env` を読むため、混在すると接続先が食い違う）

@@ -229,8 +229,10 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 2. エディタで `~/.nwa-lms-secrets/prod-db.env` の 2 行を `.env` の `DATABASE_URL` / `DIRECT_URL` に戻す
 3. `npm run db:where` で本番のホストが表示されることを確かめる
 
-この状態では以前のルールに戻る：DB に接続する prisma コマンドや psql、seed を実行しない
-（`db:local:*` と `db:seed` はガードで拒否される）。ローカル DB に戻すときは手順 3 から行う。
+この状態では `db:where` の結果が `127.0.0.1:54322` 以外になるので、CLAUDE.md の
+「`db:where` の結果が `127.0.0.1:54322` 以外、またはガードが拒否なら、DB に接続する prisma コマンド・psql・
+`npm run db:*`（`db:where` を除く）を実行せず Tec に報告する」に従う（`db:local:*` と `db:seed` はガードでも拒否される）。
+戻したことは Claude にも伝える。ローカル DB に戻すときは `## 3.` から行う。
 
 ## 注意：git worktree で作業する場合
 
