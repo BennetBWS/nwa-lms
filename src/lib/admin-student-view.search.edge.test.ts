@@ -84,8 +84,49 @@ describe("filterStudentsByQuery：空白・見えない文字・NFKC", () => {
     assert.equal(studentsEmptyMessage(0, "\u3000x"), STUDENTS_NO_MATCH_MESSAGE);
   });
 
+  it("U+200B などの幅のない文字・書式文字だけの検索語は空とみなし、全件", () => {
+    for (const q of ["\u200B", "\u200B\u200C\u200D", "\u2060\u202E\u00AD", " \u200B\u3000"]) {
+      assert.deepEqual(ids(q), ["s1", "s2", "s3", "s4"], JSON.stringify(q));
+    }
+    assert.equal(studentsEmptyMessage(0, "\u200B"), STUDENTS_EMPTY_MESSAGE);
+  });
+
+  it("名前に幅のない文字・向きの制御文字・ZWJ が混ざっていても「田中花子」で見つかる", () => {
+    const hidden = [
+      { id: "z1", name: "田中\u200B花子", email: "z1-32@example.com" },
+      { id: "z2", name: "\u202E田\u200C中\u2060花\uFEFF子\u202C", email: "z2-32@example.com" },
+      { id: "z3", name: "田中\u200D花子", email: "z3-32@example.com" },
+      { id: "z4", name: "田中\u00AD花子", email: "z4-32@example.com" },
+      { id: "other", name: "田中太郎", email: "other-32@example.com" },
+    ];
+    assert.deepEqual(filterStudentsByQuery(hidden, "田中花子").map((s) => s.id), ["z1", "z2", "z3", "z4"]);
+  });
+
+  it("検索語の中の幅のない文字も除く（メールも同じ）", () => {
+    assert.deepEqual(ids("花\u200B子"), ["s1"]);
+    assert.deepEqual(ids("hana\u200Bko-32"), ["s1"]);
+    const mail = [{ id: "m", name: "ダミー", email: "zw\u200Bsp-32@example.com" }];
+    assert.deepEqual(filterStudentsByQuery(mail, "zwsp-32@").map((s) => s.id), ["m"]);
+  });
+
+  it("絵文字をつなぐ ZWJ と旗のタグ文字は残す（絵文字の検索は壊さない）", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const scotland = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+    const thumbs = "\u{1F44D}\u{1F3FD}\u200D\u2642\uFE0F";
+    assert.equal(normalizeSearchText(family), family);
+    assert.equal(normalizeSearchText(scotland), scotland);
+    assert.equal(normalizeSearchText(thumbs), thumbs);
+    const rowsE = [
+      { id: "e1", name: `${family} ダミー`, email: "e1-32@example.com" },
+      { id: "e2", name: `${scotland} ダミー`, email: "e2-32@example.com" },
+      { id: "e3", name: "\u{1F468} ダミー", email: "e3-32@example.com" },
+    ];
+    assert.deepEqual(filterStudentsByQuery(rowsE, family).map((s) => s.id), ["e1"]);
+    assert.deepEqual(filterStudentsByQuery(rowsE, scotland).map((s) => s.id), ["e2"]);
+  });
+
   it("normalizeSearchText は冪等", () => {
-    for (const s of ["\u3000ＡＢＣ\u3000", "ﾔﾏﾀﾞ", "か\u3099", "Mixed Case"]) {
+    for (const s of ["\u3000ＡＢＣ\u3000", "ﾔﾏﾀﾞ", "か\u3099", "Mixed Case", "田\u200B中\u200D花子", "\u{1F468}\u200D\u{1F469}"]) {
       assert.equal(normalizeSearchText(normalizeSearchText(s)), normalizeSearchText(s));
     }
   });

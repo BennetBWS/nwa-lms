@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { avatarInitial, displayName, greetingTitle } from "./user-display";
+import { avatarInitial, displayName, greetingTitle, stripInvisibleMarks } from "./user-display";
 
 // #32 ユーザー名表示の境界値。名前はすべてダミー。
 
@@ -207,5 +207,28 @@ describe("Intl.Segmenter の後始末", () => {
   it("代替分岐のテスト後に Segmenter が元に戻っている", () => {
     assert.equal(typeof Intl.Segmenter, "function");
     assert.equal(avatarInitial("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"), "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}");
+  });
+});
+
+describe("stripInvisibleMarks（#32 生徒管理の検索でも使う）", () => {
+  it("幅のない文字・書式文字・向きの制御文字・空白に見える文字を除く", () => {
+    assert.equal(stripInvisibleMarks("田\u200B中\u200C花\u2060子\uFEFF\u202E\u00AD\u3164"), "田中花子");
+  });
+
+  it("空白は変えず、前後も削らない（displayName と違い整形しない）", () => {
+    assert.equal(stripInvisibleMarks(" 山田\u3000太郎 "), " 山田\u3000太郎 ");
+  });
+
+  it("ZWJ と旗のタグ文字は残す", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const scotland = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+    assert.equal(stripInvisibleMarks(family), family);
+    assert.equal(stripInvisibleMarks(scotland), scotland);
+    assert.equal(stripInvisibleMarks("a\u{E0061}b"), "ab");
+  });
+
+  it("displayName と同じ範囲を除く", () => {
+    const s = "\u200B山\u202E田\u2060";
+    assert.equal(displayName(s), stripInvisibleMarks(s));
   });
 });

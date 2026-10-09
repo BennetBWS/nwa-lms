@@ -5,6 +5,8 @@
  * The list is fetched once with `?status=all` and filtered on the client.
  */
 
+import { stripInvisibleMarks } from "./user-display";
+
 export type StudentStatusValue = "active" | "deactivated";
 
 export type StudentTab = "active" | "deactivated" | "all";
@@ -209,9 +211,20 @@ export function confirmMessage(action: StatusAction, name: string): string {
 
 // ───────────── 生徒管理（#32）：表の行・検索・Course 列・詳細表示 ─────────────
 
-/** 検索用の正規化：NFKC（全角英数→半角など）、小文字化、前後の空白を除く */
+// 絵文字をつないでいない ZWJ（U+200D）。直前が絵文字（異体字セレクタ U+FE0F・肌の色を含む）で、
+// 直後も絵文字のときだけ残す。RegExp で作るのは u フラグと \p{...} を TypeScript の target に依存させないため
+const STRAY_ZWJ = new RegExp(
+  "(?<![\\p{Extended_Pictographic}\\u{FE0F}\\p{Emoji_Modifier}])\\u200D|\\u200D(?!\\p{Extended_Pictographic})",
+  "gu"
+);
+
+/**
+ * 検索用の正規化：NFKC（全角英数→半角など）、見えない制御・書式文字（U+200B などの幅のない文字、
+ * BOM、向きの制御文字。user-display の stripInvisibleMarks と同じ範囲）と絵文字をつないでいない ZWJ を除き、
+ * 小文字化し、前後の空白を除く。検索語と対象の両方に使う
+ */
 export function normalizeSearchText(value: string): string {
-  return value.normalize("NFKC").toLowerCase().trim();
+  return stripInvisibleMarks(value.normalize("NFKC")).replace(STRAY_ZWJ, "").toLowerCase().trim();
 }
 
 /**
