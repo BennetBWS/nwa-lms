@@ -1,5 +1,5 @@
 /**
- * Guard for destructive seed scripts.
+ * Guard for scripts that write to the database (seed scripts and scripts/db-local.ts).
  *
  * Throws unless every provided database URL points at a local host and the
  * process is not running in a production / Vercel environment.
@@ -54,20 +54,20 @@ const FORBIDDEN_QUERY_PARAMS: ReadonlySet<string> = new Set(["host", "hostaddr"]
 export function assertLocalDatabase(urls: Array<string | undefined>): void {
   if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "Refusing to run: NODE_ENV is \"production\". Seed scripts may only run against a local database."
+      "Refusing to run: NODE_ENV is \"production\". This script may only run against a local database."
     );
   }
 
   if (process.env.VERCEL_ENV) {
     throw new Error(
-      "Refusing to run: VERCEL_ENV is set. Seed scripts may only run against a local database."
+      "Refusing to run: VERCEL_ENV is set. This script may only run against a local database."
     );
   }
 
   const defined = urls.filter((u): u is string => u !== undefined);
   if (defined.length === 0) {
     throw new Error(
-      "Refusing to run: no database URL is set. Seed scripts may only run against a local database."
+      "Refusing to run: no database URL is set. This script may only run against a local database."
     );
   }
 
@@ -94,7 +94,7 @@ export function assertLocalDatabase(urls: Array<string | undefined>): void {
     if (!ALLOWED_HOSTNAMES.has(hostname)) {
       const shown = hostname === "" ? "(empty)" : hostname;
       throw new Error(
-        `Refusing to run: database host "${shown}" is not local. Seed scripts may only run against a local database.`
+        `Refusing to run: database host "${shown}" is not local. This script may only run against a local database.`
       );
     }
   });
