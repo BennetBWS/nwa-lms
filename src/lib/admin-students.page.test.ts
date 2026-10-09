@@ -170,9 +170,9 @@ describe("page.tsx：AdminDashboard に受講生の管理が残っていない�
     }
   });
 
-  it("AdminDashboard の取得は /api/admin/courses だけ（受講生の一覧は取らない）", () => {
+  it("AdminDashboard の取得は /api/admin/stats だけ（受講生の一覧は取らない。#32 PR B）", () => {
     const urls = Array.from(dashboard.matchAll(/authFetch\(\s*["'`]([^"'`]+)["'`]/g)).map((m) => m[1]);
-    assert.deepEqual(urls, ["/api/admin/courses"]);
+    assert.deepEqual(urls, ["/api/admin/stats"]);
     assert.ok(!/\bfetch\(/.test(dashboard.replace(/authFetch\(/g, "")), "authFetch 以外の fetch がある");
   });
 

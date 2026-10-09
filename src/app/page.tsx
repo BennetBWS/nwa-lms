@@ -20,7 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Home, BookOpen, Play, Bell, MessageSquare, Settings, Users, BarChart3,
   ChevronRight, Clock, FileText, HelpCircle, Lock, Search, ArrowLeft,
-  Plus, TrendingUp, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
+  Plus, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
   LogOut, Target, Zap, Sparkles, ArrowUpRight, User
 } from "lucide-react";
 import {
@@ -57,6 +57,7 @@ import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, to
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
+import { toAdminDashboardView } from "@/lib/admin-stats";
 import { addedThreadCount, firstPageRowCount, QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsAddedMessage, threadsEmptyMessage, threadsMoreHint, toQuestionThreadItems } from "@/lib/question-threads";
 import {
   PASSING_PERCENT,
@@ -1300,20 +1301,53 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
 // ADMIN DASHBOARD
 // ═══════════════════════════════════════════
 const AdminDashboard = ({ setCurrentPage }) => {
-  // Distribution 用（固定値の統計・Monthly Trends とあわせて #32 PR B で実データに差し替える）。
-  // 受講生の一覧は「生徒管理」（AdminStudents）に移した（#32）
-  const [adminData, setAdminData] = useState(null);
+  // GET /api/admin/stats を toAdminDashboardView で変換したもの。null は未取得（#32 PR B）。
+  // 集計の定義は src/lib/admin-stats.ts の先頭のコメント。受講生の一覧は「生徒管理」（AdminStudents）
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const statsInFlight = useRef(false);
 
-  useEffect(() => {
-    authFetch("/api/admin/courses").then(r => r.json()).then(coursesData => {
-      setAdminData({ courses: Array.isArray(coursesData) ? coursesData : [] });
-    }).catch(() => {});
-  }, []);
+  // Same approach as AdminStudents.loadStudents: an expired session is handled by authFetch
+  // (sign out and go to /login), so keep the loading state and do not fetch again.
+  // Any other redirect, non-ok response or unexpected body is a failure.
+  const loadStats = () => {
+    if (statsInFlight.current) return;
+    statsInFlight.current = true;
+    setLoading(true);
+    setLoadFailed(false);
+    let sessionExpired = false;
+    authFetch("/api/admin/stats").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      const view = toAdminDashboardView(data);
+      if (view) setStats(view);
+      else setLoadFailed(true);
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      statsInFlight.current = false;
+      setLoading(false);
+    });
+  };
 
-  const monthly = [{ m: "Jan", a: 18, c: 6 }, { m: "Feb", a: 20, c: 8 }, { m: "Mar", a: 22, c: 10 }, { m: "Apr", a: 24, c: 12 }];
-  const courseColors = ["#6366F1", "#EF4444", "#3B82F6", "#A78BFA", "#F59E0B", "#22C55E", "#EC4899"];
-  const dist = (adminData?.courses || []).map((c, i) => ({ name: c.name.replace(/STEP\d\s/, "").substring(0, 8), value: c._count?.sections || 0, color: courseColors[i % courseColors.length] }));
+  useEffect(() => { loadStats(); }, []);
+
   const adminFont = "var(--font-sora), 'Sora', sans-serif";
+  const cards = stats?.cards;
+  // 値が null（未取得・失敗・平均進捗で受講生 0 人）のときは「—」を出す
+  const statCards = [
+    { label: "Active Students", value: cards ? cards.activeStudents : null, sub: "", icon: Users, gradient: "linear-gradient(135deg, #3B82F6, #1D4ED8)" },
+    { label: "Avg Progress", value: cards ? cards.avgProgressPercent : null, sub: "%", icon: Target, gradient: "linear-gradient(135deg, #22C55E, #16A34A)" },
+    { label: "Open Questions", value: cards ? cards.openQuestions : null, sub: "", icon: MessageSquare, gradient: "linear-gradient(135deg, #F59E0B, #D97706)" },
+    { label: "Completions", value: cards ? cards.completions : null, sub: "", icon: Award, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)" },
+  ];
+  // 円グラフは 1 人以上の区分だけ。凡例は 0 人の区分も人数つきで出す
+  const distAll = stats?.distribution || [];
+  const distPie = distAll.filter(d => d.value > 0);
 
   return (
     <ScrollArea style={{ height: "100%" }}>
@@ -1327,12 +1361,7 @@ const AdminDashboard = ({ setCurrentPage }) => {
 
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
-          {[
-            { label: "Active Students", value: "24", sub: "", icon: Users, gradient: "linear-gradient(135deg, #3B82F6, #1D4ED8)", change: "+3" },
-            { label: "Avg Progress", value: "62", sub: "%", icon: Target, gradient: "linear-gradient(135deg, #22C55E, #16A34A)", change: "+5%" },
-            { label: "Open Questions", value: "7", sub: "", icon: MessageSquare, gradient: "linear-gradient(135deg, #F59E0B, #D97706)" },
-            { label: "Completions", value: "12", sub: "", icon: Award, gradient: "linear-gradient(135deg, #A78BFA, #7C3AED)", change: "+4" },
-          ].map((s, i) => {
+          {statCards.map((s, i) => {
             const Icon = s.icon;
             return (
               <FadeIn key={i} delay={60 * i} direction="scale">
@@ -1345,15 +1374,12 @@ const AdminDashboard = ({ setCurrentPage }) => {
                     <div>
                       <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.label}</span>
                       <div style={{ display: "flex", alignItems: "baseline", gap: 3, marginTop: 10 }}>
-                        <span style={{ fontSize: 36, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}><AnimNum value={s.value} /></span>
-                        {s.sub && <span style={{ fontSize: 14, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.sub}</span>}
+                        <span style={{ fontSize: 36, fontWeight: 800, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif", letterSpacing: "-0.04em", lineHeight: 1 }}>{s.value === null ? "—" : <AnimNum value={s.value} />}</span>
+                        {s.sub && s.value !== null && <span style={{ fontSize: 14, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.sub}</span>}
                       </div>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                      <div style={{ width: 42, height: 42, borderRadius: 13, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Icon size={20} style={{ color: "#fff" }} />
-                      </div>
-                      {s.change && <span style={{ fontSize: 10, fontWeight: 700, color: T.success, fontFamily: "var(--font-sora), 'Sora', sans-serif", display: "flex", alignItems: "center", gap: 2 }}><TrendingUp size={10} />{s.change}</span>}
+                    <div style={{ width: 42, height: 42, borderRadius: 13, background: s.gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Icon size={20} aria-hidden="true" style={{ color: "#fff" }} />
                     </div>
                   </div>
                 </div>
@@ -1362,56 +1388,78 @@ const AdminDashboard = ({ setCurrentPage }) => {
           })}
         </div>
 
-        {/* Charts */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, marginBottom: 32 }}>
-          <FadeIn delay={180}>
-            <div style={{ ...glassStyle(), borderRadius: 20 }}>
-              <div style={{ padding: "20px 24px 8px" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Monthly Trends</h3>
-              </div>
-              <div style={{ padding: "4px 14px 16px" }}>
-                <ResponsiveContainer width="100%" height={230}>
-                  <AreaChart data={monthly}>
-                    <defs>
-                      <linearGradient id="ga2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.accent} stopOpacity={0.15} /><stop offset="100%" stopColor={T.accent} stopOpacity={0} /></linearGradient>
-                      <linearGradient id="gc2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.success} stopOpacity={0.15} /><stop offset="100%" stopColor={T.success} stopOpacity={0} /></linearGradient>
-                    </defs>
-                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
-                    <XAxis dataKey="m" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: T.textMuted }} />
-                    <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
-                    <Area type="monotone" dataKey="a" stroke={T.accent} strokeWidth={2.5} fill="url(#ga2)" name="Active" />
-                    <Area type="monotone" dataKey="c" stroke={T.success} strokeWidth={2.5} fill="url(#gc2)" name="Completed" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </FadeIn>
-          <FadeIn delay={260}>
-            <div style={{ ...glassStyle(), borderRadius: 20 }}>
-              <div style={{ padding: "20px 24px 0" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Distribution</h3>
-              </div>
-              <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                <ResponsiveContainer width="100%" height={170}>
-                  <PieChart>
-                    <Pie data={dist} cx="50%" cy="50%" innerRadius={44} outerRadius={70} paddingAngle={4} dataKey="value" strokeWidth={0}>
-                      {dist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} formatter={(v) => [`${v}名`]} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
-                  {dist.map((c, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: 3, background: c.color }} />{c.name}
-                    </div>
-                  ))}
+        {/* Charts（直近 6 か月の推移・現在のコースの分布） */}
+        {stats ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 24, marginBottom: 32 }}>
+            <FadeIn delay={180}>
+              <div style={{ ...glassStyle(), borderRadius: 20 }}>
+                <div style={{ padding: "20px 24px 8px" }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Monthly Trends</h3>
+                  <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 4 }}>直近 6 か月（日本時間）。学習した受講生＝その月にレッスンを完了した人数、コース修了＝その月に最後のレッスンを終えたコースの数</div>
+                </div>
+                <div style={{ padding: "4px 14px 16px" }}>
+                  <ResponsiveContainer width="100%" height={230}>
+                    <AreaChart data={stats.monthly}>
+                      <defs>
+                        <linearGradient id="ga2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.accent} stopOpacity={0.15} /><stop offset="100%" stopColor={T.accent} stopOpacity={0} /></linearGradient>
+                        <linearGradient id="gc2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.success} stopOpacity={0.15} /><stop offset="100%" stopColor={T.success} stopOpacity={0} /></linearGradient>
+                      </defs>
+                      <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={T.borderSubtle} />
+                      <XAxis dataKey="m" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
+                      <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: T.textMuted }} />
+                      <Tooltip contentStyle={{ borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.08)", fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
+                      <Area type="monotone" dataKey="a" stroke={T.accent} strokeWidth={2.5} fill="url(#ga2)" name="学習した受講生" />
+                      <Area type="monotone" dataKey="c" stroke={T.success} strokeWidth={2.5} fill="url(#gc2)" name="コース修了" />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
-            </div>
-          </FadeIn>
-        </div>
+            </FadeIn>
+            <FadeIn delay={260}>
+              <div style={{ ...glassStyle(), borderRadius: 20 }}>
+                <div style={{ padding: "20px 24px 0" }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Distribution</h3>
+                  <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 4 }}>有効な受講生の現在のコース</div>
+                </div>
+                <div style={{ padding: "0 16px 16px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  {distPie.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={170}>
+                      <PieChart>
+                        <Pie data={distPie} nameKey="name" cx="50%" cy="50%" innerRadius={44} outerRadius={70} paddingAngle={4} dataKey="value" strokeWidth={0}>
+                          {distPie.map(e => <Cell key={e.key} fill={e.color} />)}
+                        </Pie>
+                        <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} formatter={(v, name) => [`${v}名`, name]} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div style={{ padding: "48px 0", fontSize: 13, color: T.textMuted }}>有効な受講生はいません</div>
+                  )}
+                  <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
+                    {distAll.map(c => (
+                      <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontWeight: 500 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 3, background: c.color }} />{c.name} {c.value}名
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </FadeIn>
+          </div>
+        ) : loading || !loadFailed ? (
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted, marginBottom: 32 }}>
+            <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+            <div style={{ fontSize: 13, fontFamily: adminFont }}>Loading...</div>
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : (
+          <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", marginBottom: 32 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: adminFont }}>統計を読み込めませんでした</div>
+            <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+            <Button size="sm" onClick={loadStats} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: adminFont, fontSize: 12, padding: "6px 15px" }}>
+              再読み込み
+            </Button>
+          </div>
+        )}
 
         {/* 受講生の管理は「生徒管理」へ（#32） */}
         <FadeIn delay={320}>
