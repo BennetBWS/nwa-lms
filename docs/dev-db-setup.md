@@ -35,7 +35,7 @@ Docker Desktop が起動していなければ起動する。
    ```
 
 2. エディタで今の `.env` を開き、`DATABASE_URL` と `DIRECT_URL` の 2 行を `~/.nwa-lms-secrets/prod-db.env` に
-   移す（コピーしてから `.env` 側は次の手順 3 で書き換える）。値は**シングルクォートで囲む**
+   移す（コピーしてから `.env` 側は後の `## 3.` で書き換える）。値は**シングルクォートで囲む**
    （`$` やバッククォートなどがシェルに解釈されないように）。パスワードに記号があれば URL エンコード済みであること
 
    ```
@@ -82,7 +82,7 @@ supabase status
 grep -c '^DATABASE_URL=\|^DIRECT_URL=' .env.local .env.development .env.development.local 2>/dev/null
 ```
 
-1 以上のファイルがあれば、エディタでその行を削除する（本番の値は手順 1 で外へ移してある）。もう一度実行して、
+1 以上のファイルがあれば、エディタでその行を削除する（本番の値は `## 1.` で外へ移してある）。もう一度実行して、
 すべて 0（またはファイルなし）になることを確かめる。
 
 ## 5. 接続先を確かめる
@@ -99,7 +99,7 @@ DIRECT_URL: 127.0.0.1:54322
 ローカル DB のガード: 通る（...）
 ```
 
-`pooler.supabase.com` などが出たら、手順 3・4 を見直す。
+`pooler.supabase.com` などが出たら、`## 3.`・`## 4.` を見直す。
 
 `db:where` が見るのは `.env`（とシェルの環境変数）だけで、`npm run dev`（Next.js）が `.env` より優先する
 `.env.local` / `.env.development` / `.env.development.local` は見ない。`db:where` が 127.0.0.1:54322 を
