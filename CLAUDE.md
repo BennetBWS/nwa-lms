@@ -32,14 +32,14 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - ユーザー・ロールは Prisma の `User` テーブルに集約する（Supabase Auth は使わない）
 - スキーマ変更は `prisma/schema.prisma` を更新し、`prisma/migrations/<timestamp>_<name>/migration.sql` をコミットする。本番適用は Tec の承認後に Tec が行う（下記「本番マイグレーションの適用手順」）
 - **手元の DB はローカル DB（127.0.0.1:54322）、本番は別の Supabase プロジェクト**（#8）。`.env` の DATABASE_URL / DIRECT_URL はローカル DB を指す。作業前に `npm run db:where` で接続先を確かめる
-  - **`db:where` の結果が `127.0.0.1:54322` 以外、ガードが「拒否」、またはエラーなどで判定できないなら**、DB に接続する prisma コマンド・psql・`db:` で始まる npm スクリプト（`db:where` と、DB に接続しない `db:generate` を除く）を実行せず、Tec に報告する（ホスト名・値は報告に書かず、「ローカル以外」「ガード拒否」と伝える）
+  - **`db:where` の結果が `127.0.0.1:54322` 以外、ガードが「拒否」、またはエラーなどで判定できないなら**、DB に接続する prisma コマンド・psql・`db:` で始まる npm スクリプト（`db:where` と、DB に接続しない `db:generate` を除く）を実行せず、Tec に報告する（ホスト名・値は報告に書かず、「ローカル以外」「ガード拒否」「判定できない」と伝える）
   - **許すこと**（いずれもローカル DB のガード `scripts/lib/assert-local-db.ts` 付き）：`npm run db:where`、`npm run db:local:deploy`、`npm run db:local:reset`、`npm run db:seed`
   - **引き続き禁止**：本番の接続情報を読み込んだ状態での prisma / psql の実行（本番マイグレーションの適用は Tec の承認後に Tec が行う）、`supabase link` / `supabase db push` / `--linked` の付くコマンド、ガードのない `prisma migrate dev` / `migrate reset` / `db push`（npx などで直接起動しない）
   - DB の URL は `.env` だけに書く。`.env.local` には書かない（Next.js は `.env.local` を優先し、Prisma の CLI は `.env` を読むため、混在すると接続先が食い違う）
   - `vercel env pull` は使わない（本番などの値が手元の .env 系に書き込まれるため）
   - 本番の接続情報はリポジトリの外のファイル（例 `~/.nwa-lms-secrets/prod-db.env`、権限 600）に置き、リポジトリの .env 系には置かない
 - マイグレーション SQL は手で書き、DB を使わずに検証する（例：scratchpad で PGlite を使う）。加えて、ローカル DB に `npm run db:local:deploy` で適用して確認してよい
-- 本番マイグレーションの適用手順（Tec が行う。詳細は `docs/dev-db-setup.md`）：毎回まず、本番の接続情報のファイルに 値が空でない `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを値を出さずに確かめる（`grep -c '^DATABASE_URL=.' <ファイル>` と `grep -c '^DIRECT_URL=.' <ファイル>` がどちらも 1。書かれていない変数は `.env` のローカル DB の値のままになる）→ サブシェル `( set -a; . <本番の接続情報のファイル>; set +a; npx prisma migrate status )` で未適用のマイグレーションと、出力の `Datasource` の行（ホスト:ポート）が本番であることを確認 → 承認 → 直前に再度 2 行を確かめ、同じ形で `npx prisma migrate deploy` → もう一度 `migrate status` で未適用が残っていないことを確認。`Datasource` の行は片方の URL（手元の Prisma 6.19 の CLI では `DIRECT_URL` 側）しか示さず、`DATABASE_URL` 側は分からないため、この行だけで適用先を判断しない。サブシェルを抜ければ本番の接続情報は残らない
+- 本番マイグレーションの適用手順（Tec が行う。詳細は `docs/dev-db-setup.md`）：毎回まず、本番の接続情報のファイルに `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあり、どちらも値が `'postgres` で始まることを値を出さずに確かめる（`grep -c '^DATABASE_URL=' <ファイル>` と `grep -c "^DATABASE_URL='postgres" <ファイル>`、`DIRECT_URL` も同様の 4 つがすべて 1。書かれていない変数は `.env` のローカル DB の値のままになる）→ サブシェル `( set -a; . <本番の接続情報のファイル>; set +a; npx prisma migrate status )` で未適用のマイグレーションと、出力の `Datasource` の行（ホスト:ポート）が本番であることを確認 → 承認 → 直前に再度 2 行を確かめ、同じ形で `npx prisma migrate deploy` → もう一度 `migrate status` で未適用が残っていないことを確認。`Datasource` の行は片方の URL（手元の Prisma 6.19 の CLI では `DIRECT_URL` 側）しか示さず、`DATABASE_URL` 側は分からないため、この行だけで適用先を判断しない。サブシェルを抜ければ本番の接続情報は残らない
 - テーブルを追加するマイグレーションには、同じファイル内で必ず `ALTER TABLE "<Table>" ENABLE ROW LEVEL SECURITY;` を入れる（FORCE は付けない。ポリシーは作らない）。public スキーマは RLS 有効・anon / authenticated の権限なしが前提（#2）。RLS を DISABLE するマイグレーションは禁止
 - public に関数やビューを作らない（anon から `/rpc` で呼べてしまうため。#5）
 - `prisma/seed.ts` と `scripts/seed-step1.ts` は既存データを削除する破壊的スクリプト。ローカル DB 以外では起動時に拒否される（`scripts/lib/assert-local-db.ts`）。ガードを外さない

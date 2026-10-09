@@ -48,8 +48,10 @@ Docker Desktop が起動していなければ起動する。
 
    ```sh
    ls -l ~/.nwa-lms-secrets/prod-db.env          # -rw------- であること
-   grep -c '^DATABASE_URL=.' ~/.nwa-lms-secrets/prod-db.env  # 1 であること（値が空の行は数えない）
-   grep -c '^DIRECT_URL=.' ~/.nwa-lms-secrets/prod-db.env    # 1 であること（値が空の行は数えない）
+   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env           # 1 であること（同じ変数が 2 行ない）
+   grep -c "^DATABASE_URL='postgres" ~/.nwa-lms-secrets/prod-db.env # 1 であること（値が空や '' でない）
+   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env             # 1 であること
+   grep -c "^DIRECT_URL='postgres" ~/.nwa-lms-secrets/prod-db.env   # 1 であること
    ```
 
 ## 2. ローカル DB を起動する
@@ -184,14 +186,16 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 シェルの環境変数は `.env` より優先される（Prisma は `.env` で上書きしない）。
 裏を返すと、`prod-db.env` に**書かれていない変数は `.env`（ローカル DB）の値のまま**になる。
 
-0. 毎回、`prod-db.env` に値が空でない `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあることを確かめる（中身は表示しない）
+0. 毎回、`prod-db.env` に `DATABASE_URL=` と `DIRECT_URL=` の行が 1 行ずつあり、どちらも値が `'postgres` で始まることを確かめる（中身は表示しない）
 
    ```sh
-   grep -c '^DATABASE_URL=.' ~/.nwa-lms-secrets/prod-db.env  # 1 であること（値が空の行は数えない）
-   grep -c '^DIRECT_URL=.' ~/.nwa-lms-secrets/prod-db.env    # 1 であること（値が空の行は数えない）
+   grep -c '^DATABASE_URL=' ~/.nwa-lms-secrets/prod-db.env           # 1 であること（同じ変数が 2 行ない）
+   grep -c "^DATABASE_URL='postgres" ~/.nwa-lms-secrets/prod-db.env # 1 であること（値が空や '' でない）
+   grep -c '^DIRECT_URL=' ~/.nwa-lms-secrets/prod-db.env             # 1 であること
+   grep -c "^DIRECT_URL='postgres" ~/.nwa-lms-secrets/prod-db.env   # 1 であること
    ```
 
-   どちらかが 1 でなければ、ここで止める（以降の手順に進まない）。
+   どれかが 1 でなければ、ここで止める（以降の手順に進まない）。
 
 1. 未適用のマイグレーションと接続先を確かめる
 
@@ -213,7 +217,7 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 
 3. 適用する
 
-   次のコマンドの前に、手順 0 をもう一度行う（どちらかが 1 でなければ止める）。
+   次のコマンドの前に、手順 0 をもう一度行う（どれかが 1 でなければ止める）。
 
    ```sh
    ( set -a; . ~/.nwa-lms-secrets/prod-db.env; set +a; npx prisma migrate deploy )
@@ -233,7 +237,7 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 3. `npm run db:where` で本番のホストが表示されることを確かめる
 
 この状態では `db:where` の結果が `127.0.0.1:54322` 以外になるので、CLAUDE.md の
-「`db:where` の結果が `127.0.0.1:54322` 以外、ガードが拒否、または判定できないなら、DB に接続する prisma コマンド・psql・
+「`db:where` の結果が `127.0.0.1:54322` 以外、ガードが「拒否」、またはエラーなどで判定できないなら、DB に接続する prisma コマンド・psql・
 `db:` で始まる npm スクリプト（`db:where` と、DB に接続しない `db:generate` を除く）を実行せず Tec に報告する」に従う（`db:local:*` と `db:seed` はガードでも拒否される）。
 戻したことは Claude にも伝える。ローカル DB に戻すときは「`## 3.` `.env` をローカル DB に切り替える」から行う。
 
