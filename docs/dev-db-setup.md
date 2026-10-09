@@ -101,6 +101,11 @@ DIRECT_URL: 127.0.0.1:54322
 
 `pooler.supabase.com` などが出たら、手順 3・4 を見直す。
 
+`db:where` が見るのは `.env`（とシェルの環境変数）だけで、`npm run dev`（Next.js）が `.env` より優先する
+`.env.local` / `.env.development` / `.env.development.local` は見ない。`db:where` が 127.0.0.1:54322 を
+示していても、`npm run dev` だけが本番に接続している可能性は残るため、`## 4.` の確認（キー名だけを grep し、
+すべて 0 またはファイルなし）も合わせて行う。
+
 ## 6. マイグレーションを適用する
 
 ```sh
