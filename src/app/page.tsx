@@ -25,14 +25,26 @@ import {
 } from "lucide-react";
 import {
   DEFAULT_STUDENT_TAB,
+  DETAIL_LOAD_FAILED_MESSAGE,
+  DETAIL_NOT_FOUND_MESSAGE,
   STUDENT_TABS,
+  assignmentStatusLabel,
   confirmMessage,
   countStudentsByTab,
+  detailCurrentCourseLabel,
+  filterStudentsByQuery,
   formatDeactivatedDate,
+  formatJstDate,
   interpretStatusActionResponse,
   inviteErrorView,
+  progressPercent,
+  quizTypeLabel,
+  readStudentDetail,
   statusActionErrorMessage,
+  studentDetailUrl,
+  studentsEmptyMessage,
   studentsForTab,
+  toAdminStudentListItem,
 } from "@/lib/admin-student-view";
 import {
   classifyAuthFailure,
@@ -1287,146 +1299,20 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
 // ═══════════════════════════════════════════
 // ADMIN DASHBOARD
 // ═══════════════════════════════════════════
-const AdminDashboard = () => {
+const AdminDashboard = ({ setCurrentPage }) => {
+  // Distribution 用（固定値の統計・Monthly Trends とあわせて #32 PR B で実データに差し替える）。
+  // 受講生の一覧は「生徒管理」（AdminStudents）に移した（#32）
   const [adminData, setAdminData] = useState(null);
-  const [inviteModal, setInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteName, setInviteName] = useState("");
-  // { httpStatus: number | null（通信エラーは null）, body, redirected: boolean } | null（未送信）
-  const [inviteResponse, setInviteResponse] = useState(null);
-  const [inviting, setInviting] = useState(false);
-  // #7: 一覧は ?status=all で取得し、タブで絞り込む
-  const [studentTab, setStudentTab] = useState(DEFAULT_STUDENT_TAB);
-  // { action: "deactivate" | "reactivate", id, name } | null
-  const [statusDialog, setStatusDialog] = useState(null);
-  const [statusSaving, setStatusSaving] = useState(false);
-  const [statusError, setStatusError] = useState("");
-  // 確認ダイアログを開いたボタン。閉じたらここにフォーカスを戻す（招待モーダルから開いた場合は null）
-  const statusDialogTriggerRef = useRef(null);
 
   useEffect(() => {
-    Promise.all([
-      authFetch("/api/admin/students?status=all").then(r => r.json()),
-      authFetch("/api/admin/courses").then(r => r.json()),
-    ]).then(([studentsData, coursesData]) => {
-      setAdminData({ students: Array.isArray(studentsData) ? studentsData : [], courses: Array.isArray(coursesData) ? coursesData : [] });
+    authFetch("/api/admin/courses").then(r => r.json()).then(coursesData => {
+      setAdminData({ courses: Array.isArray(coursesData) ? coursesData : [] });
     }).catch(() => {});
   }, []);
-
-  // 受講生一覧を再取得する。失敗しても例外は投げず、現在の一覧を残す
-  const reloadStudents = async () => {
-    try {
-      const s = await authFetch("/api/admin/students?status=all").then(r => r.json());
-      if (Array.isArray(s)) setAdminData(prev => prev ? { ...prev, students: s } : prev);
-    } catch {
-      // 一覧の再取得に失敗しても操作自体は完了しているため、ここでは何もしない
-    }
-  };
-
-  const handleInvite = async () => {
-    setInviting(true);
-    try {
-      let res;
-      try {
-        res = await authFetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
-      } catch {
-        setInviteResponse({ httpStatus: null, body: null, redirected: false });
-        return;
-      }
-      // 本文が JSON でない（ゲートウェイのエラーページなど）ときは body を null とし、ステータスだけで文言を決める
-      const data = await res.json().catch(() => null);
-      // redirected: セッション切れで /login にリダイレクトされ、ログイン画面を 200 で受け取った場合
-      setInviteResponse({ httpStatus: res.status, body: data, redirected: res.redirected });
-      if (res.ok && !res.redirected) await reloadStudents();
-    } finally {
-      setInviting(false);
-    }
-  };
-
-  // trigger: ダイアログを開いたボタン（閉じたときのフォーカスの戻り先）。なければ null
-  const openStatusDialog = (action, student, trigger = null) => {
-    statusDialogTriggerRef.current = trigger;
-    setStatusError("");
-    setStatusDialog({ action, id: student.id, name: student.name });
-  };
-
-  const closeStatusDialog = () => {
-    if (statusSaving) return;
-    setStatusDialog(null);
-  };
-
-  // 確認ダイアログが開いている間だけ Esc で閉じる（処理中は closeStatusDialog が閉じない）
-  useEffect(() => {
-    if (!statusDialog) return;
-    const onKeyDown = (e) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      closeStatusDialog();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [statusDialog, statusSaving]);
-
-  // 確認ダイアログが閉じたら、開いたボタンにフォーカスを戻す。
-  // 成功してタブから行が消えた場合などボタンが画面にないときは何もしない
-  const statusDialogOpen = statusDialog !== null;
-  useEffect(() => {
-    if (statusDialogOpen) return;
-    const trigger = statusDialogTriggerRef.current;
-    statusDialogTriggerRef.current = null;
-    if (trigger && trigger.isConnected) trigger.focus();
-  }, [statusDialogOpen]);
-
-  const handleStatusAction = async () => {
-    // 処理中の二重送信を防ぐ（ボタンの disabled が反映される前の連打に備える）
-    if (statusSaving) return;
-    if (!statusDialog) return;
-    const { action, id } = statusDialog;
-    setStatusSaving(true);
-    setStatusError("");
-    try {
-      let res;
-      try {
-        res = await authFetch(`/api/admin/students/${encodeURIComponent(id)}/${action}`, { method: "PUT" });
-      } catch {
-        setStatusError(statusActionErrorMessage(null));
-        return;
-      }
-      // セッション切れで /login にリダイレクトされると、ログイン画面の HTML を 200 で受け取る。
-      // 成功は「ok・リダイレクトなし・本文が対象の受講生の状態」のときだけ（判定は interpretStatusActionResponse）
-      const body = await res.json().catch(() => null);
-      const outcome = interpretStatusActionResponse({ ok: res.ok, redirected: res.redirected, status: res.status, body, targetId: id });
-      if (outcome.kind !== "success") {
-        setStatusError(outcome.message);
-        return;
-      }
-      // レスポンスの状態をまず反映し、そのあと一覧を取り直す
-      const { updated } = outcome;
-      setAdminData(prev => prev ? { ...prev, students: prev.students.map(s => s.id === id ? { ...s, status: updated.status, deactivatedAt: updated.deactivatedAt } : s) } : prev);
-      await reloadStudents();
-      setStatusDialog(null);
-    } finally {
-      setStatusSaving(false);
-    }
-  };
 
   const monthly = [{ m: "Jan", a: 18, c: 6 }, { m: "Feb", a: 20, c: 8 }, { m: "Mar", a: 22, c: 10 }, { m: "Apr", a: 24, c: 12 }];
   const courseColors = ["#6366F1", "#EF4444", "#3B82F6", "#A78BFA", "#F59E0B", "#22C55E", "#EC4899"];
   const dist = (adminData?.courses || []).map((c, i) => ({ name: c.name.replace(/STEP\d\s/, "").substring(0, 8), value: c._count?.sections || 0, color: courseColors[i % courseColors.length] }));
-
-  const students = (adminData?.students || []).map(s => {
-    const progress = s.totalLessons > 0 ? Math.round((s.completedLessons / s.totalLessons) * 100) : 0;
-    const progressStatus = progress >= 50 ? "good" : progress >= 20 ? "warn" : "alert";
-    // status はアカウントの状態（active / deactivated）。進捗の評価は progressStatus
-    return { id: s.id, name: s.name, course: "", progress, last: s.lastActive ? new Date(s.lastActive).toLocaleDateString() : "N/A", progressStatus, status: s.status === "deactivated" ? "deactivated" : "active", deactivatedAt: s.deactivatedAt ?? null };
-  });
-  const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
-  const studentCounts = countStudentsByTab(students);
-  const visibleStudents = studentsForTab(students, studentTab);
-  const inviteError = inviteResponse ? inviteErrorView(inviteResponse.httpStatus, inviteResponse.body, inviteResponse.redirected) : null;
-  // 成功（2xx・リダイレクトなし・本文に初期パスワードあり）のときだけ本文を表示に使う
-  const inviteResult = inviteResponse && !inviteError ? inviteResponse.body : null;
-  const inviteDeactivatedStudent = inviteError?.deactivatedUserId ? students.find(s => s.id === inviteError.deactivatedUserId && s.status === "deactivated") : null;
   const adminFont = "var(--font-sora), 'Sora', sans-serif";
 
   return (
@@ -1527,153 +1413,538 @@ const AdminDashboard = () => {
           </FadeIn>
         </div>
 
-        {/* Students Table */}
+        {/* 受講生の管理は「生徒管理」へ（#32） */}
         <FadeIn delay={320}>
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 12, background: `${T.accent}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Users size={18} aria-hidden="true" style={{ color: T.accent }} />
+              </div>
+              <div style={{ fontSize: 13.5, color: T.textPrimary }}>受講生の招待・詳細確認・無効化は「生徒管理」で行います。</div>
+            </div>
+            <Button size="sm" onClick={() => setCurrentPage("admin-students")} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: adminFont, fontSize: 12 }}>
+              生徒管理を開く <ChevronRight size={14} aria-hidden="true" />
+            </Button>
+          </div>
+        </FadeIn>
+      </div>
+    </ScrollArea>
+  );
+};
+
+// ═══════════════════════════════════════════
+// ADMIN STUDENTS — 生徒管理（#32）
+// 受講生の一覧（タブ・検索・Course 列）、詳細表示、招待、無効化・再有効化
+// ═══════════════════════════════════════════
+const AdminStudents = ({ setCurrentPage }) => {
+  // GET /api/admin/students?status=all の行。null は未取得
+  const [studentRows, setStudentRows] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [query, setQuery] = useState("");
+  const [inviteModal, setInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  // { httpStatus: number | null（通信エラーは null）, body, redirected: boolean } | null（未送信）
+  const [inviteResponse, setInviteResponse] = useState(null);
+  const [inviting, setInviting] = useState(false);
+  // #7: 一覧は ?status=all で取得し、タブで絞り込む
+  const [studentTab, setStudentTab] = useState(DEFAULT_STUDENT_TAB);
+  // { action: "deactivate" | "reactivate", id, name } | null
+  const [statusDialog, setStatusDialog] = useState(null);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState("");
+  // 詳細表示（QA-1：一覧と切り替える）。detailId が null なら一覧
+  const [detailId, setDetailId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  // null | "not_found" | "failed"
+  const [detailError, setDetailError] = useState(null);
+
+  // 確認ダイアログを開いたボタン。閉じたらここにフォーカスを戻す（招待モーダルから開いた場合は null）
+  const statusDialogTriggerRef = useRef(null);
+  // Guards against a second request while one is in flight (reload button, double clicks).
+  const studentsInFlight = useRef(false);
+  // 詳細の取得ごとに 1 増やす。閉じた後・別の受講生に切り替えた後に届いた応答は捨てる
+  const detailSeq = useRef(0);
+  // 「一覧に戻る」のあと、この id の名前ボタンにフォーカスを戻す
+  const returnFocusIdRef = useRef(null);
+
+  // Same approach as loadNotifications: an expired session is handled by authFetch
+  // (sign out and go to /login), so keep the loading screen and do not fetch again.
+  // Any other redirect, non-ok response or non-array body is a failure.
+  const loadStudents = () => {
+    if (studentsInFlight.current) return;
+    studentsInFlight.current = true;
+    setLoading(true);
+    setLoadFailed(false);
+    let sessionExpired = false;
+    authFetch("/api/admin/students?status=all").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      if (Array.isArray(data)) setStudentRows(data);
+      else setLoadFailed(true);
+    }).catch(() => setLoadFailed(true)).finally(() => {
+      if (sessionExpired) return;
+      studentsInFlight.current = false;
+      setLoading(false);
+    });
+  };
+
+  useEffect(() => { loadStudents(); }, []);
+
+  // 受講生一覧を再取得する（招待・無効化・再有効化のあと）。失敗しても例外は投げず、現在の一覧を残す
+  const reloadStudents = async () => {
+    try {
+      const res = await authFetch("/api/admin/students?status=all");
+      if (!res.ok || res.redirected) return;
+      const s = await res.json();
+      if (Array.isArray(s)) setStudentRows(s);
+    } catch {
+      // 一覧の再取得に失敗しても操作自体は完了しているため、ここでは何もしない
+    }
+  };
+
+  // 詳細を開く（再試行も同じ）。セッション切れは authFetch がサインアウトするので読み込み中のままにする
+  const openDetail = async (id) => {
+    const seq = ++detailSeq.current;
+    setDetailId(id);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
+    let outcome = "failed";
+    try {
+      const res = await authFetch(studentDetailUrl(id));
+      if (seq !== detailSeq.current) return;
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") return;
+      if (res.status === 404 && !res.redirected) {
+        outcome = "not_found";
+      } else if (res.ok && !res.redirected) {
+        const body = await res.json().catch(() => null);
+        if (seq !== detailSeq.current) return;
+        const view = readStudentDetail(body, id);
+        if (view) {
+          setDetail(view);
+          outcome = null;
+        }
+      }
+    } catch {
+      if (seq !== detailSeq.current) return;
+    }
+    setDetailError(outcome);
+    setDetailLoading(false);
+  };
+
+  const closeDetail = () => {
+    detailSeq.current++;
+    returnFocusIdRef.current = detailId;
+    setDetailId(null);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(false);
+  };
+
+  const handleInvite = async () => {
+    setInviting(true);
+    try {
+      let res;
+      try {
+        res = await authFetch("/api/admin/students/invite", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, name: inviteName }) });
+      } catch {
+        setInviteResponse({ httpStatus: null, body: null, redirected: false });
+        return;
+      }
+      // 本文が JSON でない（ゲートウェイのエラーページなど）ときは body を null とし、ステータスだけで文言を決める
+      const data = await res.json().catch(() => null);
+      // redirected: セッション切れで /login にリダイレクトされ、ログイン画面を 200 で受け取った場合
+      setInviteResponse({ httpStatus: res.status, body: data, redirected: res.redirected });
+      if (res.ok && !res.redirected) await reloadStudents();
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  // trigger: ダイアログを開いたボタン（閉じたときのフォーカスの戻り先）。なければ null
+  const openStatusDialog = (action, student, trigger = null) => {
+    statusDialogTriggerRef.current = trigger;
+    setStatusError("");
+    setStatusDialog({ action, id: student.id, name: student.name });
+  };
+
+  const closeStatusDialog = () => {
+    if (statusSaving) return;
+    setStatusDialog(null);
+  };
+
+  // 確認ダイアログが開いている間だけ Esc で閉じる（処理中は closeStatusDialog が閉じない）
+  useEffect(() => {
+    if (!statusDialog) return;
+    const onKeyDown = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeStatusDialog();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [statusDialog, statusSaving]);
+
+  // 確認ダイアログが閉じたら、開いたボタンにフォーカスを戻す。
+  // 成功してタブから行が消えた場合などボタンが画面にないときは何もしない
+  const statusDialogOpen = statusDialog !== null;
+  useEffect(() => {
+    if (statusDialogOpen) return;
+    const trigger = statusDialogTriggerRef.current;
+    statusDialogTriggerRef.current = null;
+    if (trigger && trigger.isConnected) trigger.focus();
+  }, [statusDialogOpen]);
+
+  const handleStatusAction = async () => {
+    // 処理中の二重送信を防ぐ（ボタンの disabled が反映される前の連打に備える）
+    if (statusSaving) return;
+    if (!statusDialog) return;
+    const { action, id } = statusDialog;
+    setStatusSaving(true);
+    setStatusError("");
+    try {
+      let res;
+      try {
+        res = await authFetch(`/api/admin/students/${encodeURIComponent(id)}/${action}`, { method: "PUT" });
+      } catch {
+        setStatusError(statusActionErrorMessage(null));
+        return;
+      }
+      // セッション切れで /login にリダイレクトされると、ログイン画面の HTML を 200 で受け取る。
+      // 成功は「ok・リダイレクトなし・本文が対象の受講生の状態」のときだけ（判定は interpretStatusActionResponse）
+      const body = await res.json().catch(() => null);
+      const outcome = interpretStatusActionResponse({ ok: res.ok, redirected: res.redirected, status: res.status, body, targetId: id });
+      if (outcome.kind !== "success") {
+        setStatusError(outcome.message);
+        return;
+      }
+      // レスポンスの状態をまず反映し（一覧と、開いていれば詳細）、そのあと一覧を取り直す
+      const { updated } = outcome;
+      setStudentRows(prev => Array.isArray(prev) ? prev.map(s => s.id === id ? { ...s, status: updated.status, deactivatedAt: updated.deactivatedAt } : s) : prev);
+      setDetail(prev => prev && prev.id === id ? { ...prev, status: updated.status, deactivatedAt: updated.deactivatedAt } : prev);
+      await reloadStudents();
+      setStatusDialog(null);
+    } finally {
+      setStatusSaving(false);
+    }
+  };
+
+  const students = (studentRows || []).map(toAdminStudentListItem);
+  const st = { good: { l: "良好", c: T.success }, warn: { l: "注意", c: T.warning }, alert: { l: "要対応", c: T.danger } };
+  // タブの件数は検索前の件数
+  const studentCounts = countStudentsByTab(students);
+  const visibleStudents = filterStudentsByQuery(studentsForTab(students, studentTab), query);
+  const inviteError = inviteResponse ? inviteErrorView(inviteResponse.httpStatus, inviteResponse.body, inviteResponse.redirected) : null;
+  // 成功（2xx・リダイレクトなし・本文に初期パスワードあり）のときだけ本文を表示に使う
+  const inviteResult = inviteResponse && !inviteError ? inviteResponse.body : null;
+  const inviteDeactivatedStudent = inviteError?.deactivatedUserId ? students.find(s => s.id === inviteError.deactivatedUserId && s.status === "deactivated") : null;
+  const adminFont = "var(--font-sora), 'Sora', sans-serif";
+  const sectionTitle = { fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: adminFont };
+  const emptyText = { padding: "18px 24px", fontSize: 13, color: T.textMuted };
+
+  const spinner = (
+    <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+      <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+      <div style={{ fontSize: 13, fontFamily: adminFont }}>Loading...</div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
+  let body;
+  if (detailId !== null) {
+    // ── 詳細表示 ──
+    let detailBody;
+    if (detailLoading) {
+      detailBody = spinner;
+    } else if (detailError === "not_found") {
+      detailBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13.5, color: T.textPrimary }}>{DETAIL_NOT_FOUND_MESSAGE}</div>
+      );
+    } else if (detailError || !detail) {
+      detailBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: adminFont }}>{DETAIL_LOAD_FAILED_MESSAGE}</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+          <Button size="sm" onClick={() => openDetail(detailId)} disabled={detailLoading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: adminFont, fontSize: 12, padding: "6px 15px" }}>
+            再読み込み
+          </Button>
+        </div>
+      );
+    } else {
+      const deactivated = detail.status === "deactivated";
+      detailBody = (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* 基本情報 */}
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: "22px 24px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+                <Avatar style={{ width: 44, height: 44, flexShrink: 0 }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: adminFont }}>{detail.name.charAt(0)}</AvatarFallback></Avatar>
+                <div style={{ minWidth: 0 }}>
+                  <h2 style={{ fontSize: 20, fontWeight: 800, color: T.dark, margin: 0, fontFamily: adminFont, overflowWrap: "anywhere" }}>{detail.name}</h2>
+                  <div style={{ fontSize: 12.5, color: T.textMuted, marginTop: 2, overflowWrap: "anywhere" }}>{detail.email}</div>
+                </div>
+              </div>
+              {deactivated ? (
+                <Button size="sm" variant="outline" onClick={e => openStatusDialog("reactivate", detail, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={e => openStatusDialog("deactivate", detail, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
+              )}
+            </div>
+            <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px 20px", margin: "18px 0 0" }}>
+              <div><dt style={{ fontSize: 11, color: T.textMuted, fontWeight: 600 }}>登録日</dt><dd style={{ margin: "2px 0 0", fontSize: 13.5, color: T.textPrimary }}>{formatJstDate(detail.createdAt) || "—"}</dd></div>
+              <div><dt style={{ fontSize: 11, color: T.textMuted, fontWeight: 600 }}>状態</dt><dd style={{ margin: "2px 0 0", fontSize: 13.5, color: deactivated ? T.textMuted : T.success, fontWeight: 600 }}>{deactivated ? `無効（無効化日 ${formatDeactivatedDate(detail.deactivatedAt)}）` : "有効"}</dd></div>
+              <div><dt style={{ fontSize: 11, color: T.textMuted, fontWeight: 600 }}>現在のコース</dt><dd style={{ margin: "2px 0 0", fontSize: 13.5, color: T.textPrimary }}>{detailCurrentCourseLabel(detail)}</dd></div>
+            </dl>
+          </div>
+
+          {/* コースごとの進捗 */}
           <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
-            <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
-                <div role="tablist" aria-label="受講生の状態" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 10, background: T.borderSubtle }}>
-                  {STUDENT_TABS.map(tab => {
-                    const selected = studentTab === tab.key;
-                    return (
-                      <button key={tab.key} type="button" role="tab" aria-selected={selected} onClick={() => setStudentTab(tab.key)}
-                        style={{ border: "none", cursor: "pointer", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: selected ? 700 : 500, background: selected ? T.glass : "transparent", color: selected ? T.dark : T.textMuted, boxShadow: selected ? "0 1px 3px rgba(10,22,40,0.08)" : "none", fontFamily: adminFont, whiteSpace: "nowrap" }}>
-                        {tab.label}（{studentCounts[tab.key]}）
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: T.glass }}>
-                  <Search size={14} style={{ color: T.textMuted }} />
-                  <input placeholder="Search..." style={{ border: "none", outline: "none", fontSize: 12, width: 110, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
-                </div>
-                <Button size="sm" onClick={() => { setInviteModal(true); setInviteResponse(null); setInviteEmail(""); setInviteName(""); }} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
-                  <Plus size={14} /> 招待
-                </Button>
-              </div>
-              {/* Invite Modal */}
-              {inviteModal && (
-                <ModalPortal>
-                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={() => setInviteModal(false)}>
-                  <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
-                    <h3 style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>生徒を招待</h3>
-                    {inviteResult?.password ? (
-                      <div>
-                        <div style={{ padding: 16, borderRadius: 12, background: `${T.success}10`, border: `1px solid ${T.success}30`, marginBottom: 16 }}>
-                          <div style={{ fontSize: 13, color: T.success, fontWeight: 600, marginBottom: 8 }}>アカウント作成完了</div>
-                          <div style={{ fontSize: 13, color: T.textPrimary, marginBottom: 4 }}>メール: <strong>{inviteResult.email}</strong></div>
-                          <div style={{ fontSize: 13, color: T.textPrimary }}>パスワード: <strong>{inviteResult.password}</strong></div>
-                        </div>
-                        <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>この情報を生徒に共有してください。パスワードは後から変更できます。</div>
-                        <Button onClick={() => setInviteModal(false)} style={{ width: "100%", background: T.accent, borderRadius: 10 }}>閉じる</Button>
-                      </div>
-                    ) : (
-                      <div>
-                        {inviteError && (
-                          <div style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>
-                            {inviteError.message}
-                            {inviteDeactivatedStudent && (
-                              <div style={{ marginTop: 8 }}>
-                                <Button size="sm" variant="outline" onClick={() => { setInviteModal(false); openStatusDialog("reactivate", inviteDeactivatedStudent); }} style={{ borderRadius: 8, fontSize: 12 }}>
-                                  {inviteDeactivatedStudent.name} さんを再有効化する
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        <div style={{ marginBottom: 12 }}>
-                          <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>名前</label>
-                          <input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="山田 花子" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                        </div>
-                        <div style={{ marginBottom: 20 }}>
-                          <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>メールアドレス</label>
-                          <input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="student@example.com" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <Button variant="outline" onClick={() => setInviteModal(false)} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
-                          <Button onClick={handleInvite} disabled={inviting || !inviteEmail || !inviteName} style={{ flex: 1, background: T.accent, borderRadius: 10 }}>{inviting ? "作成中..." : "招待する"}</Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                </ModalPortal>
-              )}
-              {/* Deactivate / Reactivate confirm dialog (#7) */}
-              {statusDialog && (
-                <ModalPortal>
-                <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={closeStatusDialog}>
-                  <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
-                    <h3 id="nwa-status-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>
-                      {statusDialog.action === "deactivate" ? "受講生を無効化" : "受講生を再有効化"}
-                    </h3>
-                    <p style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 20px", whiteSpace: "pre-wrap" }}>
-                      {confirmMessage(statusDialog.action, statusDialog.name)}
-                    </p>
-                    {statusError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{statusError}</div>}
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <Button variant="outline" autoFocus onClick={closeStatusDialog} disabled={statusSaving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
-                      <Button onClick={handleStatusAction} disabled={statusSaving} style={{ flex: 1, background: statusDialog.action === "deactivate" ? T.danger : T.accent, borderRadius: 10 }}>
-                        {statusSaving ? "処理中..." : statusDialog.action === "deactivate" ? "無効化する" : "再有効化する"}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-                </ModalPortal>
-              )}
-            </div>
-            <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-              <div>Name</div><div className="nwa-admin-col-course">Course</div><div>Progress</div><div className="nwa-admin-col-last">Last Seen</div><div className="nwa-admin-col-status">Status</div><div style={{ textAlign: "right" }}>Actions</div>
-            </div>
-            {visibleStudents.length === 0 && (
-              <div style={{ padding: "24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>該当する受講生はいません</div>
-            )}
-            {visibleStudents.map((s, i) => {
-              const deactivated = s.status === "deactivated";
-              // 無効の行は値（名前・進捗など）だけ薄く表示する。「無効」バッジ・無効化日・操作ボタンは読みやすさのため薄くしない
-              const dim = deactivated ? 0.5 : 1;
+            <div style={{ padding: "18px 24px 8px" }}><h3 style={sectionTitle}>コースごとの進捗</h3></div>
+            {detail.courseProgress.length === 0 ? (
+              <div style={emptyText}>コースはありません</div>
+            ) : detail.courseProgress.map((c, i) => {
+              const pct = progressPercent(c.completedLessons, c.totalLessons);
               return (
-              <div key={s.id} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "14px 24px", borderBottom: i < visibleStudents.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", transition: "background 0.2s" }}
-                onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                  <Avatar style={{ width: 32, height: 32, flexShrink: 0, opacity: dim }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: dim }}>{s.name}</span>
-                  {deactivated && (
-                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.textMuted}20`, color: T.textMuted, border: "none", flexShrink: 0 }}>無効</Badge>
-                  )}
-                </div>
-                <span className="nwa-admin-col-course" style={{ fontSize: 13, color: T.textSecondary, opacity: dim }}>{s.course}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: dim }}>
-                  <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
-                    <div style={{ width: `${s.progress}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
+                <div key={c.courseId} style={{ padding: "12px 24px", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary }}>{c.courseName}</span>
+                    <span style={{ fontSize: 12, color: T.textMuted, fontFamily: adminFont }}>{c.completedLessons} / {c.totalLessons} レッスン · {pct}%{c.lastCompletedAt ? ` · 最終学習日 ${formatJstDate(c.lastCompletedAt)}` : ""}</span>
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.progress}%</span>
+                  <div role="progressbar" aria-label={`${c.courseName} の進捗`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} style={{ marginTop: 8, height: 6, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
+                  </div>
                 </div>
-                <span className="nwa-admin-col-last" style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", opacity: dim }}>{s.last}</span>
-                <div className="nwa-admin-col-status">
-                  {deactivated ? (
-                    <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, whiteSpace: "nowrap" }}>無効化日 {formatDeactivatedDate(s.deactivatedAt)}</span>
-                  ) : (
-                    <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.progressStatus]?.c}12`, color: st[s.progressStatus]?.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
-                      {st[s.progressStatus]?.l}
-                    </Badge>
-                  )}
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  {deactivated ? (
-                    <Button size="sm" variant="outline" onClick={e => openStatusDialog("reactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={e => openStatusDialog("deactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
-                  )}
-                </div>
-              </div>
               );
             })}
           </div>
+
+          {/* 小テストの履歴 */}
+          <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 8px" }}><h3 style={sectionTitle}>小テストの履歴</h3></div>
+            {detail.quizAttempts.length === 0 ? (
+              <div style={emptyText}>受験履歴はありません</div>
+            ) : detail.quizAttempts.map((q, i) => (
+              <div key={q.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 24px", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflowWrap: "anywhere" }}>{q.quizTitle}</div>
+                  <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 2 }}>{quizTypeLabel(q.quizType)} · {formatJstDate(q.createdAt) || "—"}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, fontFamily: adminFont, color: T.textPrimary }}>{q.score}点</span>
+                  <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${q.passed ? T.success : T.danger}12`, color: q.passed ? T.success : T.danger, border: "none" }}>{q.passed ? "合格" : "不合格"}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 課題 */}
+          <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 8px" }}><h3 style={sectionTitle}>課題</h3></div>
+            {detail.assignments.length === 0 ? (
+              <div style={emptyText}>課題はありません</div>
+            ) : detail.assignments.map((a, i) => (
+              <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 24px", borderTop: i > 0 ? `1px solid ${T.borderSubtle}` : "none" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflowWrap: "anywhere" }}>{a.title}</div>
+                  <div style={{ fontSize: 11.5, color: T.textMuted, marginTop: 2 }}>{a.courseName}{a.deadline ? ` · 期限 ${formatJstDate(a.deadline)}` : ""}</div>
+                </div>
+                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.accent}12`, color: T.accent, border: "none" }}>{assignmentStatusLabel(a.status)}</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    body = (
+      <div>
+        <Button size="sm" variant="outline" onClick={closeDetail} style={{ borderRadius: 10, fontSize: 12, gap: 4, marginBottom: 16 }}>
+          <ArrowLeft size={14} aria-hidden="true" /> 一覧に戻る
+        </Button>
+        {detailBody}
+      </div>
+    );
+  } else if (studentRows === null && loading) {
+    body = spinner;
+  } else if (studentRows === null || loadFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: adminFont }}>受講生の一覧を読み込めませんでした</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={loadStudents} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: adminFont, fontSize: 12, padding: "6px 15px" }}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else {
+    // ── 一覧 ──
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
+        <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
+            <div role="tablist" aria-label="受講生の状態" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 10, background: T.borderSubtle }}>
+              {STUDENT_TABS.map(tab => {
+                const selected = studentTab === tab.key;
+                return (
+                  <button key={tab.key} type="button" role="tab" aria-selected={selected} onClick={() => setStudentTab(tab.key)}
+                    style={{ border: "none", cursor: "pointer", borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: selected ? 700 : 500, background: selected ? T.glass : "transparent", color: selected ? T.dark : T.textMuted, boxShadow: selected ? "0 1px 3px rgba(10,22,40,0.08)" : "none", fontFamily: adminFont, whiteSpace: "nowrap" }}>
+                    {tab.label}（{studentCounts[tab.key]}）
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${T.border}`, borderRadius: 10, padding: "7px 14px", background: T.glass }}>
+              <Search size={14} aria-hidden="true" style={{ color: T.textMuted }} />
+              <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="名前・メールで検索" aria-label="受講生を名前・メールで検索" style={{ border: "none", outline: "none", fontSize: 12, width: 150, background: "transparent", color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }} />
+            </div>
+            <Button size="sm" onClick={() => { setInviteModal(true); setInviteResponse(null); setInviteEmail(""); setInviteName(""); }} style={{ background: T.accent, borderRadius: 10, fontWeight: 600, gap: 4, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, boxShadow: `0 2px 8px ${T.accent}25` }}>
+              <Plus size={14} /> 招待
+            </Button>
+          </div>
+        </div>
+        <div className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "10px 24px", borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+          <div>Name</div><div className="nwa-admin-col-course">Course</div><div>Progress</div><div className="nwa-admin-col-last">最終学習日</div><div className="nwa-admin-col-status">Status</div><div style={{ textAlign: "right" }}>Actions</div>
+        </div>
+        {visibleStudents.length === 0 && (
+          <div style={{ padding: "24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{studentsEmptyMessage(students.length, query)}</div>
+        )}
+        {visibleStudents.map((s, i) => {
+          const deactivated = s.status === "deactivated";
+          // 無効の行は値（名前・進捗など）だけ薄く表示する。「無効」バッジ・無効化日・操作ボタンは読みやすさのため薄くしない
+          const dim = deactivated ? 0.5 : 1;
+          return (
+          <div key={s.id} className="nwa-admin-table-grid" style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1.3fr 0.8fr 0.9fr 0.9fr", padding: "14px 24px", borderBottom: i < visibleStudents.length - 1 ? `1px solid ${T.borderSubtle}` : "none", alignItems: "center", transition: "background 0.2s" }}
+            onMouseEnter={e => e.currentTarget.style.background = `${T.accent}03`} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+              <Avatar style={{ width: 32, height: 32, flexShrink: 0, opacity: dim }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
+              <button type="button" onClick={() => openDetail(s.id)} title="詳細を表示"
+                ref={el => { if (el && returnFocusIdRef.current === s.id) { returnFocusIdRef.current = null; el.focus(); } }}
+                style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: dim, textDecoration: "underline", textDecorationColor: `${T.textMuted}60`, textUnderlineOffset: 3, fontFamily: "inherit", minWidth: 0 }}>
+                {s.name}
+              </button>
+              {deactivated && (
+                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.textMuted}20`, color: T.textMuted, border: "none", flexShrink: 0 }}>無効</Badge>
+              )}
+            </div>
+            <span className="nwa-admin-col-course" style={{ fontSize: 13, color: T.textSecondary, opacity: dim }}>{s.course}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, opacity: dim }}>
+              <div style={{ flex: 1, height: 4, borderRadius: 99, background: T.borderSubtle, overflow: "hidden" }}>
+                <div style={{ width: `${s.progress}%`, height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${T.accent}, ${T.accentVivid})` }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, minWidth: 34, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.progress}%</span>
+            </div>
+            <span className="nwa-admin-col-last" style={{ fontSize: 12, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif", opacity: dim }}>{s.last}</span>
+            <div className="nwa-admin-col-status">
+              {deactivated ? (
+                <span style={{ fontSize: 11, fontWeight: 600, color: T.textMuted, whiteSpace: "nowrap" }}>無効化日 {formatDeactivatedDate(s.deactivatedAt)}</span>
+              ) : (
+                <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${st[s.progressStatus]?.c}12`, color: st[s.progressStatus]?.c, border: "none", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                  {st[s.progressStatus]?.l}
+                </Badge>
+              )}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              {deactivated ? (
+                <Button size="sm" variant="outline" onClick={e => openStatusDialog("reactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap" }}>再有効化</Button>
+              ) : (
+                <Button size="sm" variant="outline" onClick={e => openStatusDialog("deactivate", s, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, whiteSpace: "nowrap", color: T.danger, borderColor: `${T.danger}40` }}>無効化</Button>
+              )}
+            </div>
+          </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea style={{ height: "100%" }}>
+      <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 1160 }}>
+        <FadeIn>
+          <div style={{ marginBottom: 28 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: adminFont }}>Admin</span>
+            <h1 style={{ fontFamily: adminFont, fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>生徒管理</h1>
+          </div>
         </FadeIn>
+        {body}
+        {/* Invite Modal */}
+        {inviteModal && (
+          <ModalPortal>
+          <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={() => setInviteModal(false)}>
+            <div onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 400, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 20px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>生徒を招待</h3>
+              {inviteResult?.password ? (
+                <div>
+                  <div style={{ padding: 16, borderRadius: 12, background: `${T.success}10`, border: `1px solid ${T.success}30`, marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, color: T.success, fontWeight: 600, marginBottom: 8 }}>アカウント作成完了</div>
+                    <div style={{ fontSize: 13, color: T.textPrimary, marginBottom: 4 }}>メール: <strong>{inviteResult.email}</strong></div>
+                    <div style={{ fontSize: 13, color: T.textPrimary }}>パスワード: <strong>{inviteResult.password}</strong></div>
+                  </div>
+                  <div style={{ fontSize: 11, color: T.textMuted, marginBottom: 16 }}>この情報を生徒に共有してください。パスワードは後から変更できます。</div>
+                  <Button onClick={() => setInviteModal(false)} style={{ width: "100%", background: T.accent, borderRadius: 10 }}>閉じる</Button>
+                </div>
+              ) : (
+                <div>
+                  {inviteError && (
+                    <div style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>
+                      {inviteError.message}
+                      {inviteDeactivatedStudent && (
+                        <div style={{ marginTop: 8 }}>
+                          <Button size="sm" variant="outline" onClick={() => { setInviteModal(false); openStatusDialog("reactivate", inviteDeactivatedStudent); }} style={{ borderRadius: 8, fontSize: 12 }}>
+                            {inviteDeactivatedStudent.name} さんを再有効化する
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>名前</label>
+                    <input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="山田 花子" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>メールアドレス</label>
+                    <input value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="student@example.com" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Button variant="outline" onClick={() => setInviteModal(false)} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                    <Button onClick={handleInvite} disabled={inviting || !inviteEmail || !inviteName} style={{ flex: 1, background: T.accent, borderRadius: 10 }}>{inviting ? "作成中..." : "招待する"}</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          </ModalPortal>
+        )}
+        {/* Deactivate / Reactivate confirm dialog (#7) */}
+        {statusDialog && (
+          <ModalPortal>
+          <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={closeStatusDialog}>
+            <div role="dialog" aria-modal="true" aria-labelledby="nwa-status-dialog-title" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
+              <h3 id="nwa-status-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>
+                {statusDialog.action === "deactivate" ? "受講生を無効化" : "受講生を再有効化"}
+              </h3>
+              <p style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 20px", whiteSpace: "pre-wrap" }}>
+                {confirmMessage(statusDialog.action, statusDialog.name)}
+              </p>
+              {statusError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{statusError}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="outline" autoFocus onClick={closeStatusDialog} disabled={statusSaving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                <Button onClick={handleStatusAction} disabled={statusSaving} style={{ flex: 1, background: statusDialog.action === "deactivate" ? T.danger : T.accent, borderRadius: 10 }}>
+                  {statusSaving ? "処理中..." : statusDialog.action === "deactivate" ? "無効化する" : "再有効化する"}
+                </Button>
+              </div>
+            </div>
+          </div>
+          </ModalPortal>
+        )}
       </div>
     </ScrollArea>
   );
@@ -2618,8 +2889,8 @@ export default function NWALearningPlatform() {
     "quiz": <QuizPage />,
     "notifications": <Notifications />,
     "questions": <Questions />,
-    "admin-dashboard": <AdminDashboard />,
-    "admin-students": <Placeholder title="生徒管理" desc="生徒の招待・詳細確認・アカウント管理" />,
+    "admin-dashboard": <AdminDashboard setCurrentPage={handlePageChange} />,
+    "admin-students": <AdminStudents setCurrentPage={handlePageChange} />,
     "admin-courses": <AdminCourses />,
     "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え（管理APIは実装済み）" />,
     "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定（管理APIは実装済み）" />,

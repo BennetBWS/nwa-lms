@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// #44 管理ダッシュボードのダイアログ（招待・無効化/再有効化の確認）が
+// #44 管理画面（#32 から生徒管理）のダイアログ（招待・無効化/再有効化の確認）が
 // FadeIn（transform）やカード（overflow: hidden）に閉じ込められないよう、
 // document.body 直下へ Portal で描画していることを page.tsx のソースで確認する。
 
@@ -36,7 +36,8 @@ function conditionalBlock(body: string, cond: string): string {
 }
 
 const portal = component("ModalPortal");
-const admin = component("AdminDashboard");
+// #32 受講生の表とダイアログは「生徒管理」（AdminStudents）に移した
+const admin = component("AdminStudents");
 
 describe("page.tsx：ModalPortal", () => {
   it("react-dom から createPortal を import している", () => {
@@ -93,7 +94,7 @@ for (const d of dialogs) {
   });
 }
 
-describe("page.tsx：AdminDashboard のほかの position: fixed", () => {
+describe("page.tsx：AdminStudents のほかの position: fixed", () => {
   it("fixed は 2 つのダイアログの背景だけ（どちらも ModalPortal の中）", () => {
     const count = admin.split('position: "fixed"').length - 1;
     assert.equal(count, 2);

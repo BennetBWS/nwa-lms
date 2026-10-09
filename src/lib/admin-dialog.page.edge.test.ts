@@ -254,7 +254,8 @@ function component(name: string): string {
   return next < 0 ? rest : rest.slice(0, next + 1);
 }
 
-const admin = component("AdminDashboard");
+// #32 受講生の表とダイアログは「生徒管理」（AdminStudents）に移した
+const admin = component("AdminStudents");
 
 /** `{cond && (` の中身 */
 function conditionalBlock(cond: string): string {
@@ -264,7 +265,7 @@ function conditionalBlock(cond: string): string {
   return balanced(admin, start + head.length - 1, "(");
 }
 
-describe("AdminDashboard：確認ダイアログの挙動が Portal 化で変わっていない", () => {
+describe("AdminStudents：確認ダイアログの挙動が Portal 化で変わっていない", () => {
   it("closeStatusDialog は処理中（statusSaving）なら閉じない", () => {
     const i = admin.indexOf("const closeStatusDialog = () =>");
     assert.ok(i >= 0);
@@ -329,7 +330,7 @@ describe("AdminDashboard：確認ダイアログの挙動が Portal 化で変わ
   });
 });
 
-describe("AdminDashboard：招待ダイアログの挙動が Portal 化で変わっていない", () => {
+describe("AdminStudents：招待ダイアログの挙動が Portal 化で変わっていない", () => {
   it("招待ボタンは、開くときに前回の結果・入力を消す", () => {
     const m = admin.match(/onClick=\{\(\) => \{ setInviteModal\(true\);([^}]*)\}\}/);
     assert.ok(m, "招待を開く onClick が見つからない");
@@ -367,10 +368,12 @@ describe("AdminDashboard：招待ダイアログの挙動が Portal 化で変わ
 });
 
 describe("page.tsx：ModalPortal の使われ方", () => {
-  it("ModalPortal は AdminDashboard の 2 つのダイアログだけで使う", () => {
+  it("ModalPortal は AdminStudents の 2 つのダイアログだけで使う（AdminDashboard には残っていない）", () => {
     assert.equal(src.split("<ModalPortal>").length - 1, 2);
     assert.equal(src.split("</ModalPortal>").length - 1, 2);
     assert.equal(admin.split("<ModalPortal>").length - 1, 2);
+    const dashboard = component("AdminDashboard");
+    assert.ok(!dashboard.includes("<ModalPortal>"), "AdminDashboard に ModalPortal が残っている");
   });
 
   it("ModalPortal はトップレベルで 1 回だけ定義されている", () => {
