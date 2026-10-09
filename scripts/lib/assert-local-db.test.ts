@@ -80,6 +80,30 @@ describe("assertLocalDatabase", () => {
     assert.throws(() => assertLocalDatabase(["not a url"]), /could not be parsed/);
   });
 
+  it("refusal messages are not specific to seed scripts (db-local.ts uses the same guard)", () => {
+    const refusals: Array<() => void> = [
+      () => assertLocalDatabase([REMOTE_URL]),
+      () => assertLocalDatabase([]),
+      () => {
+        setEnv("NODE_ENV", "production");
+        assertLocalDatabase([LOCAL_URL]);
+      },
+      () => {
+        setEnv("NODE_ENV", "development");
+        setEnv("VERCEL_ENV", "preview");
+        assertLocalDatabase([LOCAL_URL]);
+      },
+    ];
+    for (const refuse of refusals) {
+      assert.throws(refuse, (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /This script may only run against a local database\.$/);
+        assert.doesNotMatch(err.message, /Seed scripts/);
+        return true;
+      });
+    }
+  });
+
   it("does not leak credentials or the full URL in error messages", () => {
     const cases = [REMOTE_URL, `${REMOTE_PASSWORD}-not-a-url`];
     for (const url of cases) {

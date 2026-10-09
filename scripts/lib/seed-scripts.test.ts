@@ -55,6 +55,17 @@ for (const script of SCRIPTS) {
       assert.ok(!output.includes(SECRET), "output must not contain the password");
     });
 
+    it("exits 1 without leaking the username or password when the password has an unencoded \"#\"", () => {
+      const url = `postgresql://dummyseeduser:1234#${SECRET}@db.example.invalid:5432/db`;
+      const { code, output } = run(script, url, url);
+      assert.equal(code, 1, output);
+      assert.match(output, /Refusing to run: database URL #1 could not be parsed/);
+      assert.doesNotMatch(output, /Can't reach database server/, "guard must stop before any query");
+      for (const s of [SECRET, "dummyseeduser", "1234", "db.example.invalid"]) {
+        assert.ok(!output.includes(s), `output must not contain "${s}"`);
+      }
+    });
+
     it("exits 1 without leaking the password when the local DB is not running (localhost:1)", () => {
       const url = `postgresql://u:${SECRET}@localhost:1/db?password=${SECRET}`;
       const { code, output } = run(script, url, url);
