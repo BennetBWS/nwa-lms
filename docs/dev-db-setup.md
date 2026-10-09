@@ -11,6 +11,7 @@ Supabase CLI のローカル DB（127.0.0.1:54322）だけを使い、本番の 
 - `supabase login` / `supabase link` はしない。`supabase db push` や `--linked` の付くコマンドも使わない
   （このリポジトリの Supabase CLI はローカル DB 専用）
 - `vercel env pull` は使わない（本番などの値が手元の .env 系に書き込まれるため）
+- ローカル DB に本番のデータ（ダンプ・CSV・本番からのコピーなど）を入れない。ローカル DB には seed のダミーデータだけを置く
 - DB の URL は `.env` だけに書く。`.env.local` には書かない（Next.js は `.env.local` を優先し、
   Prisma の CLI は `.env` を読むため、混在すると接続先が食い違う）
 
@@ -173,6 +174,8 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 ## 10. 本番に接続していないことを確かめる
 
 - Wi-Fi を切っても、`npm run dev` の画面でログインとページの表示ができる（ローカル DB だけで動いている）
+  - このとき、ターミナルに `next/font/google` のフォントを取得できないという警告（Google Fonts へのアクセス失敗）が
+    出ることがあるが、無視してよい（代わりのフォントで表示されるだけで、DB の接続先とは関係ない）
 - 本番（https://nwa-lms.vercel.app）の管理画面の受講生一覧に、seed のアカウント（example.com）が増えていない
 
 ## 本番マイグレーションの適用手順（Tec が行う。承認後）
