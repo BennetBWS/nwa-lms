@@ -11,8 +11,11 @@ import * as view from "./admin-student-view";
 // 偽の React（useState / useRef / useEffect と要素の木）で「描画」して、表示とリクエストを確かめる。
 // quiz-page.render.page.test.ts と同じ方式。DOM・DB・ネットワークなし。データはすべてダミー（example.com）。
 //
-// 検証しないこと：useEffect の依存配列・cleanup（最初の描画の後に 1 回だけ実行する）、setState による再描画
-// （テストが render() を呼んだときだけ描画）、フォーカスの移動、ModalPortal の Portal 化（admin-dialog.page*.test.ts）。
+// useEffect は依存配列が変わったときだけ（依存配列がなければ毎回）、描画の後に実行し、再実行の前に cleanup を呼ぶ。
+// ref は描画のたびに前の描画の ref を外し（callback ref は null で呼ぶ・object ref は null にする）、新しい木の要素ごとに
+// 偽の要素（focus() を呼ぶと focused() がその要素を返す。前の描画の偽の要素は isConnected が false になる）を付ける。
+// 検証しないこと：setState による再描画（テストが render() を呼んだときだけ描画）、
+// ModalPortal の Portal 化（admin-dialog.page*.test.ts）。
 
 const src = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
 
@@ -96,9 +99,15 @@ function mount() {
   const refs: Array<{ current: unknown }> = [];
   let si = 0;
   let ri = 0;
-  let first = true;
-  const effects: Array<() => void> = [];
+  let ei = 0;
+  type Effect = { deps: unknown[] | undefined; cleanup: (() => void) | undefined };
+  const effectSlots: Effect[] = [];
+  let pending: Array<{ i: number; fn: () => unknown; deps: unknown[] | undefined }> = [];
   const reqs: Req[] = [];
+  // 偽の DOM 要素。focus() を呼ぶと、その要素（El）が focused になる
+  type FakeNode = { el: El; isConnected: boolean; focus: () => void };
+  let focused: El | null = null;
+  let attached: Array<{ ref: unknown; node: FakeNode }> = [];
 
   const useState = (init: unknown) => {
     const i = si++;
@@ -113,9 +122,13 @@ function mount() {
     if (!(i in refs)) refs[i] = { current: init };
     return refs[i];
   };
-  const useEffect = (fn: () => void) => {
-    if (first) effects.push(fn);
+  const useEffect = (fn: () => unknown, deps?: unknown[]) => {
+    const i = ei++;
+    const prev = effectSlots[i];
+    const changed = !prev || deps === undefined || prev.deps === undefined || deps.length !== prev.deps.length || deps.some((d, k) => !Object.is(d, prev.deps![k]));
+    if (changed) pending.push({ i, fn, deps });
   };
+  const window = { addEventListener: () => {}, removeEventListener: () => {} };
   const authFetch = (url: string, init?: RequestInit) =>
     new Promise<FakeRes>((release, fail) => reqs.push({ url, init, release, fail }));
 
@@ -126,6 +139,7 @@ function mount() {
     useState,
     useRef,
     useEffect,
+    window,
     authFetch,
     classifyAuthFailure,
     ...view,
@@ -141,15 +155,37 @@ function mount() {
   const render = (): El => {
     si = 0;
     ri = 0;
+    ei = 0;
+    pending = [];
     const tree = AdminStudents({ setCurrentPage: () => {} });
     assertRenderable(tree);
-    if (first) {
-      first = false;
-      for (const e of effects) e();
+    // 前の描画の ref を外し、新しい木の要素に付け直す
+    for (const { ref, node } of attached) {
+      node.isConnected = false;
+      if (typeof ref === "function") ref(null);
+      else if (ref && typeof ref === "object") (ref as { current: unknown }).current = null;
+    }
+    attached = [];
+    for (const el of findAll(tree, (e) => e.props.ref !== undefined && e.props.ref !== null)) {
+      const node: FakeNode = { el, isConnected: true, focus: () => (focused = el) };
+      const ref = el.props.ref;
+      if (typeof ref === "function") ref(node);
+      else (ref as { current: unknown }).current = node;
+      attached.push({ ref, node });
+    }
+    // 依存配列が変わった effect を実行する（前回の cleanup を先に呼ぶ）
+    for (const { i, fn, deps } of pending) {
+      effectSlots[i]?.cleanup?.();
+      const cleanup = fn();
+      effectSlots[i] = { deps, cleanup: typeof cleanup === "function" ? (cleanup as () => void) : undefined };
     }
     return tree;
   };
-  return { render, reqs };
+  // テストからフォーカスを動かす（タブのボタンを押す前にフォーカスを置く、など）
+  const setFocused = (el: El | null) => {
+    focused = el;
+  };
+  return { render, reqs, focused: () => focused, setFocused };
 }
 
 // ───────────── 木の検索 ─────────────
@@ -842,16 +878,113 @@ describe("AdminStudents 描画：検索・Course 列・ダイアログ（追加�
     assert.equal(p2.length, 1);
     assert.ok(text(p2[0]).includes("生徒を招待"), "招待モーダルが ModalPortal の中にない");
   });
+});
+
+describe("AdminStudents 描画：フォーカスの移動", () => {
+  const headingOf = (tree: El, label: string) => {
+    const hit = findAll(tree, (e) => (e.type === "h2" || e.type === "h3") && text(e).trim() === label);
+    assert.equal(hit.length, 1, `見出し「${label}」が 1 つでない`);
+    return hit[0];
+  };
+  const focusedLabel = (m: { focused: () => El | null }) => {
+    const f = m.focused();
+    return f === null ? null : `${String(f.type)}:${text(f).trim()}`;
+  };
+  const tab = (tree: El, prefix: string) => {
+    const hit = buttons(tree).find((b) => b.props.role === "tab" && text(b).startsWith(prefix));
+    assert.ok(hit, `タブ「${prefix}」がない`);
+    return hit;
+  };
+
+  it("詳細を開くと、詳細の見出し（tabIndex=-1）にフォーカスを移す（読み込み中から）", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "いとう"));
+    const tree = m.render();
+    const heading = headingOf(tree, "いとう の詳細");
+    assert.equal(heading.props.tabIndex, -1, "詳細の見出しが tabIndex=-1 でない");
+    assert.equal(m.focused(), heading, `詳細の見出しにフォーカスがない：${focusedLabel(m)}`);
+  });
+
+  it("詳細の読み込み後・再読み込みでは、フォーカスを動かさない（開いたときの 1 回だけ）", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "いとう"));
+    m.render();
+    m.setFocused(null);
+    m.reqs[1].release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    const tree = m.render();
+    assert.equal(m.focused(), null, `読み込み後にフォーカスが動いた：${focusedLabel(m)}`);
+    click(button(tree, "再読み込み"));
+    m.render();
+    m.reqs[2].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    m.render();
+    assert.equal(m.focused(), null, `再読み込みでフォーカスが動いた：${focusedLabel(m)}`);
+  });
 
   it("「一覧に戻る」の後、開いていた受講生の名前ボタンにフォーカスを戻す", async () => {
     const m = await openedDetail("stu_b", "いとう");
     click(button(m.render(), "一覧に戻る"));
     const tree = m.render();
-    let focused = "";
-    for (const b of nameButtons(tree)) {
-      const ref = b.props.ref as (el: unknown) => void;
-      ref({ focus: () => (focused = text(b).trim()) });
+    assert.equal(m.focused(), nameButton(tree, "いとう"), `名前ボタンにフォーカスがない：${focusedLabel(m)}`);
+  });
+
+  it("戻した後にタブを切り替えて戻っても、フォーカスは名前ボタンへ再び移らない", async () => {
+    const m = await openedDetail("stu_b", "いとう");
+    click(button(m.render(), "一覧に戻る"));
+    let tree = m.render();
+    const allTab = tab(tree, "すべて（");
+    m.setFocused(allTab);
+    click(allTab);
+    tree = m.render();
+    const activeTab = tab(tree, "有効（");
+    m.setFocused(activeTab);
+    click(activeTab);
+    m.render();
+    assert.equal(m.focused(), activeTab, `タブの切り替えでフォーカスが動いた：${focusedLabel(m)}`);
+  });
+
+  it("戻る先の行が表示されていない（詳細で無効化した）ときは一覧の見出しへ移し、後でタブを切り替えてもフォーカスは移らない", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "無効化"));
+    click(button(m.render(), "無効化する"));
+    m.reqs[2].release(res({ id: "stu/a", status: "deactivated", deactivatedAt: "2026-10-08T15:30:00.000Z" }));
+    await settle();
+    m.reqs[3].release(res(LIST.map((r) => (r.id === "stu/a" ? { ...r, status: "deactivated", deactivatedAt: "2026-10-08T15:30:00.000Z" } : r))));
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    let tree = m.render();
+    assert.deepEqual(shownNames(tree), ["いとう"], "有効タブに無効化した受講生が残っている");
+    const heading = headingOf(tree, "Students");
+    assert.equal(heading.props.tabIndex, -1, "一覧の見出しが tabIndex=-1 でない");
+    assert.equal(m.focused(), heading, `一覧の見出しにフォーカスがない：${focusedLabel(m)}`);
+
+    // 無効化した受講生が表示されるタブへ切り替えても、名前ボタンへフォーカスが移らない
+    for (const prefix of ["無効（", "すべて（"]) {
+      const t = tab(tree, prefix);
+      m.setFocused(t);
+      click(t);
+      tree = m.render();
+      assert.ok(shownNames(tree).includes("あおき"), `「${prefix}」タブに無効化した受講生が出ていない`);
+      assert.equal(m.focused(), t, `「${prefix}」タブへの切り替えでフォーカスが動いた：${focusedLabel(m)}`);
     }
-    assert.equal(focused, "いとう");
+  });
+
+  it("検索語を残したまま戻ると名前ボタンへ戻し、その後に検索語を変えてもフォーカスは移らない", async () => {
+    const m = await loaded();
+    type(searchInput(m.render()), "いと");
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[1].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    let tree = m.render();
+    // 戻る先の行はある（検索語は残る）ので名前ボタンへ
+    assert.equal(m.focused(), nameButton(tree, "いとう"), `名前ボタンにフォーカスがない：${focusedLabel(m)}`);
+    const input = searchInput(tree);
+    m.setFocused(input);
+    type(input, "");
+    tree = m.render();
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう"]);
+    assert.equal(m.focused(), input, `検索語の変更でフォーカスが動いた：${focusedLabel(m)}`);
   });
 });

@@ -1467,8 +1467,13 @@ const AdminStudents = ({ setCurrentPage }) => {
   const studentsInFlight = useRef(false);
   // 詳細の取得ごとに 1 増やす。閉じた後・別の受講生に切り替えた後に届いた応答は捨てる
   const detailSeq = useRef(0);
-  // 「一覧に戻る」のあと、この id の名前ボタンにフォーカスを戻す
+  // 「一覧に戻る」のあと、この id の名前ボタンにフォーカスを戻す（戻った直後の 1 回だけ使い、使ったら消す）
   const returnFocusIdRef = useRef(null);
+  // 表示中の名前ボタン（id → 要素）。一覧に戻ったときのフォーカスの戻り先を探す
+  const nameButtonEls = useRef(new Map());
+  // 一覧の見出し（戻る先の行が表示されていないときのフォーカス先）と、詳細の見出し（詳細を開いたときのフォーカス先）
+  const listHeadingRef = useRef(null);
+  const detailHeadingRef = useRef(null);
 
   // Same approach as loadNotifications: an expired session is handled by authFetch
   // (sign out and go to /login), so keep the loading screen and do not fetch again.
@@ -1546,6 +1551,27 @@ const AdminStudents = ({ setCurrentPage }) => {
     setDetailError(null);
     setDetailLoading(false);
   };
+
+  // 詳細を開いたら詳細の見出しへ、一覧に戻ったら開いていた受講生の名前ボタンへフォーカスを移す。
+  // 一覧に戻った直後の 1 回だけ戻し、その行が表示されていなければ（詳細で無効化して有効タブから消えた等）一覧の見出しへ移す。
+  // どちらの場合も戻り先は消すので、後でタブや検索を切り替えてもフォーカスは動かない
+  useEffect(() => {
+    if (detailId !== null) {
+      const heading = detailHeadingRef.current;
+      if (heading && heading.isConnected) heading.focus();
+      return;
+    }
+    const id = returnFocusIdRef.current;
+    if (id === null) return;
+    returnFocusIdRef.current = null;
+    const el = nameButtonEls.current.get(id);
+    if (el && el.isConnected) {
+      el.focus();
+      return;
+    }
+    const heading = listHeadingRef.current;
+    if (heading && heading.isConnected) heading.focus();
+  }, [detailId]);
 
   const handleInvite = async () => {
     setInviting(true);
@@ -1761,8 +1787,10 @@ const AdminStudents = ({ setCurrentPage }) => {
         </div>
       );
     }
+    const detailRowName = students.find(s => s.id === detailId)?.name;
     body = (
       <div>
+        <h2 ref={detailHeadingRef} tabIndex={-1} className="sr-only">{detailRowName ? `${detailRowName} の詳細` : "受講生の詳細"}</h2>
         <Button size="sm" variant="outline" onClick={closeDetail} style={{ borderRadius: 10, fontSize: 12, gap: 4, marginBottom: 16 }}>
           <ArrowLeft size={14} aria-hidden="true" /> 一覧に戻る
         </Button>
@@ -1787,7 +1815,7 @@ const AdminStudents = ({ setCurrentPage }) => {
       <div style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
         <div style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Students</h3>
+            <h3 ref={listHeadingRef} tabIndex={-1} style={{ fontSize: 16, fontWeight: 700, color: T.dark, margin: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif", outline: "none" }}>Students</h3>
             <div role="tablist" aria-label="受講生の状態" style={{ display: "flex", gap: 4, padding: 3, borderRadius: 10, background: T.borderSubtle }}>
               {STUDENT_TABS.map(tab => {
                 const selected = studentTab === tab.key;
@@ -1826,7 +1854,7 @@ const AdminStudents = ({ setCurrentPage }) => {
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
               <Avatar style={{ width: 32, height: 32, flexShrink: 0, opacity: dim }}><AvatarFallback style={{ background: deactivated ? T.textMuted : `linear-gradient(135deg, ${T.accent}, ${T.purple})`, color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{s.name.charAt(0)}</AvatarFallback></Avatar>
               <button type="button" onClick={() => openDetail(s.id)} title="詳細を表示"
-                ref={el => { if (el && returnFocusIdRef.current === s.id) { returnFocusIdRef.current = null; el.focus(); } }}
+                ref={el => { if (el) nameButtonEls.current.set(s.id, el); else nameButtonEls.current.delete(s.id); }}
                 style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 600, color: T.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: dim, textDecoration: "underline", textDecorationColor: `${T.textMuted}60`, textUnderlineOffset: 3, fontFamily: "inherit", minWidth: 0 }}>
                 {s.name}
               </button>
