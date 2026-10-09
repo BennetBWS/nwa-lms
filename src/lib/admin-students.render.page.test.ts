@@ -552,3 +552,306 @@ describe("AdminStudents 描画：招待・無効化・再有効化（従来と�
     assert.ok(!text(tree).includes("無効（無効化日"), "詳細の状態が無効のまま");
   });
 });
+
+// ───────────── #32（テスト担当の追加）：応答の取り違え・同期・セッション切れ・Portal ─────────────
+
+/** 本文（json）を後から返す応答 */
+function deferredRes(p: Partial<FakeRes> = {}) {
+  let resolveBody: (v: unknown) => void = () => {};
+  let rejectBody: (e: unknown) => void = () => {};
+  const body = new Promise<unknown>((ok, ng) => {
+    resolveBody = ok;
+    rejectBody = ng;
+  });
+  return { r: res(null, { ...p, json: () => body }), resolveBody, rejectBody };
+}
+
+async function openedDetail(id: string, name: string, extra: Record<string, unknown> = {}) {
+  const m = await loaded();
+  let tree = m.render();
+  if (extra.status === "deactivated") {
+    click(buttons(tree).find((b) => text(b).startsWith("すべて（"))!);
+    tree = m.render();
+  }
+  click(nameButton(tree, name));
+  const req = m.reqs.at(-1)!;
+  req.release(res(detailOf(id, name, extra)));
+  await settle();
+  return m;
+}
+
+describe("AdminStudents 描画：古い応答の破棄（追加）", () => {
+  it("新しい受講生の応答が先、古い応答が後から届いても、新しい受講生のまま", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[2].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    m.reqs[1].release(res(detailOf("stu/a", "あおき")));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("stu_b@example.com"), "新しい受講生が表示されていない");
+    assert.ok(!t.includes("stu/a@example.com"), "古い応答で上書きされた");
+  });
+
+  it("応答の本文（json）が切り替えの後に届いても捨てる", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    const d = deferredRes();
+    m.reqs[1].release(d.r);
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    d.resolveBody(detailOf("stu/a", "あおき"));
+    await settle();
+    const tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "古い本文で読み込み中が終わった");
+    assert.ok(!text(tree).includes("stu/a@example.com"), "古い本文を表示している");
+  });
+
+  it("切り替えの後に古い応答が失敗しても、新しい受講生の表示に失敗が出ない", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[1].fail(new Error("network"));
+    m.reqs[2].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.ok(text(tree).includes("stu_b@example.com"), "新しい受講生が表示されていない");
+  });
+
+  it("前の受講生を表示した後、別の受講生を開くと、読み込み中に前の人の情報が残らない", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    assert.ok(text(m.render()).includes("stu/a@example.com"), "前提：あおきが表示されていない");
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    const t = text(m.render());
+    assert.ok(t.includes("Loading..."), "読み込み中でない");
+    for (const s of ["stu/a@example.com", "ダミー修了テスト", "ダミー課題", "コースごとの進捗"]) {
+      assert.ok(!t.includes(s), `前の受講生の ${s} が残っている`);
+    }
+  });
+
+  it("同じ受講生を開き直すと、もう一度取得する", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "あおき"));
+    assert.equal(m.reqs.at(-1)!.url, "/api/admin/students/stu%2Fa");
+    assert.equal(m.reqs.length, 3);
+  });
+});
+
+describe("AdminStudents 描画：セッション切れ・失敗の種類（追加）", () => {
+  const LOGIN = `${ORIGIN}/login?callbackUrl=%2F`;
+
+  it("一覧：/login へのリダイレクトはセッション切れ（読み込み中のまま、再取得しない）", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res("<html>", { redirected: true, url: LOGIN }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.ok(text(tree).includes("Loading..."), "読み込み中のままでない");
+    assert.equal(m.reqs.length, 1);
+  });
+
+  it("一覧：/login 以外へのリダイレクト・403 は失敗", async () => {
+    for (const p of [{ redirected: true, url: `${ORIGIN}/elsewhere` }, { status: 403, ok: false }]) {
+      const m = mount();
+      m.render();
+      m.reqs[0].release(res(LIST, p));
+      await settle();
+      assert.equal(byRole(m.render(), "alert").length, 1, JSON.stringify(p));
+    }
+  });
+
+  it("詳細：/login へのリダイレクトはセッション切れ（読み込み中のまま）", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res("<html>", { redirected: true, url: LOGIN }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.ok(text(tree).includes("Loading..."), "読み込み中のままでない");
+  });
+
+  it("詳細：403・JSON でない本文・/login 以外へのリダイレクトは「読み込めませんでした」と再読み込み（404 の文言ではない）", async () => {
+    const cases: Array<Partial<FakeRes>> = [
+      { status: 403, ok: false },
+      { json: () => Promise.reject(new SyntaxError("Unexpected token <")) },
+      { redirected: true, url: `${ORIGIN}/elsewhere` },
+      { redirected: true, status: 404, ok: false, url: `${ORIGIN}/elsewhere` },
+    ];
+    for (const p of cases) {
+      const m = await loaded();
+      click(nameButton(m.render(), "あおき"));
+      m.reqs[1].release(res(detailOf("stu/a", "あおき"), p));
+      await settle();
+      const tree = m.render();
+      const alerts = byRole(tree, "alert");
+      assert.equal(alerts.length, 1, JSON.stringify(p));
+      assert.ok(text(alerts[0]).includes(view.DETAIL_LOAD_FAILED_MESSAGE), `失敗の文言でない：${JSON.stringify(p)}`);
+      assert.ok(!text(tree).includes("stu/a@example.com"), "失敗なのに詳細を表示している");
+      assert.ok(buttonLabels(tree).includes("再読み込み"), "再読み込みがない");
+    }
+  });
+
+  it("詳細の 404 から一覧に戻ると、一覧はそのまま（読み直さない）", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res({ error: "Student not found" }, { status: 404, ok: false }));
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう"]);
+    assert.equal(m.reqs.length, 2);
+  });
+});
+
+describe("AdminStudents 描画：無効化・再有効化と一覧・詳細の同期（追加）", () => {
+  it("詳細から無効化：PUT の成功直後（一覧の読み直し前）に詳細が無効になり、ボタンが再有効化に変わる", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "無効化"), { focus() {}, isConnected: true });
+    click(button(m.render(), "無効化する"));
+    assert.equal(m.reqs[2].url, "/api/admin/students/stu%2Fa/deactivate");
+    m.reqs[2].release(res({ id: "stu/a", status: "deactivated", deactivatedAt: "2026-10-08T15:30:00.000Z" }));
+    await settle();
+    let tree = m.render();
+    assert.equal(m.reqs[3].url, "/api/admin/students?status=all");
+    assert.ok(text(tree).includes("無効（無効化日 2026/10/09）"), "詳細の状態が無効（日本時間の日付）になっていない");
+    // 一覧の読み直しが失敗しても、一覧の行は無効のまま（PUT の応答で更新済み）
+    m.reqs[3].release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    tree = m.render();
+    assert.equal(byRole(tree, "dialog").length, 0);
+    assert.ok(buttonLabels(tree).includes("再有効化"), "詳細のボタンが再有効化になっていない");
+    click(button(tree, "一覧に戻る"));
+    tree = m.render();
+    assert.ok(text(tree).includes("無効（2）"), "一覧のタブの件数が更新されていない");
+    assert.deepEqual(shownNames(tree), ["いとう"], "有効タブに無効化した受講生が残っている");
+  });
+
+  it("詳細から無効化して失敗：ダイアログに文言、詳細は有効のまま、一覧を読み直さない", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "無効化"));
+    click(button(m.render(), "無効化する"));
+    m.reqs[2].release(res({ error: "Forbidden" }, { status: 403, ok: false }));
+    await settle();
+    const tree = m.render();
+    const dialog = byRole(tree, "dialog");
+    assert.equal(dialog.length, 1);
+    assert.ok(text(dialog[0]).includes(view.statusActionErrorMessage(403)), "403 の文言がない");
+    assert.ok(!text(tree).includes("無効（無効化日"), "失敗なのに詳細が無効になった");
+    assert.equal(m.reqs.length, 3, "失敗なのに一覧を読み直した");
+  });
+
+  it("別の受講生の状態の応答（id が違う）は成功として扱わない", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "無効化"));
+    click(button(m.render(), "無効化する"));
+    m.reqs[2].release(res({ id: "stu_b", status: "deactivated", deactivatedAt: "2026-10-08T00:00:00.000Z" }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "dialog").length, 1);
+    assert.ok(!text(tree).includes("無効（無効化日"), "別の受講生の応答で詳細が変わった");
+  });
+
+  it("一覧で再有効化：無効タブから行が消え、有効タブに出る", async () => {
+    const m = await loaded();
+    click(buttons(m.render()).find((b) => text(b).startsWith("無効（"))!);
+    click(button(m.render(), "再有効化"));
+    click(button(m.render(), "再有効化する"));
+    assert.equal(m.reqs[1].url, "/api/admin/students/stu_c/reactivate");
+    m.reqs[1].release(res({ id: "stu_c", status: "active", deactivatedAt: null }));
+    await settle();
+    m.reqs[2].release(res(LIST.map((r) => (r.id === "stu_c" ? { ...r, status: "active", deactivatedAt: null } : r))));
+    await settle();
+    let tree = m.render();
+    assert.deepEqual(shownNames(tree), []);
+    assert.ok(text(tree).includes("無効（0）"), "無効の件数が 0 でない");
+    click(buttons(tree).find((b) => text(b).startsWith("有効（"))!);
+    tree = m.render();
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう", "うえだ"]);
+  });
+});
+
+describe("AdminStudents 描画：検索・Course 列・ダイアログ（追加）", () => {
+  it("検索語は詳細を開いて戻った後も残り、絞り込みも保たれる", async () => {
+    const m = await loaded();
+    type(searchInput(m.render()), "いと");
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[1].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    const tree = m.render();
+    assert.equal(searchInput(tree).props.value, "いと");
+    assert.deepEqual(shownNames(tree), ["いとう"]);
+  });
+
+  it("検索はタブの中だけで絞る（有効タブで無効の受講生は出ない）", async () => {
+    const m = await loaded();
+    type(searchInput(m.render()), "うえだ");
+    let tree = m.render();
+    assert.deepEqual(shownNames(tree), []);
+    assert.ok(text(tree).includes("該当する受講生はいません"), "該当なしの文言がない");
+    click(buttons(tree).find((b) => text(b).startsWith("すべて（"))!);
+    tree = m.render();
+    assert.deepEqual(shownNames(tree), ["うえだ"]);
+  });
+
+  it("見えない空白だけの検索語は全件（\\u3000・\\uFEFF）", async () => {
+    const m = await loaded();
+    type(searchInput(m.render()), "\u3000\uFEFF");
+    assert.deepEqual(shownNames(m.render()), ["あおき", "いとう"]);
+  });
+
+  it("Course 列：レッスンが 1 件もないときは「—」（全コース修了ではない）", async () => {
+    const m = await loaded([row("stu_z", "ぜろ", { currentCourse: null, totalLessons: 0, completedLessons: 0, lastActive: null })]);
+    const t = text(m.render());
+    assert.ok(!t.includes("全コース修了"), "レッスン 0 件で全コース修了と出ている");
+    assert.ok(t.includes("—"), "「—」がない");
+  });
+
+  it("詳細：レッスンが 1 件もないなら「現在のコース」は「—」", async () => {
+    const m = await openedDetail("stu_b", "いとう", {
+      currentCourse: null,
+      courseProgress: [{ courseId: "c0", courseName: "空のコース", totalLessons: 0, completedLessons: 0, lastCompletedAt: null }],
+    });
+    const t = text(m.render());
+    assert.ok(t.includes("0 / 0 レッスン · 0%"), "0 件のコースの進捗がない");
+    assert.ok(!t.includes("全コース修了"), "レッスン 0 件で全コース修了と出ている");
+  });
+
+  it("確認ダイアログ・招待モーダルは ModalPortal の中に描画される（詳細から開いた場合も）", async () => {
+    const m = await openedDetail("stu/a", "あおき");
+    click(button(m.render(), "無効化"));
+    let tree = m.render();
+    const portals = findAll(tree, (e) => e.type === ModalPortal);
+    assert.equal(portals.length, 1, "ModalPortal が 1 つでない");
+    assert.equal(byRole(portals[0], "dialog").length, 1, "確認ダイアログが ModalPortal の中にない");
+    assert.equal(byRole(tree, "dialog").length, 1);
+
+    const m2 = await loaded();
+    click(button(m2.render(), "招待"));
+    tree = m2.render();
+    const p2 = findAll(tree, (e) => e.type === ModalPortal);
+    assert.equal(p2.length, 1);
+    assert.ok(text(p2[0]).includes("生徒を招待"), "招待モーダルが ModalPortal の中にない");
+  });
+
+  it("「一覧に戻る」の後、開いていた受講生の名前ボタンにフォーカスを戻す", async () => {
+    const m = await openedDetail("stu_b", "いとう");
+    click(button(m.render(), "一覧に戻る"));
+    const tree = m.render();
+    let focused = "";
+    for (const b of nameButtons(tree)) {
+      const ref = b.props.ref as (el: unknown) => void;
+      ref({ focus: () => (focused = text(b).trim()) });
+    }
+    assert.equal(focused, "いとう");
+  });
+});

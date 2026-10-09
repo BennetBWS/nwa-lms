@@ -99,3 +99,90 @@ describe("page.tsx：AdminStudents", () => {
     assert.ok((students.match(/role="alert"/g) ?? []).length >= 3, "role=alert が足りない（一覧・詳細・404・確認ダイアログ）");
   });
 });
+
+// ───────────── #32（テスト担当の追加）：import の取りこぼし・AdminDashboard の残り ─────────────
+// page.tsx は // @ts-nocheck のため、import し忘れは typecheck で見つからない（描画テストは view の全 export を渡す）。
+
+/** `import { a, b as c } from "<mod>";` の名前（ローカル名） */
+function importedNames(mod: string): Set<string> {
+  const re = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*"${mod.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}";`, "g");
+  const out = new Set<string>();
+  for (const m of Array.from(src.matchAll(re))) {
+    for (const part of m[1].split(",")) {
+      const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+      if (name) out.add(name);
+    }
+  }
+  return out;
+}
+
+describe("page.tsx：AdminStudents・AdminDashboard が使う名前は import されている", () => {
+  it("admin-student-view の export のうち AdminStudents が使うものは、すべて import 済み", async () => {
+    const view = await import("./admin-student-view");
+    const imported = importedNames("@/lib/admin-student-view");
+    const used = Object.keys(view).filter((name) => new RegExp(`\\b${name}\\b`).test(students));
+    assert.ok(used.length >= 15, `使っている名前が少なすぎる（${used.join(", ")}）`);
+    const missing = used.filter((name) => !imported.has(name));
+    assert.deepEqual(missing, [], `import されていない：${missing.join(", ")}`);
+  });
+
+  it("JSX のアイコン・部品（大文字で始まるタグ）は import されているか page.tsx で定義されている", () => {
+    for (const [name, body] of [["AdminStudents", students], ["AdminDashboard", dashboard]] as const) {
+      const tags = new Set(Array.from(body.matchAll(/<([A-Z]\w*)[\s/>]/g)).map((m) => m[1]));
+      for (const tag of Array.from(tags)) {
+        const defined =
+          new RegExp(`import\\s*\\{[^}]*\\b${tag}\\b[^}]*\\}\\s*from`).test(src) ||
+          new RegExp(`\\n(const|function) ${tag}\\b`).test(src) ||
+          // コンポーネント内のローカル変数（例：const Icon = s.icon）
+          new RegExp(`\\bconst ${tag} = `).test(body);
+        assert.ok(defined, `${name} の <${tag}> が import・定義されていない`);
+      }
+    }
+  });
+
+  it("classifyAuthFailure・authFetch・ModalPortal は page.tsx にある", () => {
+    assert.ok(importedNames("@/lib/client-session").has("classifyAuthFailure"), "classifyAuthFailure が import されていない");
+    assert.match(src, /\nconst authFetch = /);
+    assert.match(src, /\nconst ModalPortal = \(/);
+  });
+});
+
+describe("page.tsx：AdminDashboard に受講生の管理が残っていない（追加）", () => {
+  it("受講生の state・処理・表示用関数を参照しない", () => {
+    for (const s of [
+      "studentRows",
+      "setStudentRows",
+      "reloadStudents",
+      "openStatusDialog",
+      "handleStatusAction",
+      "openDetail",
+      "detailSeq",
+      "filterStudentsByQuery",
+      "toAdminStudentListItem",
+      "countStudentsByTab",
+      "studentsForTab",
+      "confirmMessage",
+      "role=\"dialog\"",
+      "position: \"fixed\"",
+      "students?status",
+    ]) {
+      assert.ok(!dashboard.includes(s), `${s} が AdminDashboard に残っている`);
+    }
+  });
+
+  it("AdminDashboard の取得は /api/admin/courses だけ（受講生の一覧は取らない）", () => {
+    const urls = Array.from(dashboard.matchAll(/authFetch\(\s*["'`]([^"'`]+)["'`]/g)).map((m) => m[1]);
+    assert.deepEqual(urls, ["/api/admin/courses"]);
+    assert.ok(!/\bfetch\(/.test(dashboard.replace(/authFetch\(/g, "")), "authFetch 以外の fetch がある");
+  });
+
+  it("サイドバーに「生徒管理」（admin-students）があり、ルートは 1 つだけ", () => {
+    assert.match(src, /\{ id: "admin-students", icon: Users, label: "生徒管理" \}/);
+    assert.equal(src.split('"admin-students": <').length - 1, 1);
+  });
+
+  it("AdminStudents の中で setCurrentPage を使っても、ダッシュボードへの導線（生徒管理を開く）は AdminDashboard だけ", () => {
+    assert.ok(!students.includes("生徒管理を開く"), "AdminStudents に「生徒管理を開く」がある");
+    assert.equal(src.split("生徒管理を開く").length - 1, 1);
+  });
+});

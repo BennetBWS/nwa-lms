@@ -549,3 +549,183 @@ describe("GET /api/admin/students/[id] (detail): whitelist (#32)", () => {
     }
   });
 });
+
+// ---- #32 (tester): other students' data, odd data shapes, roles ----
+
+describe("GET /api/admin/students/[id] (detail): only this student's data (#32)", () => {
+  /** A third student with its own progress / quiz / assignment, all with markers. */
+  function seedOther() {
+    db.users.push({
+      id: "stu_other",
+      email: "other-32@example.com",
+      name: "C Other",
+      password: "$2a$04$dummyhashdummyhashdummyhashdummyhashdummyhashdummyhc",
+      role: "STUDENT",
+      avatar: "other-avatar.png",
+      createdAt: new Date("2026-05-01T00:00:00.000Z"),
+      deactivatedAt: null,
+      sessionVersion: 1,
+    });
+    db.progress.push(
+      { id: "px1", userId: "stu_other", lessonId: "l1", completed: true, completedAt: new Date("2026-09-20T00:00:00.000Z") },
+      { id: "px2", userId: "stu_other", lessonId: "l2", completed: true, completedAt: new Date("2026-09-21T00:00:00.000Z") },
+      { id: "px3", userId: "stu_other", lessonId: "l3", completed: true, completedAt: new Date("2026-09-22T00:00:00.000Z") }
+    );
+    db.quizAttempts.push({
+      id: "q_other_marker",
+      userId: "stu_other",
+      quizId: "quiz_other",
+      score: 10,
+      passed: false,
+      answers: ["other-answer-marker"],
+      createdAt: new Date("2026-09-23T00:00:00.000Z"),
+      quiz: { title: "OTHER-QUIZ-MARKER", type: "FINAL" },
+    });
+    db.assignments.push({
+      id: "a_other_marker",
+      userId: "stu_other",
+      courseId: "c1",
+      title: "OTHER-ASSIGNMENT-MARKER",
+      status: "APPROVED",
+      deadline: null,
+      feedback: "other-feedback-marker",
+      createdAt: new Date("2026-09-24T00:00:00.000Z"),
+      course: { name: "STEP1 ダミー" },
+    });
+  }
+
+  it("another student's progress / quiz attempts / assignments never appear", async () => {
+    seedCourses();
+    seedOther();
+    const res = await detail(get(), params("stu_off"));
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    for (const s of ["stu_other", "other-32@example.com", "OTHER-QUIZ-MARKER", "OTHER-ASSIGNMENT-MARKER", "other-feedback-marker", "other-answer-marker", "2026-09-2"]) {
+      assert.ok(!text.includes(s), `${s} (another student) is in the detail response`);
+    }
+    const body = JSON.parse(text);
+    // stu_off finished l1 only; stu_other's l1-l3 do not count
+    assert.deepEqual(
+      body.courseProgress.map((c: { courseId: string; completedLessons: number }) => [c.courseId, c.completedLessons]),
+      [["c1", 1], ["c_empty", 0], ["c2", 0]]
+    );
+    assert.deepEqual(body.currentCourse, { id: "c1", name: "STEP1 ダミー" });
+    // and the other student's own detail is "all courses completed"
+    const other = await (await detail(get(), params("stu_other"))).json();
+    assert.equal(other.currentCourse, null);
+    assert.deepEqual(other.quizAttempts.map((q: { id: string }) => q.id), ["q_other_marker"]);
+    assert.ok(!JSON.stringify(other).includes("other-avatar.png"), "avatar is returned");
+  });
+
+  it("every query is scoped to the requested id (no unscoped child query)", async () => {
+    seedCourses();
+    seedOther();
+    await detail(get(), params("stu_off"));
+    for (const m of ["quizAttempt.findMany", "assignment.findMany"]) {
+      const call = db.calls.find((c) => c.method === m);
+      assert.ok(call, `${m} was not called`);
+      assert.deepEqual((call.args[0] as { where: unknown }).where, { userId: "stu_off" }, `${m} is not scoped`);
+    }
+    assert.ok(!db.calls.some((c) => c.method === "progress.findMany"), "progress is read without the per-lesson scope");
+  });
+
+  it("a non-null avatar / an incomplete row of this student are not returned or counted", async () => {
+    seedCourses();
+    user("stu_off").avatar = "off-avatar.png";
+    const text = await (await detail(get(), params("stu_off"))).text();
+    assert.ok(!text.includes("off-avatar.png"), "avatar is in the detail response");
+    const body = JSON.parse(text);
+    // po2 (l2, completed: false) is not counted
+    assert.equal(body.courseProgress[0].completedLessons, 1);
+  });
+
+  it("no course: courseProgress [] and currentCourse null; no quiz / assignment: []", async () => {
+    db.quizAttempts.length = 0;
+    db.assignments.length = 0;
+    const body = await (await detail(get(), params("stu_active"))).json();
+    assert.deepEqual(body.courseProgress, []);
+    assert.equal(body.currentCourse, null);
+    assert.deepEqual(body.quizAttempts, []);
+    assert.deepEqual(body.assignments, []);
+    assert.deepEqual(Object.keys(body).sort(), [...ADMIN_STUDENT_DETAIL_KEYS]);
+  });
+});
+
+describe("GET /api/admin/students/[id] (detail): roles and ids (#32)", () => {
+  for (const [label, s] of [
+    ["student session (another student's id)", STUDENT_SESSION],
+    ["role in lower case", { user: { id: "x", role: "instructor" } }],
+    ["role ADMIN", { user: { id: "x", role: "ADMIN" } }],
+    ["session without user", {}],
+  ] as const) {
+    it(`${label}: 403 and no DB access`, async () => {
+      session = s as FakeSession;
+      const res = await detail(get(), params("stu_off"));
+      assert.equal(res.status, 403);
+      assert.deepEqual(await res.json(), { error: "Forbidden" });
+      assert.deepEqual(db.calls, []);
+    });
+  }
+
+  it("ids that are not a student (empty, encoded, instructor): 404 with the same body", async () => {
+    const bodies: string[] = [];
+    for (const id of ["", "stu_active%2F..", "STU_ACTIVE", " stu_active", "ins_1"]) {
+      const res = await detail(get(), params(id));
+      assert.equal(res.status, 404, JSON.stringify(id));
+      bodies.push(await res.text());
+    }
+    assert.equal(new Set(bodies).size, 1, "404 bodies differ");
+    assert.ok(!db.calls.some((c) => /^(course|quizAttempt|assignment)\./.test(c.method)), "related data was queried for a 404");
+  });
+
+  it("deactivated student detail still returns its progress and currentCourse", async () => {
+    seedCourses();
+    const body = await (await detail(get(), params("stu_off"))).json();
+    assert.equal(body.status, "deactivated");
+    assert.deepEqual(body.currentCourse, { id: "c1", name: "STEP1 ダミー" });
+  });
+});
+
+describe("GET /api/admin/students (list): currentCourse edge cases (#32)", () => {
+  it("progress on a lesson that is in no course is ignored for currentCourse", async () => {
+    seedCourses();
+    db.progress.push({ id: "pz", userId: "stu_off", lessonId: "deleted_lesson", completed: true, completedAt: new Date("2026-09-30T00:00:00.000Z") });
+    const body = await (await list(get("?status=deactivated"))).json();
+    assert.deepEqual(body[0].currentCourse, { id: "c1", name: "STEP1 ダミー" });
+  });
+
+  it("each student's currentCourse uses that student's progress only", async () => {
+    seedCourses();
+    // stu_off finishes everything; stu_active stays at STEP2
+    db.progress.push(
+      { id: "po3", userId: "stu_off", lessonId: "l2", completed: true, completedAt: new Date("2026-08-02T00:00:00.000Z") },
+      { id: "po4", userId: "stu_off", lessonId: "l3", completed: true, completedAt: new Date("2026-08-03T00:00:00.000Z") }
+    );
+    const body = await (await list(get("?status=all"))).json();
+    const byId = Object.fromEntries(body.map((s: { id: string; currentCourse: unknown }) => [s.id, s.currentCourse]));
+    assert.deepEqual(byId, { stu_off: null, stu_active: { id: "c2", name: "STEP2 ダミー" } });
+  });
+
+  it("no lessonId / progress array / course structure leaks into the rows", async () => {
+    seedCourses();
+    const text = await (await list(get("?status=all"))).text();
+    for (const k of ['"lessonId"', '"progress"', '"sections"', '"lessons"', '"order"', '"color"', '"description"', '"password"', '"sessionVersion"']) {
+      assert.ok(!text.includes(k), `${k} is in the list response`);
+    }
+  });
+
+  it("course.findMany failing: 500 with a generic body", async () => {
+    const courseModel = db.client.course as { findMany: unknown };
+    const original = courseModel.findMany;
+    courseModel.findMany = async () => {
+      throw new Error("boom off-7@example.com");
+    };
+    try {
+      const res = await list(get());
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+    } finally {
+      courseModel.findMany = original;
+    }
+  });
+});
