@@ -219,12 +219,19 @@ const STRAY_ZWJ = new RegExp(
 );
 
 /**
- * 検索用の正規化：NFKC（全角英数→半角など）、見えない制御・書式文字（U+200B などの幅のない文字、
- * BOM、向きの制御文字。user-display の stripInvisibleMarks と同じ範囲）と絵文字をつないでいない ZWJ を除き、
- * 小文字化し、前後の空白を除く。検索語と対象の両方に使う
+ * 検索用の正規化：NFKC（全角英数→半角など）、連続した空白（改行・タブ・全角空白を含む）を半角空白 1 つにまとめ、
+ * 見えない制御・書式文字（U+200B などの幅のない文字、BOM、向きの制御文字。user-display の stripInvisibleMarks と
+ * 同じ範囲）と絵文字をつないでいない ZWJ を除き、小文字化し、前後の空白を除く。
+ * 空白をまとめるのは見えない文字を除く前（user-display の displayName と同じ順）。除いた結果つながった空白も 1 つにまとめる。
+ * ただし BOM（U+FEFF）は JavaScript の \s に含まれるが空白にはせず、見えない文字として除く（「田中\uFEFF花子」を「田中花子」で見つける）。
+ * 検索語と対象の両方に使う
  */
 export function normalizeSearchText(value: string): string {
-  return stripInvisibleMarks(value.normalize("NFKC")).replace(STRAY_ZWJ, "").toLowerCase().trim();
+  return stripInvisibleMarks(value.normalize("NFKC").replace(/[^\S\uFEFF]+/g, " "))
+    .replace(STRAY_ZWJ, "")
+    .toLowerCase()
+    .trim()
+    .replace(/ {2,}/g, " ");
 }
 
 /**

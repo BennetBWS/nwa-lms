@@ -125,8 +125,30 @@ describe("filterStudentsByQuery：空白・見えない文字・NFKC", () => {
     assert.deepEqual(filterStudentsByQuery(rowsE, scotland).map((s) => s.id), ["e2"]);
   });
 
+  it("連続した空白（半角・全角・タブ・改行・NBSP）は 1 つにまとめる", () => {
+    assert.equal(normalizeSearchText("やまだ  \u3000\t\n\u00A0花子"), "やまだ 花子");
+    assert.equal(normalizeSearchText("Suzuki\u3000\u3000Ichiro"), "suzuki ichiro");
+  });
+
+  it("見えない文字をはさんだ空白も 1 つにまとめる（まとめた後に見えない文字を除いても空白が 2 つ残らない）", () => {
+    assert.equal(normalizeSearchText("やまだ \u200B 花子"), "やまだ 花子");
+    assert.equal(normalizeSearchText("やまだ\u3000\uFEFF\u3000花子"), "やまだ 花子");
+  });
+
+  it("BOM（U+FEFF）は空白にせず除く（\\s に含まれるが見えない文字として扱う）", () => {
+    assert.equal(normalizeSearchText("田中\uFEFF花子"), "田中花子");
+    assert.equal(normalizeSearchText("\uFEFF田中 \uFEFF花子"), "田中 花子");
+  });
+
+  it("名前の空白が 1 つでも、検索語の空白が複数（またはその逆）でも一致する", () => {
+    assert.deepEqual(ids("やまだ\u3000\u3000 花子"), ["s1"]);
+    assert.deepEqual(ids("suzuki  ichiro"), ["s2"]);
+    const rowsW = [{ id: "w1", name: "やまだ \t\u3000 花子", email: "w1-32@example.com" }];
+    assert.deepEqual(filterStudentsByQuery(rowsW, "やまだ 花子").map((s) => s.id), ["w1"]);
+  });
+
   it("normalizeSearchText は冪等", () => {
-    for (const s of ["\u3000ＡＢＣ\u3000", "ﾔﾏﾀﾞ", "か\u3099", "Mixed Case", "田\u200B中\u200D花子", "\u{1F468}\u200D\u{1F469}"]) {
+    for (const s of ["\u3000ＡＢＣ\u3000", "ﾔﾏﾀﾞ", "か\u3099", "Mixed Case", "田\u200B中\u200D花子", "\u{1F468}\u200D\u{1F469}", "a \u200B \t b"]) {
       assert.equal(normalizeSearchText(normalizeSearchText(s)), normalizeSearchText(s));
     }
   });
