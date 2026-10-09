@@ -1,0 +1,554 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { inspect } from "node:util";
+import { join } from "node:path";
+import ts from "typescript";
+import { classifyAuthFailure } from "./client-session";
+import * as view from "./admin-student-view";
+
+// #32 生徒管理：page.tsx（// @ts-nocheck）の AdminStudents を typescript の transpileModule で変換し、
+// 偽の React（useState / useRef / useEffect と要素の木）で「描画」して、表示とリクエストを確かめる。
+// quiz-page.render.page.test.ts と同じ方式。DOM・DB・ネットワークなし。データはすべてダミー（example.com）。
+//
+// 検証しないこと：useEffect の依存配列・cleanup（最初の描画の後に 1 回だけ実行する）、setState による再描画
+// （テストが render() を呼んだときだけ描画）、フォーカスの移動、ModalPortal の Portal 化（admin-dialog.page*.test.ts）。
+
+const src = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
+
+function component(name: string): string {
+  const start = src.indexOf(`const ${name} = (`);
+  assert.ok(start >= 0, `${name} が見つからない`);
+  const rest = src.slice(start);
+  const next = rest.slice(1).search(/\nconst [A-Z]\w* = |\nexport default function /);
+  return next < 0 ? rest : rest.slice(0, next + 1);
+}
+
+const compSrc = component("AdminStudents");
+const transpiled = ts.transpileModule(compSrc, {
+  fileName: "AdminStudents.jsx",
+  reportDiagnostics: true,
+  compilerOptions: {
+    jsx: ts.JsxEmit.React,
+    jsxFactory: "h",
+    jsxFragmentFactory: "Frag",
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2022,
+    allowJs: true,
+  },
+});
+const compiled = transpiled.outputText;
+
+// ───────────── 偽の React ─────────────
+
+type El = { type: unknown; props: Record<string, unknown>; children: Node[] };
+type Node = El | string | number;
+
+function stub(name: string) {
+  const f = () => null;
+  Object.defineProperty(f, "name", { value: name });
+  return f;
+}
+
+const Button = stub("Button");
+const ModalPortal = stub("ModalPortal");
+const COMPONENTS = {
+  ScrollArea: stub("ScrollArea"),
+  FadeIn: stub("FadeIn"),
+  Button,
+  Badge: stub("Badge"),
+  Avatar: stub("Avatar"),
+  AvatarFallback: stub("AvatarFallback"),
+  Search: stub("Search"),
+  Plus: stub("Plus"),
+  ArrowLeft: stub("ArrowLeft"),
+  ModalPortal,
+};
+
+function h(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]): El {
+  const flat = (children.flat(Infinity) as unknown[]).filter(
+    (c) => c !== null && c !== undefined && c !== false && c !== true && c !== ""
+  ) as Node[];
+  return { type, props: props ?? {}, children: flat };
+}
+const Frag = "Frag";
+
+function assertRenderable(n: Node) {
+  if (typeof n === "string" || typeof n === "number") return;
+  assert.ok(n && typeof n === "object" && "type" in n && Array.isArray(n.children), `描画できない子: ${inspect(n)}`);
+  for (const c of n.children) assertRenderable(c);
+}
+
+type FakeRes = { status: number; ok: boolean; redirected: boolean; url: string; json: () => Promise<unknown> };
+const ORIGIN = "https://nwa-lms.example.com";
+const settle = async () => {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
+};
+
+function res(body: unknown, p: Partial<FakeRes> = {}): FakeRes {
+  return { status: 200, ok: true, redirected: false, url: `${ORIGIN}/api/admin/students`, json: () => Promise.resolve(body), ...p };
+}
+
+type Req = { url: string; init?: RequestInit; release: (r: FakeRes) => void; fail: (e: unknown) => void };
+
+function mount() {
+  const states: unknown[] = [];
+  const refs: Array<{ current: unknown }> = [];
+  let si = 0;
+  let ri = 0;
+  let first = true;
+  const effects: Array<() => void> = [];
+  const reqs: Req[] = [];
+
+  const useState = (init: unknown) => {
+    const i = si++;
+    if (!(i in states)) states[i] = init;
+    const set = (v: unknown) => {
+      states[i] = typeof v === "function" ? (v as (p: unknown) => unknown)(states[i]) : v;
+    };
+    return [states[i], set];
+  };
+  const useRef = (init: unknown) => {
+    const i = ri++;
+    if (!(i in refs)) refs[i] = { current: init };
+    return refs[i];
+  };
+  const useEffect = (fn: () => void) => {
+    if (first) effects.push(fn);
+  };
+  const authFetch = (url: string, init?: RequestInit) =>
+    new Promise<FakeRes>((release, fail) => reqs.push({ url, init, release, fail }));
+
+  const T = new Proxy({}, { get: () => "#000000" });
+  const scope: Record<string, unknown> = {
+    h,
+    Frag,
+    useState,
+    useRef,
+    useEffect,
+    authFetch,
+    classifyAuthFailure,
+    ...view,
+    T,
+    glassStyle: () => ({}),
+    ...COMPONENTS,
+  };
+  const names = Object.keys(scope);
+  const AdminStudents = new Function(...names, `${compiled}\nreturn AdminStudents;`)(...names.map((n) => scope[n])) as (
+    props: Record<string, unknown>
+  ) => El;
+
+  const render = (): El => {
+    si = 0;
+    ri = 0;
+    const tree = AdminStudents({ setCurrentPage: () => {} });
+    assertRenderable(tree);
+    if (first) {
+      first = false;
+      for (const e of effects) e();
+    }
+    return tree;
+  };
+  return { render, reqs };
+}
+
+// ───────────── 木の検索 ─────────────
+
+function text(n: Node | undefined): string {
+  if (n === undefined) return "";
+  if (typeof n === "string" || typeof n === "number") return String(n);
+  return n.children.map(text).join("");
+}
+
+function findAll(n: Node, pred: (e: El) => boolean, out: El[] = []): El[] {
+  if (typeof n === "object") {
+    if (pred(n)) out.push(n);
+    for (const c of n.children) findAll(c, pred, out);
+  }
+  return out;
+}
+
+const buttons = (tree: El) => findAll(tree, (e) => e.type === Button || e.type === "button");
+const buttonLabels = (tree: El) => buttons(tree).map((b) => text(b).trim());
+function button(tree: El, label: string): El {
+  const hit = buttons(tree).filter((b) => text(b).trim() === label);
+  assert.equal(hit.length, 1, `ボタン「${label}」が 1 つでない：${buttonLabels(tree).join(" / ")}`);
+  return hit[0];
+}
+const click = (b: El, currentTarget: unknown = null) =>
+  (b.props.onClick as (e?: unknown) => void)({ preventDefault() {}, stopPropagation() {}, currentTarget });
+const byRole = (tree: El, role: string) => findAll(tree, (e) => e.props.role === role);
+const nameButtons = (tree: El) => findAll(tree, (e) => e.type === "button" && e.props.title === "詳細を表示");
+function nameButton(tree: El, name: string): El {
+  const hit = nameButtons(tree).filter((b) => text(b).trim() === name);
+  assert.equal(hit.length, 1, `名前のボタン「${name}」が 1 つでない`);
+  return hit[0];
+}
+const searchInput = (tree: El) => {
+  const hit = findAll(tree, (e) => e.type === "input" && e.props.type === "search");
+  assert.equal(hit.length, 1, "検索欄が 1 つでない");
+  return hit[0];
+};
+const type = (input: El, value: string) => (input.props.onChange as (e: unknown) => void)({ target: { value } });
+const shownNames = (tree: El) => nameButtons(tree).map((b) => text(b).trim());
+
+// ───────────── データ（ダミー） ─────────────
+
+const row = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  email: `${id}@example.com`,
+  avatar: null,
+  createdAt: "2026-04-01T00:00:00.000Z",
+  completedLessons: 5,
+  totalLessons: 10,
+  lastActive: "2026-09-30T16:00:00.000Z",
+  status: "active",
+  deactivatedAt: null,
+  currentCourse: { id: "c2", name: "STEP2 ダミー" },
+  ...extra,
+});
+
+const LIST = [
+  row("stu/a", "あおき"),
+  row("stu_b", "いとう", { currentCourse: null }),
+  row("stu_c", "うえだ", { status: "deactivated", deactivatedAt: "2026-09-01T00:00:00.000Z", completedLessons: 0, lastActive: null }),
+];
+
+const detailOf = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  email: `${id}@example.com`,
+  createdAt: "2026-04-01T00:00:00.000Z",
+  status: "active",
+  deactivatedAt: null,
+  currentCourse: { id: "c2", name: "STEP2 ダミー" },
+  courseProgress: [
+    { courseId: "c1", courseName: "STEP1 ダミー", totalLessons: 4, completedLessons: 4, lastCompletedAt: "2026-09-02T00:00:00.000Z" },
+    { courseId: "c2", courseName: "STEP2 ダミー", totalLessons: 3, completedLessons: 1, lastCompletedAt: null },
+  ],
+  quizAttempts: [{ id: "qa1", quizTitle: "ダミー修了テスト", quizType: "FINAL", score: 67, passed: false, createdAt: "2026-09-10T00:00:00.000Z" }],
+  assignments: [{ id: "as1", title: "ダミー課題", courseName: "STEP1 ダミー", status: "REVIEW", deadline: "2026-10-01T00:00:00.000Z", createdAt: "2026-09-01T00:00:00.000Z" }],
+  ...extra,
+});
+
+async function loaded(body: unknown = LIST) {
+  const m = mount();
+  m.render();
+  assert.equal(m.reqs.length, 1);
+  m.reqs[0].release(res(body));
+  await settle();
+  return m;
+}
+
+// ───────────── テスト ─────────────
+
+describe("AdminStudents 描画：前提", () => {
+  it("JSX の変換：診断なしで、import / export を含まない", () => {
+    assert.deepEqual(transpiled.diagnostics ?? [], []);
+    assert.doesNotMatch(compiled, /^\s*(import|export)\b/m);
+  });
+});
+
+describe("AdminStudents 描画：一覧の読み込み", () => {
+  it("最初は読み込み中で、/api/admin/students?status=all を 1 回だけ読む", () => {
+    const m = mount();
+    const tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "読み込み中が出ていない");
+    assert.equal(m.reqs.length, 1);
+    assert.equal(m.reqs[0].url, "/api/admin/students?status=all");
+    m.render();
+    assert.equal(m.reqs.length, 1);
+  });
+
+  it("失敗（500）は role=alert と再読み込み。押すともう一度読み、成功すれば一覧を出す", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+    await settle();
+    let tree = m.render();
+    const alerts = byRole(tree, "alert");
+    assert.equal(alerts.length, 1);
+    assert.ok(text(alerts[0]).includes("受講生の一覧を読み込めませんでした"), "失敗の文言がない");
+    click(button(tree, "再読み込み"));
+    assert.equal(m.reqs.length, 2);
+    assert.ok(text(m.render()).includes("Loading..."), "再読み込み中に読み込み中が出ていない");
+    m.reqs[1].release(res(LIST));
+    await settle();
+    tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう"]);
+  });
+
+  it("通信エラー・配列でない本文も失敗", async () => {
+    for (const settleWith of [(r: Req) => r.fail(new Error("network")), (r: Req) => r.release(res({ rows: [] }))]) {
+      const m = mount();
+      m.render();
+      settleWith(m.reqs[0]);
+      await settle();
+      assert.equal(byRole(m.render(), "alert").length, 1);
+    }
+  });
+
+  it("セッション切れ（401）は失敗にせず、読み込み中のまま（authFetch がサインアウトする）", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res(null, { status: 401, ok: false }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.ok(text(tree).includes("Loading..."), "読み込み中のままでない");
+  });
+
+  it("0 人なら「受講生はまだいません」", async () => {
+    const m = await loaded([]);
+    assert.ok(text(m.render()).includes("受講生はまだいません"), "空の文言がない");
+  });
+});
+
+describe("AdminStudents 描画：一覧・タブ・検索", () => {
+  it("タブの件数、Course 列（現在のコース・全コース修了）、最終学習日（日本時間）", async () => {
+    const m = await loaded();
+    const t = text(m.render());
+    for (const s of ["有効（2）", "無効（1）", "すべて（3）", "STEP2 ダミー", "全コース修了", "2026/10/01", "最終学習日"]) {
+      assert.ok(t.includes(s), s);
+    }
+    assert.ok(!t.includes("Last Seen"), "Last Seen が残っている");
+  });
+
+  it("タブで切り替える（無効・すべて）", async () => {
+    const m = await loaded();
+    let tree = m.render();
+    click(buttons(tree).find((b) => text(b).startsWith("無効（"))!);
+    tree = m.render();
+    assert.deepEqual(shownNames(tree), ["うえだ"]);
+    assert.ok(text(tree).includes("無効化日 2026/09/01"), "無効化日がない");
+    click(buttons(tree).find((b) => text(b).startsWith("すべて（"))!);
+    assert.deepEqual(shownNames(m.render()), ["あおき", "いとう", "うえだ"]);
+  });
+
+  it("検索：名前・メールで絞り込み、タブの件数は変えない。一致しなければ「該当する受講生はいません」", async () => {
+    const m = await loaded();
+    type(searchInput(m.render()), "いと");
+    let tree = m.render();
+    assert.deepEqual(shownNames(tree), ["いとう"]);
+    assert.equal(searchInput(tree).props.value, "いと");
+    assert.ok(text(tree).includes("有効（2）"), "件数が検索後になっている");
+    type(searchInput(tree), " STU_B@EXAMPLE ");
+    assert.deepEqual(shownNames(m.render()), ["いとう"]);
+    type(searchInput(m.render()), "zzz");
+    tree = m.render();
+    assert.deepEqual(shownNames(tree), []);
+    assert.ok(text(tree).includes("該当する受講生はいません"), "該当なしの文言がない");
+  });
+
+  it("検索欄は placeholder と aria-label を持つ", async () => {
+    const m = await loaded();
+    const input = searchInput(m.render());
+    assert.equal(input.props.placeholder, "名前・メールで検索");
+    assert.ok(typeof input.props["aria-label"] === "string" && input.props["aria-label"] !== "", "aria-label がない");
+  });
+});
+
+describe("AdminStudents 描画：詳細表示", () => {
+  it("名前を押すと /api/admin/students/<encodeURIComponent(id)> を読み、詳細に切り替える", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    assert.equal(m.reqs.length, 2);
+    assert.equal(m.reqs[1].url, "/api/admin/students/stu%2Fa");
+    let tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "詳細の読み込み中が出ていない");
+    assert.deepEqual(shownNames(tree), [], "詳細の読み込み中に一覧が出ている");
+    m.reqs[1].release(res(detailOf("stu/a", "あおき")));
+    await settle();
+    tree = m.render();
+    const t = text(tree);
+    for (const s of [
+      "あおき",
+      "stu/a@example.com",
+      "登録日",
+      "2026/04/01",
+      "有効",
+      "現在のコース",
+      "STEP2 ダミー",
+      "コースごとの進捗",
+      "STEP1 ダミー",
+      "4 / 4 レッスン · 100% · 最終学習日 2026/09/02",
+      "1 / 3 レッスン · 33%",
+      "小テストの履歴",
+      "ダミー修了テスト",
+      "修了テスト · 2026/09/10",
+      "67点",
+      "不合格",
+      "課題",
+      "ダミー課題",
+      "期限 2026/10/01",
+      "確認待ち",
+    ]) {
+      assert.ok(t.includes(s), s);
+    }
+    assert.equal(byRole(tree, "progressbar").length, 2);
+    assert.ok(buttonLabels(tree).includes("無効化"), "詳細に無効化ボタンがない");
+  });
+
+  it("履歴・課題が 0 件なら「受験履歴はありません」「課題はありません」、全修了なら「全コース修了」", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[1].release(res(detailOf("stu_b", "いとう", { currentCourse: null, quizAttempts: [], assignments: [] })));
+    await settle();
+    const t = text(m.render());
+    for (const s of ["受験履歴はありません", "課題はありません", "全コース修了"]) assert.ok(t.includes(s), s);
+  });
+
+  it("「一覧に戻る」で一覧に戻り、詳細を読み直さない", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res(detailOf("stu/a", "あおき")));
+    await settle();
+    click(button(m.render(), "一覧に戻る"));
+    const tree = m.render();
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう"]);
+    assert.ok(!text(tree).includes("コースごとの進捗"), "詳細が残っている");
+    assert.equal(m.reqs.length, 2);
+  });
+
+  it("古い応答を捨てる：戻った後・別の受講生を開いた後に届いた応答は表示しない", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    click(button(m.render(), "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    assert.equal(m.reqs[2].url, "/api/admin/students/stu_b");
+    // 先に開いた「あおき」の応答が後から届く
+    m.reqs[1].release(res(detailOf("stu/a", "あおき")));
+    await settle();
+    let tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "古い応答で読み込み中が終わった");
+    assert.ok(!text(tree).includes("stu/a@example.com"), "古い応答を表示している");
+    m.reqs[2].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    tree = m.render();
+    assert.ok(text(tree).includes("stu_b@example.com"), "新しい応答を表示していない");
+    assert.ok(!text(tree).includes("stu/a@example.com"), "古い応答を表示している");
+  });
+
+  it("戻った後に届いた応答・失敗で一覧が変わらない", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    click(button(m.render(), "一覧に戻る"));
+    m.reqs[1].fail(new Error("network"));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.deepEqual(shownNames(tree), ["あおき", "いとう"]);
+  });
+
+  it("別の受講生の本文（id が違う）は失敗として扱う", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 1);
+    assert.ok(!text(tree).includes("stu_b@example.com"), "別の受講生を表示している");
+  });
+
+  it("404 は「見つかりません」、500 は失敗と再読み込み（押すと同じ受講生を読み直す）", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res({ error: "Student not found" }, { status: 404, ok: false }));
+    await settle();
+    let tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 1);
+    assert.ok(text(byRole(tree, "alert")[0]).includes(view.DETAIL_NOT_FOUND_MESSAGE), "404 の文言がない");
+    assert.ok(!buttonLabels(tree).includes("再読み込み"), "404 に再読み込みがある");
+
+    click(button(tree, "一覧に戻る"));
+    click(nameButton(m.render(), "いとう"));
+    m.reqs[2].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+    await settle();
+    tree = m.render();
+    assert.ok(text(byRole(tree, "alert")[0]).includes(view.DETAIL_LOAD_FAILED_MESSAGE), "失敗の文言がない");
+    click(button(tree, "再読み込み"));
+    assert.equal(m.reqs[3].url, "/api/admin/students/stu_b");
+    m.reqs[3].release(res(detailOf("stu_b", "いとう")));
+    await settle();
+    assert.ok(text(m.render()).includes("stu_b@example.com"), "再読み込みで表示されない");
+  });
+
+  it("詳細のセッション切れ（401）は失敗にせず、読み込み中のまま", async () => {
+    const m = await loaded();
+    click(nameButton(m.render(), "あおき"));
+    m.reqs[1].release(res(null, { status: 401, ok: false }));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.ok(text(tree).includes("Loading..."), "読み込み中のままでない");
+  });
+});
+
+describe("AdminStudents 描画：招待・無効化・再有効化（従来と同じエンドポイント）", () => {
+  it("招待：POST /api/admin/students/invite に名前とメールを送り、成功したら一覧を読み直す", async () => {
+    const m = await loaded();
+    click(button(m.render(), "招待"));
+    let tree = m.render();
+    const inputs = findAll(tree, (e) => e.type === "input" && e.props.type !== "search");
+    assert.equal(inputs.length, 2);
+    type(inputs[0], "ダミー 新規");
+    type(inputs[1], "new-32@example.com");
+    tree = m.render();
+    click(button(tree, "招待する"));
+    const req = m.reqs[1];
+    assert.equal(req.url, "/api/admin/students/invite");
+    assert.equal(req.init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(req.init?.body)), { email: "new-32@example.com", name: "ダミー 新規" });
+    req.release(res({ email: "new-32@example.com", password: "dummy-initial" }, { status: 201 }));
+    await settle();
+    assert.equal(m.reqs[2].url, "/api/admin/students?status=all");
+    assert.ok(text(m.render()).includes("アカウント作成完了"), "招待の結果が出ていない");
+  });
+
+  it("一覧の無効化：確認ダイアログから PUT /api/admin/students/<id>/deactivate、成功で行を無効にして一覧を読み直す", async () => {
+    const m = await loaded();
+    const tree = m.render();
+    const rowButtons = buttons(tree).filter((b) => text(b).trim() === "無効化");
+    assert.equal(rowButtons.length, 2);
+    click(rowButtons[0], { focus() {}, isConnected: true });
+    let dialogTree = m.render();
+    assert.equal(byRole(dialogTree, "dialog").length, 1);
+    assert.ok(text(dialogTree).includes("あおき さんを無効化しますか？"), "確認の文言がない");
+    click(button(dialogTree, "無効化する"));
+    assert.equal(m.reqs[1].url, "/api/admin/students/stu%2Fa/deactivate");
+    assert.equal(m.reqs[1].init?.method, "PUT");
+    m.reqs[1].release(res({ id: "stu/a", status: "deactivated", deactivatedAt: "2026-10-08T00:00:00.000Z" }));
+    await settle();
+    assert.equal(m.reqs[2].url, "/api/admin/students?status=all");
+    dialogTree = m.render();
+    assert.ok(text(dialogTree).includes("無効（2）"), "行が無効になっていない");
+    // 読み直しが終わるまではダイアログが開いたまま（従来どおり）
+    m.reqs[2].release(res(LIST));
+    await settle();
+    assert.equal(byRole(m.render(), "dialog").length, 0);
+  });
+
+  it("詳細の再有効化：PUT .../reactivate、成功で詳細の状態も有効になる", async () => {
+    const m = await loaded();
+    let tree = m.render();
+    click(buttons(tree).find((b) => text(b).startsWith("無効（"))!);
+    click(nameButton(m.render(), "うえだ"));
+    m.reqs[1].release(res(detailOf("stu_c", "うえだ", { status: "deactivated", deactivatedAt: "2026-09-01T00:00:00.000Z" })));
+    await settle();
+    tree = m.render();
+    assert.ok(text(tree).includes("無効（無効化日 2026/09/01）"), "詳細に無効の状態がない");
+    click(button(tree, "再有効化"));
+    click(button(m.render(), "再有効化する"));
+    assert.equal(m.reqs[2].url, "/api/admin/students/stu_c/reactivate");
+    m.reqs[2].release(res({ id: "stu_c", status: "active", deactivatedAt: null }));
+    await settle();
+    m.reqs[3].release(res(LIST.map((r) => (r.id === "stu_c" ? { ...r, status: "active", deactivatedAt: null } : r))));
+    await settle();
+    tree = m.render();
+    assert.equal(byRole(tree, "dialog").length, 0);
+    assert.ok(buttonLabels(tree).includes("無効化"), "詳細のボタンが無効化に変わっていない");
+    assert.ok(!text(tree).includes("無効（無効化日"), "詳細の状態が無効のまま");
+  });
+});
