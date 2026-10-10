@@ -273,7 +273,7 @@ describe("POST /api/admin/comments/[id]/replies：入力", () => {
     ["content なし", {}, "invalid_content"],
     ["content が数値", { content: 1 }, "invalid_content"],
     ["content が空白だけ", { content: " \n\t " }, "empty"],
-    ["content が見えない文字だけ", { content: "​ㅤ" }, "empty"],
+    ["content が見えない文字だけ", { content: "\u200B\u3164" }, "empty"],
     ["content が 2001 文字", { content: "あ".repeat(2001) }, "too_long"],
   ] as Array<[string, unknown, string]>) {
     it(`${label} は 400（${reason}）で、DB を読まない`, async () => {
@@ -430,5 +430,313 @@ describe("POST /api/admin/comments/[id]/replies：エラー", () => {
     const failed = calls.find((c) => c.method === "notification.create");
     assert.ok(failed && failed.inTx, "通知はトランザクションの中で作る");
     assert.doesNotMatch(out, /example\.com|stu_active|P2025/);
+  });
+});
+
+// ───────────── 追加の観点（#32 A-1 テスト担当） ─────────────
+
+const postWithParams = (params: unknown, body: unknown, raw?: string) =>
+  POST(
+    new Request("https://nwa-lms.example.com/api/admin/comments/x/replies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: raw ?? JSON.stringify(body),
+    }),
+    { params: Promise.resolve(params as { id: string }) }
+  );
+
+describe("POST /api/admin/comments/[id]/replies：認可（追加）", () => {
+  for (const [label, role] of [
+    ["小文字の instructor", "instructor"],
+    ["ADMIN", "ADMIN"],
+    ["前後に空白のある INSTRUCTOR", " INSTRUCTOR "],
+    ["空文字の role", ""],
+  ] as Array<[string, string]>) {
+    it(`${label} は 403 で、DB を読まず body も見ない`, async () => {
+      session = { user: { id: ME, role } };
+      const res = await post("q_stu", undefined, "{ not json");
+      assert.equal(res.status, 403, `role=${JSON.stringify(role)}`);
+      assert.deepEqual(await res.json(), { error: "Forbidden" });
+      assert.equal(calls.length, 0, "DB を読まない");
+    });
+  }
+
+  it("未ログインなら body が壊れていても 401（認証を先に見る）", async () => {
+    session = null;
+    const res = await post("q_stu", undefined, "{ not json");
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "Unauthorized" });
+    assert.equal(calls.length, 0, "DB を読まない");
+  });
+
+  it("受講生は自分の質問にもこの API では回答できない（403）", async () => {
+    session = { user: { id: "stu_active", role: "STUDENT" } };
+    const res = await post("q_stu", { content: "追記" });
+    assert.equal(res.status, 403);
+    assert.equal(calls.length, 0, "DB を読まない");
+    assert.equal(comments.length, 6, "コメントは増えない");
+  });
+});
+
+describe("POST /api/admin/comments/[id]/replies：id（追加）", () => {
+  for (const [label, id] of [
+    ["配列", ["q_stu"]],
+    ["数値", 1],
+    ["undefined", undefined],
+    ["null", null],
+  ] as Array<[string, unknown]>) {
+    it(`params.id が${label}なら 400 invalid_id で、DB を読まない`, async () => {
+      const res = await postWithParams({ id }, { content: "回答" });
+      assert.equal(res.status, 400);
+      assert.equal((await res.json()).reason, "invalid_id");
+      assert.equal(calls.length, 0, "DB を読まない");
+    });
+  }
+
+  it("64 文字ちょうどの id は検証を通り、存在しなければ 404", async () => {
+    const res = await post("a".repeat(64), { content: "回答" });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "Question not found" });
+    const first = calls[0];
+    assert.ok(first && first.method === "comment.findUnique", "親を 1 回読む");
+    assert.deepEqual(first.args.where, { id: "a".repeat(64) });
+  });
+
+  for (const id of ["q_stu%20", "q_stu/../q_stu", "q_stu\u0000", "Q_STU", " q_stu"]) {
+    it(`id ${JSON.stringify(id)} はそのまま where に渡し、一致しないので 404（書き込まない）`, async () => {
+      const res = await post(id, { content: "回答" });
+      assert.equal(res.status, 404);
+      assert.equal(writes().length, 0, "書き込まない");
+      const first = calls[0];
+      assert.ok(first, "親を読む");
+      assert.deepEqual(first.args.where, { id }, "id を加工しない");
+    });
+  }
+});
+
+describe("POST /api/admin/comments/[id]/replies：body（追加）", () => {
+  for (const [label, raw, reason] of [
+    ["空の body", "", "invalid_body"],
+    ["JSON の文字列", JSON.stringify("回答"), "invalid_body"],
+    ["JSON の数値", "1", "invalid_body"],
+    ["JSON の true", "true", "invalid_body"],
+    ["JSON の null", "null", "invalid_body"],
+    ["配列（空）", "[]", "invalid_body"],
+    ["content が空文字", JSON.stringify({ content: "" }), "empty"],
+    ["content が null", JSON.stringify({ content: null }), "invalid_content"],
+    ["content が配列", JSON.stringify({ content: ["回答"] }), "invalid_content"],
+    ["content がオブジェクト", JSON.stringify({ content: { text: "回答" } }), "invalid_content"],
+    ["content が true", JSON.stringify({ content: true }), "invalid_content"],
+    ["content が全角空白だけ", JSON.stringify({ content: "\u3000\u3000" }), "empty"],
+    ["content がゼロ幅文字だけ", JSON.stringify({ content: "\u200B\u200C\u200D\u2060\uFEFF" }), "empty"],
+    ["content がハングルフィラーと空白だけ", JSON.stringify({ content: " \u3164 \u115F " }), "empty"],
+    ["content が絵文字 2001 個", JSON.stringify({ content: "\u{1F600}".repeat(2001) }), "too_long"],
+    ["content が 2000 文字＋見える 1 文字（前後空白あり）", JSON.stringify({ content: ` ${"あ".repeat(2000)}い ` }), "too_long"],
+  ] as Array<[string, string, string]>) {
+    it(`${label} は 400 ${reason} で、DB を読まない`, async () => {
+      const res = await post("q_stu", undefined, raw);
+      assert.equal(res.status, 400);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason });
+      assert.equal(calls.length, 0, "DB を読まない");
+    });
+  }
+
+  for (const [label, content, stored] of [
+    ["絵文字 2000 個（サロゲートペアは 1 文字）", "\u{1F600}".repeat(2000), "\u{1F600}".repeat(2000)],
+    ["1999 文字＋絵文字 1 個", `${"あ".repeat(1999)}\u{1F600}`, `${"あ".repeat(1999)}\u{1F600}`],
+    ["2000 文字の前後に空白（除いた後で数える）", `  \n${"あ".repeat(2000)}\t `, "あ".repeat(2000)],
+    ["見えない文字＋見える文字", "\u200B回答", "\u200B回答"],
+  ] as Array<[string, string, string]>) {
+    it(`${label} は 201 で、前後の空白を除いた本文を保存する`, async () => {
+      const res = await post("q_stu", { content });
+      assert.equal(res.status, 201);
+      const created = calls.find((c) => c.method === "comment.create");
+      assert.ok(created, "comment.create が呼ばれる");
+      assert.equal((created.args.data as { content: string }).content, stored);
+    });
+  }
+
+  it("クライアントが送った id・createdAt・role・notify なども create に渡さない", async () => {
+    const res = await post("q_gone", {
+      content: "回答",
+      id: "c_forged",
+      createdAt: "2000-01-01T00:00:00.000Z",
+      userId: "stu_gone",
+      lessonId: "lesson_1",
+      parentId: "q_stu",
+      role: "STUDENT",
+      notify: true,
+    });
+    assert.equal(res.status, 201);
+    const created = calls.find((c) => c.method === "comment.create");
+    assert.ok(created, "comment.create が呼ばれる");
+    assert.deepEqual(created.args.data, { userId: ME, lessonId: "lesson_2", content: "回答", parentId: "q_gone" });
+    assert.equal(notifications.length, 0, "notify: true を送っても無効化済みの受講生には通知しない");
+  });
+});
+
+describe("POST /api/admin/comments/[id]/replies：他コース・ロック中コース", () => {
+  beforeEach(() => {
+    courses.push({ id: "course_8", name: "STEP8 ダミー（ロック中）" });
+    lessons.push({ id: "lesson_8", title: "ダミーレッスン8", courseId: "course_8" });
+    comments.push({ id: "q_locked", userId: "stu_active", lessonId: "lesson_8", content: "ロック中コースの質問本文", parentId: null, createdAt: at(50) });
+  });
+
+  it("講師は受講生が開放していないコースの質問にも回答でき、通知はそのコース名・レッスン名で質問者に作る", async () => {
+    const res = await post("q_locked", { content: "回答本文ロック" });
+    assert.equal(res.status, 201);
+    assert.deepEqual(
+      calls.map((c) => c.method),
+      ["comment.findUnique", "$transaction", "comment.create", "notification.create", "comment.findUnique"],
+      "進捗・受講状況など他のテーブルを読まない"
+    );
+    assert.equal(notifications.length, 1, "通知は 1 件");
+    const n = notifications[0];
+    assert.equal(n.userId, "stu_active", "通知の宛先は質問者");
+    assert.equal(n.title, "質問に回答がありました");
+    assert.equal(n.message, "STEP8 ダミー（ロック中） / ダミーレッスン8 の質問に講師が回答しました");
+    for (const s of ["回答本文ロック", "ロック中コースの質問本文", "講師ビー", "teacher@example.com", ME]) {
+      assert.ok(!JSON.stringify(n).includes(s), `通知に「${s}」を含めない`);
+    }
+    const body = await res.json();
+    assert.deepEqual(body.thread.course, { id: "course_8", name: "STEP8 ダミー（ロック中）" });
+    assert.deepEqual(body.thread.lesson, { id: "lesson_8", title: "ダミーレッスン8" });
+    assert.equal(body.thread.answered, true);
+  });
+
+  it("別の講師（ins_2）が回答しても、通知の宛先は質問者で、回答者ではない", async () => {
+    session = { user: { id: "ins_2", role: "INSTRUCTOR" } };
+    const res = await post("q_locked", { content: "回答" });
+    assert.equal(res.status, 201);
+    assert.deepEqual(notifications.map((n) => n.userId), ["stu_active"]);
+    const created = calls.find((c) => c.method === "comment.create");
+    assert.ok(created, "comment.create が呼ばれる");
+    assert.equal((created.args.data as { userId: string }).userId, "ins_2", "返信の userId はセッションの講師");
+  });
+
+  it("同じ質問に 2 回回答すると、通知も 2 件（回答ごとに 1 件）", async () => {
+    assert.equal((await post("q_locked", { content: "1 回目" })).status, 201);
+    assert.equal((await post("q_locked", { content: "2 回目" })).status, 201);
+    assert.equal(notifications.length, 2);
+    assert.ok(notifications.every((n) => n.userId === "stu_active"), "どちらも質問者宛て");
+  });
+});
+
+describe("POST /api/admin/comments/[id]/replies：応答の最小化（追加）", () => {
+  it("無効化された受講生の質問：author.name は null、回答は自分（mine: true）、内部の値を出さない", async () => {
+    const text = await (await post("q_gone", { content: "回答" })).text();
+    const t = JSON.parse(text).thread;
+    assert.deepEqual(t.author, { name: null, isInstructor: false });
+    assert.equal(t.answered, true);
+    assert.equal(t.mine, false);
+    assert.deepEqual(
+      t.replies.map((r: { content: string; author: unknown; mine: boolean }) => [r.content, r.author, r.mine]),
+      [["回答", { name: "講師ビー", isInstructor: true }, true]]
+    );
+    for (const s of ["受講生ゴーン", "gone@example.com", "stu_gone", "deactivatedAt", "hash-", "lesson_1\"", "lessonId"]) {
+      assert.ok(!text.includes(s), `応答に「${s}」を含めない`);
+    }
+  });
+
+  it("有効な受講生の質問：avatar のファイル名・パスワードのハッシュを出さない", async () => {
+    const text = await (await post("q_stu", { content: "回答" })).text();
+    for (const s of ["avatar-a.png", "hash-a", "hash-c", "password", "teacher@example.com"]) {
+      assert.ok(!text.includes(s), `応答に「${s}」を含めない`);
+    }
+  });
+
+  it("自分（講師）の質問に回答すると、親も mine: true", async () => {
+    const t = (await (await post("q_me", { content: "回答" })).json()).thread;
+    assert.equal(t.mine, true);
+    assert.deepEqual(t.author, { name: "講師ビー", isInstructor: true });
+    assert.equal(t.answered, true);
+  });
+});
+
+describe("POST /api/admin/comments/[id]/replies：エラー（追加）", () => {
+  it("トランザクション内の comment.create が失敗したら 500・汎用本文、通知は作らず、ログはエラー名だけ", async () => {
+    const orig = fakePrisma.comment.create;
+    const m = mock.method(fakePrisma.comment, "create", async (args: Record<string, unknown>) => {
+      calls.push({ method: "comment.create", args, inTx });
+      throw piiError();
+    });
+    const done = captureLogs();
+    try {
+      const res = await post("q_stu", { content: "秘密の回答本文" });
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.equal(calls.some((c) => c.method === "notification.create"), false, "通知を作らない");
+      assert.equal(notifications.length, 0, "通知を作らない");
+      assert.equal(out, "POST /api/admin/comments/[id]/replies error: Error", "ログはルート名とエラー名だけ");
+      for (const s of ["秘密の回答本文", "example.com", "stu_active", "P2025", "lookup failed"]) {
+        assert.ok(!out.includes(s), `ログに「${s}」を出さない`);
+      }
+    } finally {
+      m.mock.restore();
+      assert.equal(fakePrisma.comment.create, orig, "元に戻す");
+    }
+  });
+
+  it("$transaction 自体が失敗しても 500、応答とログに本文・メールを出さない", async () => {
+    const m = mock.method(fakePrisma, "$transaction", async () => {
+      const err = new Error(`Transaction failed: 秘密の回答本文 ${DUMMY_EMAIL}`);
+      err.name = "PrismaClientKnownRequestError";
+      Object.assign(err, { code: "P2034" });
+      throw err;
+    });
+    const done = captureLogs();
+    try {
+      const res = await post("q_stu", { content: "秘密の回答本文" });
+      const out = done();
+      assert.equal(res.status, 500);
+      const text = await res.text();
+      assert.equal(text, JSON.stringify({ error: "Internal server error" }));
+      assert.equal(out, "POST /api/admin/comments/[id]/replies error: PrismaClientKnownRequestError");
+      for (const s of ["秘密の回答本文", "example.com", "P2034"]) assert.ok(!out.includes(s), `ログに「${s}」を出さない`);
+    } finally {
+      m.mock.restore();
+    }
+  });
+
+  it("Error でない値（メールを含む文字列）が投げられてもログは型名だけ", async () => {
+    const m = mock.method(fakePrisma, "$transaction", async () => {
+      throw `failed for ${DUMMY_EMAIL}`;
+    });
+    const done = captureLogs();
+    try {
+      const res = await post("q_stu", { content: "回答" });
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.equal(out, "POST /api/admin/comments/[id]/replies error: string");
+    } finally {
+      m.mock.restore();
+    }
+  });
+
+  it("親の読み込みで失敗したら 500 で、トランザクションを始めない", async () => {
+    failWith = piiError();
+    const done = captureLogs();
+    const res = await post("q_stu", { content: "回答" });
+    done();
+    assert.equal(res.status, 500);
+    assert.equal(calls.some((c) => c.method === "$transaction"), false, "トランザクションを始めない");
+  });
+
+  it("回答の作成後に親を読み直せなければ 404（作成済みの回答は残る：削除 API がないので通常は起きない）", async () => {
+    const orig = fakePrisma.comment.findUnique;
+    let n = 0;
+    const m = mock.method(fakePrisma.comment, "findUnique", async (args: Record<string, unknown>) => {
+      n += 1;
+      return n === 1 ? orig.call(fakePrisma.comment, args) : null;
+    });
+    try {
+      const res = await post("q_stu", { content: "回答" });
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: "Question not found" });
+      assert.equal(notifications.length, 1, "通知は作成済み");
+    } finally {
+      m.mock.restore();
+    }
   });
 });
