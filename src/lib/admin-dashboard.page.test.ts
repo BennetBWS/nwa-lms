@@ -54,3 +54,20 @@ describe("page.tsx：AdminDashboard の読み込み", () => {
     assert.match(dashboard, /onClick=\{loadStats\}/);
   });
 });
+
+describe("page.tsx：AdminDashboard の見本データ（追加）", () => {
+  it("増減の見本（+3・+5%・+4）・旧 state（adminData）・英語の系列名（Active / Completed）が残っていない", () => {
+    for (const s of ['"+3"', '"+5%"', '"+4"', "adminData", "setAdminData", 'name="Active"', 'name="Completed"', "c._count"]) {
+      assert.ok(!dashboard.includes(s), `${s} が AdminDashboard に残っている`);
+    }
+  });
+
+  it("円と凡例の色は応答（toAdminDashboardView で検証済み）の color だけを使い、固定の配列から選ばない", () => {
+    assert.match(dashboard, /<Cell key=\{e\.key\} fill=\{e\.color\} \/>/);
+    assert.ok(!/#[0-9A-Fa-f]{6}", "#[0-9A-Fa-f]{6}"/.test(dashboard), "固定の配色の配列が残っている");
+  });
+
+  it("TrendingUp を import していない（page.tsx 全体で未使用）", () => {
+    assert.ok(!src.includes("TrendingUp"), "TrendingUp が残っている");
+  });
+});

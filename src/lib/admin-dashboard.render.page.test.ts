@@ -299,3 +299,107 @@ describe("AdminDashboard 描画：読み込み", () => {
     assert.deepEqual(m.pages, ["admin-students"]);
   });
 });
+
+describe("AdminDashboard 描画：色の検証・0 人の区分・成功後（追加）", () => {
+  /** 要素の木のどこか（props の文字列・style の値・テキスト）に s が出ていれば true */
+  function appears(n: Node, s: string): boolean {
+    if (typeof n === "string" || typeof n === "number") return String(n).includes(s);
+    const inProps = Object.entries(n.props).some(([k, v]) => {
+      if (k === "children") return false;
+      if (typeof v === "string") return v.includes(s);
+      if (k === "style" && v && typeof v === "object") return Object.values(v).some((x) => typeof x === "string" && x.includes(s));
+      if (Array.isArray(v)) return JSON.stringify(v).includes(s);
+      return false;
+    });
+    return inProps || n.children.some((c) => appears(c, s));
+  }
+  const swatches = (tree: El) =>
+    findAll(tree, (e) => e.type === "div" && typeof (e.props.style as Record<string, unknown> | undefined)?.background === "string" && (e.props.style as { width?: number }).width === 8);
+
+  it("応答の不正な色（CSS の注入・名前の色）は円にも凡例にも流さず、代わりの色にする", async () => {
+    const evil = "#fff;background:url(https://example.com/x)";
+    const m = mount();
+    m.render();
+    m.reqs[0].release(
+      res({
+        ...STATS,
+        distribution: [
+          { courseId: "c1", name: "STEP1 ダミー", color: evil, students: 1 },
+          { courseId: "c2", name: "STEP2 ダミー", color: "red", students: 1 },
+          { courseId: null, name: "全コース修了", color: "#94A3B8", students: 1 },
+        ],
+      })
+    );
+    await settle();
+    const tree = m.render();
+    // 推移グラフの fill="url(#ga2)" は正規の値なので、注入した URL の本体で確かめる
+    assert.ok(!appears(tree, "example.com/x"), "不正な色が描画に流れている");
+    const fills = byType(tree, C.Cell).map((c) => c.props.fill as string);
+    assert.equal(fills.length, 3);
+    for (const f of fills) assert.match(f, /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+    const bgs = swatches(tree).map((e) => (e.props.style as { background: string }).background);
+    assert.deepEqual(bgs, fills, "凡例の色が円の色と違う");
+    assert.ok(!fills.includes("red") && !bgs.includes("red"), "名前の色がそのまま流れている");
+  });
+
+  it("0 人の区分は円（Cell・Pie の data）に入れず、凡例には「0名」で出す。円の key は区分ごとに一意", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res(STATS));
+    await settle();
+    const tree = m.render();
+    const pieData = byType(tree, C.Pie)[0].props.data as Array<{ name: string; value: number }>;
+    assert.ok(pieData.every((d) => d.value > 0), "0 人の区分が円にある");
+    // h() は key を props に入れたまま渡す
+    const keys = byType(tree, C.Cell).map((c) => c.props.key);
+    assert.ok(keys.every((k) => typeof k === "string" && k.length > 0), "Cell の key がない");
+    assert.equal(new Set(keys).size, keys.length, "Cell の key が重複している");
+    assert.equal(swatches(tree).length, 3, "凡例が全区分ぶんない");
+    assert.ok(text(tree).includes("STEP2 ダミー 0名"), "0 人の区分が凡例にない");
+  });
+
+  it("成功後は alert・再読み込みボタンがなく、「%」は平均進捗の値があるときだけ。再描画で読み直さない", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release(res(STATS));
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0);
+    assert.equal(byType(tree, C.Button).filter((b) => text(b).includes("再読み込み")).length, 0, "成功後に再読み込みボタンがある");
+    assert.equal(text(tree).split("%").length - 1, 1, "「%」が平均進捗の 1 か所でない");
+    assert.ok(!text(tree).includes("Loading..."), "成功後に読み込み中が残っている");
+    m.render();
+    m.render();
+    assert.equal(m.reqs.length, 1, "再描画で読み直している");
+  });
+
+  it("読み込み中は円・凡例・推移グラフを出さず、見本の値（24・62・Jan など）も出さない", () => {
+    const m = mount();
+    const tree = m.render();
+    assert.equal(byType(tree, C.Pie).length, 0);
+    assert.equal(swatches(tree).length, 0);
+    const t = text(tree);
+    for (const s of ["24", "62", "Jan", "Apr", "+3", "+5%"]) assert.ok(!t.includes(s), `見本の値「${s}」が出ている`);
+  });
+
+  it("失敗中の再読み込みが失敗しても、もう一度押せる（in-flight の ref が戻る）", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].fail(new Error("network"));
+    await settle();
+    click(button(m.render(), "再読み込み"));
+    m.reqs[1].release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    click(button(m.render(), "再読み込み"));
+    assert.equal(m.reqs.length, 3, "2 回目の再読み込みができない");
+  });
+
+  it("res.json() が失敗（壊れた JSON）しても失敗として扱う", async () => {
+    const m = mount();
+    m.render();
+    m.reqs[0].release({ ...res(null), json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+    await settle();
+    const tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 1, "壊れた JSON で失敗にならない");
+  });
+});
