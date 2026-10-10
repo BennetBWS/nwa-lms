@@ -56,6 +56,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export type CommentContentReason = "invalid_content" | "empty" | "too_long";
+
+/**
+ * 本文の検証（POST /api/comments と講師の回答 API で共通）。
+ * string でなければ invalid_content。前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
+ */
+export function parseCommentContent(content: unknown): ParseResult<string, CommentContentReason> {
+  if (typeof content !== "string") return { ok: false, reason: "invalid_content" };
+  const trimmed = content.trim();
+  if (trimmed === "" || !hasVisibleText(trimmed)) return { ok: false, reason: "empty" };
+  if (commentLength(trimmed) > COMMENT_MAX_LENGTH) return { ok: false, reason: "too_long" };
+  return { ok: true, value: trimmed };
+}
+
 /**
  * POST /api/comments の body を検証する。
  * - content：string。前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
@@ -69,10 +83,10 @@ export function parseCreateComment(body: unknown): ParseResult<CreateCommentInpu
   const { lessonId, content, parentId } = body;
   if (!isValidId(lessonId)) return { ok: false, reason: "invalid_lesson_id" };
 
-  if (typeof content !== "string") return { ok: false, reason: "invalid_content" };
-  const trimmed = content.trim();
-  if (trimmed === "" || !hasVisibleText(trimmed)) return { ok: false, reason: "empty" };
-  if (commentLength(trimmed) > COMMENT_MAX_LENGTH) return { ok: false, reason: "too_long" };
+  const text = parseCommentContent(content);
+  // tsconfig は strict: false なので ok では絞り込めない。"reason" in で失敗側に絞る
+  if ("reason" in text) return { ok: false, reason: text.reason };
+  const trimmed = text.value;
 
   let parent: string | null;
   if (parentId === undefined || parentId === null) parent = null;
