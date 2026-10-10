@@ -165,7 +165,8 @@ export function buildAdminStats(rows: AdminStatsRows, now: Date): AdminStats {
       let unknown = false;
       for (const id of lessonIds) {
         const at = done.get(id);
-        if (!at) {
+        // Invalid Date も日時不明として扱う（NaN との比較でレッスンの順序に結果が左右されないように）
+        if (!at || Number.isNaN(at.getTime())) {
           unknown = true;
           break;
         }

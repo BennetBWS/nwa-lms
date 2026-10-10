@@ -131,6 +131,19 @@ describe("日本時間の月：境界・年またぎ・当月・未来・不正�
     assert.equal(s.cards.avgProgressPercent, 50);
   });
 
+  it("不正な日付が 1 件でもあるコース修了は、レッスンの順序に関係なく月別に数えない", () => {
+    const valid = "2026-09-01T00:00:00.000Z";
+    const invalid = new Date(Number.NaN);
+    for (const progress of [
+      [done("a", "l1", valid), done("a", "l2", invalid)],
+      [done("a", "l1", invalid), done("a", "l2", valid)],
+    ]) {
+      const s = buildAdminStats(rows({ students: [active("a")], progress }), NOW);
+      assert.ok(s.monthly.every((m) => m.completions === 0), "不正な日付を含むコース修了を月別に数えている");
+      assert.equal(s.cards.completions, 1);
+    }
+  });
+
   it("generatedAt は now の ISO 文字列（呼び出し側の時計を使わない）", () => {
     const now = new Date("2030-01-01T00:00:00.000Z");
     assert.equal(buildAdminStats(rows(), now).generatedAt, "2030-01-01T00:00:00.000Z");
