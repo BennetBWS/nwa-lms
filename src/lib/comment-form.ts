@@ -57,9 +57,15 @@ export const COMMENT_UNKNOWN_RESULT_MESSAGE =
 export const COMMENT_SERVER_ERROR_MESSAGE = "サーバーでエラーが発生しました。時間をおいて、もう一度お試しください。";
 
 /**
- * 送信できたかどうか分からない失敗（通信エラー・2xx なのに応答を読めない）の文言か。
+ * ゲートウェイ・プロキシのエラー（502 / 503 / 504）。アプリが処理を終えたかどうか分からない
+ * （処理中にタイムアウトした・応答だけが届かなかった）ため、送信の結果は不明として扱う
+ */
+const UNKNOWN_RESULT_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+/**
+ * 送信できたかどうか分からない失敗（通信エラー・502 / 503 / 504・2xx なのに応答を読めない）の文言か。
  * このときは再送ではなく一覧の再読み込みで確かめるよう案内し、画面は「一覧を再読み込み」ボタンを出す（#32 A-2）。
- * 400 / 401 / 403 / 404 / 5xx の文言は false（サーバーが受け付けなかったと分かっている）
+ * 400 / 401 / 403 / 404 / 500 などの文言は false（サーバーが受け付けなかったと分かっている）
  */
 export function isUncertainSubmitError(message: unknown): boolean {
   return message === COMMENT_NETWORK_ERROR_MESSAGE || message === COMMENT_UNKNOWN_RESULT_MESSAGE;
@@ -79,7 +85,9 @@ const REASON_MESSAGES: Readonly<Record<string, string>> = {
  * - httpStatus が null：通信エラー（送信できたか分からないので、再読み込みで確かめるよう案内する）
  * - 401 / redirected：ログインの期限切れ（画面は authFetch がサインアウトして /login へ移る）
  * - 400：reason ごとの文言（知らない reason は「送信内容を読み取れませんでした」）
- * - 403：権限なし / 404：質問が見つからない / それ以外：サーバーのエラー
+ * - 403：権限なし / 404：質問が見つからない
+ * - 502 / 503 / 504：送信できたか分からない（COMMENT_UNKNOWN_RESULT_MESSAGE。再読み込みで確かめるよう案内する）
+ * - それ以外（500 など）：サーバーのエラー
  */
 export function commentSubmitErrorMessage(input: { httpStatus: number | null; reason?: unknown; redirected?: boolean }): string {
   const { httpStatus, reason, redirected } = input;
@@ -93,5 +101,6 @@ export function commentSubmitErrorMessage(input: { httpStatus: number | null; re
   }
   if (httpStatus === 403) return "この操作を行う権限がありません。";
   if (httpStatus === 404) return "送信先の質問が見つかりませんでした。一覧を再読み込みしてください。";
+  if (UNKNOWN_RESULT_STATUSES.has(httpStatus)) return COMMENT_UNKNOWN_RESULT_MESSAGE;
   return COMMENT_SERVER_ERROR_MESSAGE;
 }

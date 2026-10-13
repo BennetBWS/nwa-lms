@@ -132,6 +132,8 @@ describe("interpretReplyResponse", () => {
       [403, { error: "Forbidden" }],
       [404, { error: "Question not found" }],
       [500, null],
+      [502, null],
+      [504, { error: "Gateway Timeout" }],
     ] as Array<[number, unknown]>) {
       const out = interpretReplyResponse({ ok: false, status, redirected: false, body, threadId: "t1" });
       const reason = body && typeof body === "object" ? (body as { reason?: unknown }).reason : undefined;

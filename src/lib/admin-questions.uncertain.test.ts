@@ -26,14 +26,15 @@ import {
 // #32 A-2：回答の送信結果が分からないとき（通信エラー・2xx で応答を読めない）に、一覧を読み直して結果を確かめる純関数。
 
 describe("isUncertainSubmitError", () => {
-  it("通信エラー・結果不明の文言だけ true", () => {
+  it("通信エラー・502 / 503 / 504・結果不明の文言だけ true", () => {
     assert.equal(isUncertainSubmitError(COMMENT_NETWORK_ERROR_MESSAGE), true);
     assert.equal(isUncertainSubmitError(COMMENT_UNKNOWN_RESULT_MESSAGE), true);
     assert.equal(isUncertainSubmitError(commentSubmitErrorMessage({ httpStatus: null })), true);
+    for (const s of [502, 503, 504]) assert.equal(isUncertainSubmitError(commentSubmitErrorMessage({ httpStatus: s })), true, String(s));
   });
 
-  it("400 / 401 / 403 / 404 / 5xx・空・文字列でない値は false", () => {
-    for (const s of [400, 401, 403, 404, 500, 503]) {
+  it("400 / 401 / 403 / 404 / 500・空・文字列でない値は false", () => {
+    for (const s of [400, 401, 403, 404, 500, 501]) {
       assert.equal(isUncertainSubmitError(commentSubmitErrorMessage({ httpStatus: s, reason: "not_a_question" })), false, String(s));
     }
     for (const v of [COMMENT_SERVER_ERROR_MESSAGE, COMMENT_SESSION_EXPIRED_MESSAGE, REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE, "", undefined, null, 1]) {

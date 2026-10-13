@@ -5,6 +5,7 @@ import {
   COMMENT_NETWORK_ERROR_MESSAGE,
   COMMENT_SERVER_ERROR_MESSAGE,
   COMMENT_SESSION_EXPIRED_MESSAGE,
+  COMMENT_UNKNOWN_RESULT_MESSAGE,
   commentFormState,
   commentSubmitErrorMessage,
 } from "./comment-form";
@@ -101,13 +102,20 @@ describe("commentSubmitErrorMessage", () => {
   it("403・404・5xx・その他", () => {
     assert.equal(commentSubmitErrorMessage({ httpStatus: 403 }), "この操作を行う権限がありません。");
     assert.ok(commentSubmitErrorMessage({ httpStatus: 404 }).includes("見つかりません"), "404 の文言");
-    for (const s of [500, 502, 503, 409, 429, 200]) {
+    for (const s of [500, 501, 505, 409, 429, 200]) {
       assert.equal(commentSubmitErrorMessage({ httpStatus: s }), COMMENT_SERVER_ERROR_MESSAGE, String(s));
     }
   });
 
+  it("502 / 503 / 504 は送信できたか分からない（再読み込みで確かめる案内）", () => {
+    for (const s of [502, 503, 504]) {
+      assert.equal(commentSubmitErrorMessage({ httpStatus: s }), COMMENT_UNKNOWN_RESULT_MESSAGE, String(s));
+      assert.equal(commentSubmitErrorMessage({ httpStatus: s, reason: "empty" }), COMMENT_UNKNOWN_RESULT_MESSAGE, `${s} reason 付き`);
+    }
+  });
+
   it("文言は日本語で、英語の既定文言を含まない", () => {
-    for (const s of [null, 400, 401, 403, 404, 500]) {
+    for (const s of [null, 400, 401, 403, 404, 500, 502, 503, 504]) {
       const m = commentSubmitErrorMessage({ httpStatus: s });
       assert.doesNotMatch(m, /Error|error|Unauthorized|Forbidden/, String(s));
     }

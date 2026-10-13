@@ -556,7 +556,7 @@ describe("AdminQuestions 追加：応答の扱い", () => {
     assert.equal(textarea(tree).props.value, "講師の回答です");
   });
 
-  it("400 の各 reason・403・404・5xx の文言を出し、入力を残す", async () => {
+  it("400 の各 reason・403・404・500・502〜504 の文言を出し、入力を残す", async () => {
     const cases: Array<[Partial<FakeRes>, unknown, string]> = [];
     for (const reason of ["empty", "too_long", "invalid_content", "invalid_body", "invalid_id", "not_a_question", "unknown_reason"]) {
       cases.push([{ status: 400, ok: false }, { error: "Invalid request", reason }, commentForm.commentSubmitErrorMessage({ httpStatus: 400, reason })]);
@@ -564,7 +564,9 @@ describe("AdminQuestions 追加：応答の扱い", () => {
     cases.push([{ status: 400, ok: false }, { error: "Invalid request" }, commentForm.commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_body" })]);
     cases.push([{ status: 403, ok: false }, { error: "Forbidden" }, "この操作を行う権限がありません。"]);
     cases.push([{ status: 404, ok: false }, { error: "Not found" }, commentForm.commentSubmitErrorMessage({ httpStatus: 404 })]);
-    for (const status of [500, 502, 503]) cases.push([{ status, ok: false }, { error: "Internal server error" }, commentForm.COMMENT_SERVER_ERROR_MESSAGE]);
+    for (const status of [500, 501]) cases.push([{ status, ok: false }, { error: "Internal server error" }, commentForm.COMMENT_SERVER_ERROR_MESSAGE]);
+    // ゲートウェイのエラーは送信できたか分からない（再読み込みで確かめる案内）
+    for (const status of [502, 503, 504]) cases.push([{ status, ok: false }, null, commentForm.COMMENT_UNKNOWN_RESULT_MESSAGE]);
     for (const [p, body, message] of cases) {
       const m = await sent();
       replyReqs(m)[0].release(res(body, { url: REPLY_URL("t1"), ...p }));
