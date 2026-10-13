@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { assertLocalDatabase } from "../scripts/lib/assert-local-db";
+import { REPLY_NOTIFICATION_TITLE, replyNotificationMessage } from "../src/lib/question-reply";
 
 const prisma = new PrismaClient();
 
@@ -43,6 +44,19 @@ async function main() {
   });
   const instructor = await prisma.user.create({
     data: { email: "instructor@example.com", name: "山田 先生", password: hashedPassword, role: "INSTRUCTOR" },
+  });
+  // 質問のダミーデータ用の受講生（#32 A-1）。1 人は無効化済み（講師の画面では「受講生」と匿名で表示される）
+  const student2 = await prisma.user.create({
+    data: { email: "student2@example.com", name: "受講生 サンプルB", password: hashedPassword, role: "STUDENT" },
+  });
+  const student3 = await prisma.user.create({
+    data: {
+      email: "student3@example.com",
+      name: "受講生 サンプルC",
+      password: hashedPassword,
+      role: "STUDENT",
+      deactivatedAt: new Date(Date.now() - 3 * 86400000),
+    },
   });
   console.log("Users created");
 
@@ -370,11 +384,73 @@ async function main() {
   console.log("Assignments created");
 
   // ═══════════════════════════════════════
+  // QUESTIONS（#32 A-1。講師の回答画面の確認用。すべてダミー）
+  // 未回答・回答済み・受講生の追記だけ（未回答のまま）・無効化された受講生の質問を、複数のコースに置く。
+  // 返信の lessonId は親と同じ（回答 API と同じ規則）
+  // ═══════════════════════════════════════
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600000);
+  type QuestionDef = {
+    userId: string;
+    lesson: { id: string };
+    content: string;
+    at: Date;
+    replies: { userId: string; content: string; at: Date }[];
+  };
+  const questionDefs: QuestionDef[] = [
+    // 回答済み（STEP1）＋受講生のお礼
+    {
+      userId: student.id, lesson: allLessons[0][0], at: hoursAgo(72),
+      content: "ショートカットキーが効かないときは、どこを確認すればよいですか？",
+      replies: [
+        { userId: instructor.id, content: "キーボードの入力モード（英数／かな）と、ほかのアプリが同じキーを使っていないかを確認してください。", at: hoursAgo(70) },
+        { userId: student.id, content: "入力モードが原因でした。ありがとうございます。", at: hoursAgo(69) },
+      ],
+    },
+    // 未回答（STEP4）
+    {
+      userId: student.id, lesson: allLessons[3][4], at: hoursAgo(5),
+      content: "LP の構成を考えるとき、セクションの順番に決まりはありますか？",
+      replies: [],
+    },
+    // 未回答（STEP2）。受講生の追記だけなので未回答のまま
+    {
+      userId: student2.id, lesson: allLessons[1][0], at: hoursAgo(30),
+      content: "<!DOCTYPE html> は必ず 1 行目に書く必要がありますか？",
+      replies: [{ userId: student2.id, content: "追記：教材のサンプルでは 1 行目にありました。", at: hoursAgo(29) }],
+    },
+    // 回答済み（STEP3）
+    {
+      userId: student2.id, lesson: allLessons[2][3], at: hoursAgo(48),
+      content: "justify-content と align-items の違いがよく分かりません。",
+      replies: [{ userId: instructor.id, content: "justify-content は主軸方向、align-items は交差軸方向の揃え方です。flex-direction で主軸が変わる点に注意してください。", at: hoursAgo(40) }],
+    },
+    // 未回答・無効化された受講生の質問（STEP1）。回答しても通知は作られない
+    {
+      userId: student3.id, lesson: allLessons[0][3], at: hoursAgo(100),
+      content: "パスワードを使い回してはいけない理由を教えてください。",
+      replies: [],
+    },
+  ];
+  for (const q of questionDefs) {
+    const parent = await prisma.comment.create({
+      data: { userId: q.userId, lessonId: q.lesson.id, content: q.content, createdAt: q.at },
+    });
+    for (const r of q.replies) {
+      await prisma.comment.create({
+        data: { userId: r.userId, lessonId: q.lesson.id, content: r.content, parentId: parent.id, createdAt: r.at },
+      });
+    }
+  }
+  console.log("Questions created:", questionDefs.length);
+
+  // ═══════════════════════════════════════
   // NOTIFICATIONS
   // ═══════════════════════════════════════
   await prisma.notification.createMany({
     data: [
-      { userId: student.id, title: "山田先生が質問に回答", message: "AIコーディング（AG） - L16 の質問に回答がありました", read: false },
+      // 回答の通知は回答 API と同じ文面（講師の名前・質問の本文は入れない。#32 A-1）
+      { userId: student.id, title: REPLY_NOTIFICATION_TITLE, message: replyNotificationMessage(courses[0].name, allLessons[0][0].title), read: false },
+      { userId: student2.id, title: REPLY_NOTIFICATION_TITLE, message: replyNotificationMessage(courses[2].name, allLessons[2][3].title), read: true },
       { userId: student.id, title: "STEP5「Apple模写コーディング」が開放されました", message: "STEP4完了後に受講可能", read: false },
       { userId: student.id, title: "CSSレイアウト ミニテスト — 90点", message: "合格おめでとう！", read: true },
       { userId: student.id, title: "課題1 合格！", message: "カフェLPの課題が承認されました", read: true },
