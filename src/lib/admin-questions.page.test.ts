@@ -71,7 +71,7 @@ describe("AdminQuestions：配線", () => {
     ]) {
       assert.ok(names.includes(n), n);
     }
-    assert.match(src, /import \{ commentFormState, commentSubmitErrorMessage \} from "@\/lib\/comment-form";/);
+    assert.match(src, /import \{ commentFormState, commentSubmitErrorMessage, isUncertainSubmitError \} from "@\/lib\/comment-form";/);
   });
 
   it("API は authFetch で呼び、素の fetch は使わない", () => {

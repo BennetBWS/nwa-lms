@@ -62,16 +62,23 @@ import { addedThreadCount, firstPageRowCount, QUESTION_TABS, readThreadPage, thr
 import {
   ADMIN_QUESTION_TABS,
   DEFAULT_ADMIN_QUESTION_TAB,
+  REPLY_SAVED_AFTER_UNKNOWN_MESSAGE,
   REPLY_SENT_MESSAGE,
   adminReplyUrl,
   adminThreadListUrl,
   adminThreadsEmptyMessage,
   adminThreadsMoreHint,
+  expandResolvedIds,
   interpretReplyResponse,
+  nextReplyDrafts,
+  nextReplyErrors,
+  nextReplyNotices,
+  nextUncertainReplies,
   replaceThreadRow,
+  resolveUncertainReplies,
   toCourseOptions,
 } from "@/lib/admin-questions";
-import { commentFormState, commentSubmitErrorMessage } from "@/lib/comment-form";
+import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -2796,6 +2803,8 @@ const AdminQuestions = () => {
   const [replyErrors, setReplyErrors] = useState({});
   // 回答を送れたときの知らせ（role="status" で読み上げる）
   const [replyStatus, setReplyStatus] = useState("");
+  // 結果不明だった回答が、一覧の読み直しで保存されていたと分かったときの知らせ（質問の id ごと。回答欄の下に出す）
+  const [replyNotices, setReplyNotices] = useState({});
 
   // 一覧の読み込みは 1 本ずつ（再読み込みの連打など）。新しい読み込み（タブ・コースの切り替え）が始まったら、
   // 古い読み込みの応答は捨て、読み込み中の印も新しい方が持つ（Questions と同じ）
@@ -2805,6 +2814,9 @@ const AdminQuestions = () => {
   const sessionExpired = useRef(false);
   // 送信中の質問の id。API に二重送信の対策がないため、ボタンの disabled が反映される前の連打でも送らないよう ref で判定する
   const sendingRef = useRef(new Set());
+  // 送信の結果が分からない（通信エラー・2xx で応答を読めない）質問の id → その時点の threadsSeq。
+  // その後に始めた一覧の読み込みが成功したら、行の answered で保存されたかを判定する（resolveUncertainReplies）
+  const uncertainRef = useRef({});
 
   const requestThreads = (url, onPage, onFail, onDone) => {
     const seq = ++threadsSeq.current;
@@ -2817,7 +2829,7 @@ const AdminQuestions = () => {
     }).then(data => {
       if (expired || seq !== threadsSeq.current) return;
       const page = readThreadPage(data);
-      if (page) onPage(page);
+      if (page) { onPage(page); settleUncertainReplies(page.threads, seq); }
       else onFail();
     }).catch(() => {
       if (!expired && seq === threadsSeq.current) onFail();
@@ -2826,6 +2838,19 @@ const AdminQuestions = () => {
       threadsInFlight.current = false;
       onDone();
     });
+  };
+
+  // 読み直した一覧で、結果不明だった回答を判定する。回答済みならエラーと書きかけを消して「保存されていました」を出し、
+  // 未回答のままならエラーを「保存されていませんでした」に変えて書きかけを残す。判定した質問は開いて結果を見せる
+  const settleUncertainReplies = (rows, seq) => {
+    const r = resolveUncertainReplies(uncertainRef.current, seq, rows);
+    if (r.saved.length === 0 && r.notSaved.length === 0) return;
+    uncertainRef.current = nextUncertainReplies(uncertainRef.current, r);
+    setReplyErrors(prev => nextReplyErrors(prev, r));
+    setDrafts(prev => nextReplyDrafts(prev, r));
+    setReplyNotices(prev => nextReplyNotices(prev, r));
+    setExpandedIds(prev => expandResolvedIds(prev, r));
+    if (r.saved.length > 0) setReplyStatus(REPLY_SAVED_AFTER_UNKNOWN_MESSAGE);
   };
 
   // タブ・コースの 1 ページ目。切り替えたら 1 ページ目から読み直し、前の応答は捨てる
@@ -2884,13 +2909,24 @@ const AdminQuestions = () => {
 
   const toggleThread = (id) => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
 
-  const setDraft = (id, value) => setDrafts(prev => ({ ...prev, [id]: value }));
-  const setReplyError = (id, message) => setReplyErrors(prev => {
+  const clearReplyNotice = (id) => setReplyNotices(prev => {
+    if (!(id in prev)) return prev;
     const next = { ...prev };
-    if (message) next[id] = message;
-    else delete next[id];
+    delete next[id];
     return next;
   });
+  const setDraft = (id, value) => { setDrafts(prev => ({ ...prev, [id]: value })); clearReplyNotice(id); };
+  // 結果不明の文言なら、その時点の読み込みの番号を記録する（それより後に始めた読み込みで判定する）。それ以外は記録を外す
+  const setReplyError = (id, message) => {
+    if (isUncertainSubmitError(message)) uncertainRef.current = { ...uncertainRef.current, [id]: threadsSeq.current };
+    else if (id in uncertainRef.current) { const next = { ...uncertainRef.current }; delete next[id]; uncertainRef.current = next; }
+    setReplyErrors(prev => {
+      const next = { ...prev };
+      if (message) next[id] = message;
+      else delete next[id];
+      return next;
+    });
+  };
 
   // 回答を送る。送信中は同じ質問に二度送らない。失敗したら入力を残して文言を出す。
   // 成功したら応答の thread でその行を置き換える（未回答タブでも行はその場に残り、バッジが「回答済み」に変わる）
@@ -2901,6 +2937,7 @@ const AdminQuestions = () => {
     sendingRef.current.add(id);
     setSendingIds(prev => [...prev, id]);
     setReplyError(id, "");
+    clearReplyNotice(id);
     setReplyStatus("");
     try {
       let res;
@@ -2974,6 +3011,7 @@ const AdminQuestions = () => {
           const sending = sendingIds.includes(x.id);
           const form = commentFormState(draft, sending);
           const replyError = replyErrors[x.id];
+          const replyNotice = replyNotices[x.id];
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
@@ -3031,7 +3069,18 @@ const AdminQuestions = () => {
                         </Button>
                       </div>
                       {replyError && (
-                        <div role="alert" style={{ fontSize: 12, color: T.danger, marginTop: 8 }}>{replyError}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+                          <div role="alert" style={{ fontSize: 12, color: T.danger }}>{replyError}</div>
+                          {/* 送れたか分からないときは、その場で今のタブ・コースの一覧を読み直せるようにする（読み直すと結果を判定する） */}
+                          {isUncertainSubmitError(replyError) && (
+                            <Button size="sm" variant="outline" onClick={() => loadThreads(tab, courseId)} disabled={loading || loadingMore} style={{ borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "4px 12px" }}>
+                              一覧を再読み込み
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {replyNotice && (
+                        <div style={{ fontSize: 12, color: T.success, marginTop: 8 }}>{replyNotice}</div>
                       )}
                     </div>
                   </div>
