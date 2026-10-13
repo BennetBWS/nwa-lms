@@ -1159,6 +1159,135 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.equal(textareaOf(tree, "t1").props.value, "講師の回答です");
   });
 
+  /** 見える（sr-only でない）role=status のうち、中身のあるもの */
+  const missingStatus = (tree: El) => byRole(tree, "status").filter((e) => e.props.className !== "sr-only" && text(e) !== "");
+
+  it("未回答タブで読み直して質問が見つからないと、回答済みタブを案内する（見える role=status）。送信は止めたまま、回答済みタブで判定する", async () => {
+    const m = await typed("講師の回答です");
+    click(button(m.render(), "回答を送信"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    let tree = m.render();
+    const notice = adminQuestions.uncertainReplyMissingMessage("unanswered");
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), [notice], "見える知らせがない");
+    assert.ok(notice.includes("回答済みタブ"), "回答済みタブの案内がない");
+    // 回答済みタブに t1 が出る：自分の回答が増えていたので保存されていた
+    click(tab(tree, "回答済み"));
+    tree = m.render();
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), [], "読み込みを始めても前の知らせが残る");
+    lastList(m).release(res({ threads: [answeredT1()], nextCursor: null }));
+    await settle();
+    tree = m.render();
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), [], "判定した後も知らせが残る");
+    assert.deepEqual(alertsOf(tree), []);
+    assert.equal(textareaOf(tree, "t1").props.value, "", "書きかけが残る（二重回答のおそれ）");
+    assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "保存されていた知らせがない");
+  });
+
+  it("見つからない間は記録を残し、送信も止めたまま（タブを戻して行が出るまで送れない）", async () => {
+    const m = await typed("講師の回答です");
+    click(button(m.render(), "回答を送信"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    // 未回答で見つからない → 回答済みにもない（空）
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    click(tab(m.render(), "回答済み"));
+    lastList(m).release(res({ threads: [], nextCursor: null }));
+    await settle();
+    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [adminQuestions.uncertainReplyMissingMessage("answered")]);
+    // 未回答に戻ると t1 が出る（読み直しで自分の回答は増えていない）→ 保存されていない可能性が高い
+    click(tab(m.render(), "未回答"));
+    lastList(m).release(res(PAGE1));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), []);
+    assert.deepEqual(alertsOf(tree), [adminQuestions.REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE]);
+    assert.equal(sendButtonOf(tree, "t1").props.disabled, false, "判定の後も送れない");
+  });
+
+  it("見つからない間は、判定前の古い描画の送信ボタンを押しても送らない（ref で止める）。もっと見るの続きにあれば判定する", async () => {
+    const m = await networkErrorOnAll();
+    const stale = m.render();
+    click(reloadButtons(stale)[0]);
+    lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: "c1" }));
+    await settle();
+    // 「すべて」の 1 ページ目にない：続きを案内する
+    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [adminQuestions.uncertainReplyMissingMessage("all")]);
+    // 古い描画の送信ボタン（disabled の反映前）を押しても送らない
+    click(button(stale, "回答を送信"));
+    assert.equal(replyReqs(m).length, 1, "結果不明のまま再送した");
+    // もっと見るの続きにはあった：判定し、知らせを消す。続きに無いことでは「見つからない」と知らせない
+    click(button(m.render(), "もっと見る"));
+    lastList(m).release(res({ threads: [answeredT1()], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), [], "判定した後も知らせが残る");
+    assert.deepEqual(alertsOf(tree), []);
+  });
+
+  it("もっと見るの続きに質問がなくても「見つからない」とは知らせない", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res({ threads: [thread("t1")], nextCursor: "c1" }));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    change(textareaOf(m.render(), "t1"), "講師の回答です");
+    click(sendButtonOf(m.render(), "t1"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    lastList(m).release(res({ threads: [thread("t9")], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(missingStatus(tree).map((e) => text(e)), []);
+    assert.deepEqual(alertsOf(tree), [commentForm.COMMENT_NETWORK_ERROR_MESSAGE], "判定していないのにエラーが変わった");
+  });
+
+  it("フォーカス：保存されていたら結果の文言（tabIndex=-1）へ、保存されていなければ回答欄へ、1 回だけ移す", async () => {
+    type FocusEl = { focus: () => void; count: number };
+    const fakeEl = (): FocusEl => {
+      const e = { count: 0, focus() { e.count++; } };
+      return e;
+    };
+    const refOf = (el: El) => el.props.ref as (e: unknown) => void;
+    for (const saved of [true, false]) {
+      const m = await networkErrorOnAll();
+      // 判定前は ref が呼ばれても移さない
+      const pre = fakeEl();
+      refOf(textareaOf(m.render(), "t1"))(pre);
+      assert.equal(pre.count, 0, "判定前に移した");
+      click(reloadButtons(m.render())[0]);
+      lastList(m).release(res(saved ? { threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null } : PAGE1));
+      await settle();
+      const tree = m.render();
+      const notice = findAll(tree, (e) => e.props.id === "admin-question-reply-notice-t1");
+      const target = saved ? notice[0] : textareaOf(tree, "t1");
+      assert.ok(target, `移す先がない（saved: ${saved}）`);
+      if (saved) {
+        assert.equal(target.props.tabIndex, -1, "結果の文言にフォーカスできない");
+        assert.ok(text(target).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "結果の文言でない");
+        // 回答欄には移さない
+        const other = fakeEl();
+        refOf(textareaOf(tree, "t1"))(other);
+        assert.equal(other.count, 0, "回答欄にも移した");
+      } else {
+        assert.equal(notice.length, 0, "保存されていないのに知らせがある");
+      }
+      refOf(target)(null);
+      const el = fakeEl();
+      refOf(target)(el);
+      assert.equal(el.count, 1, `移していない（saved: ${saved}）`);
+      // 再描画でもう一度 ref が呼ばれても移さない
+      refOf(target)(el);
+      assert.equal(el.count, 1, "再描画のたびに移す");
+    }
+  });
+
   it("エラーより前に始めた読み込みの結果では判定しない（回答が保存される前の一覧かもしれない）", async () => {
     const m = await sentOnAll();
     // 送信中に読み込みを始める（タブを切り替えて戻る）
