@@ -1054,6 +1054,40 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SENT_MESSAGE), "送信の知らせがない");
   });
 
+  it("回答済みの質問への追加の回答：読み直して自分の同じ本文の回答が増えていなければ notSaved、増えていれば saved", async () => {
+    // 送信前から t1 には自分の回答（別の本文）と別の講師の回答（同じ本文）がある
+    const before = [
+      { id: "r1", content: "前の回答です", createdAt: ago(60), author: { name: "講師ビー", isInstructor: true }, mine: true },
+      { id: "r2", content: "追加の回答です", createdAt: ago(30), author: { name: "講師シー", isInstructor: true }, mine: false },
+    ];
+    const t1 = (replies: unknown[]) => thread("t1", { replies, replyCount: replies.length, answered: true });
+    const added = { id: "r3", content: "追加の回答です", createdAt: ago(0), author: { name: "講師ビー", isInstructor: true }, mine: true };
+    for (const [after, saved] of [[before, false], [[...before, added], true]] as const) {
+      const m = await loaded();
+      click(tab(m.render(), "すべて"));
+      lastList(m).release(res({ threads: [t1(before), PAGE1.threads[1]], nextCursor: null }));
+      await settle();
+      click(threadButton(m.render(), "t1"));
+      // 前後の空白はサーバーが除く（判定も除いた本文で数える）
+      change(textareaOf(m.render(), "t1"), "  追加の回答です\n");
+      click(sendButtonOf(m.render(), "t1"));
+      replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+      await settle();
+      click(reloadButtons(m.render())[0]);
+      lastList(m).release(res({ threads: [t1([...after]), PAGE1.threads[1]], nextCursor: null }));
+      await settle();
+      const tree = m.render();
+      if (saved) {
+        assert.deepEqual(alertsOf(tree), [], "増えたのにエラーが残る");
+        assert.equal(textareaOf(tree, "t1").props.value, "", "増えたのに書きかけが残る");
+        assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "保存されていた知らせがない");
+      } else {
+        assert.deepEqual(alertsOf(tree), [adminQuestions.REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE], "回答済みというだけで保存されていたと判定した");
+        assert.equal(textareaOf(tree, "t1").props.value, "  追加の回答です\n", "書きかけが消えた");
+      }
+    }
+  });
+
   it("201 で別 id が返った後の再読み込みでも判定する（回答済み）", async () => {
     const m = await sentOnAll();
     replyReqs(m)[0].release(res({ thread: { ...answeredT1(), id: "t2" } }, { status: 201, url: REPLY_URL("t1") }));
