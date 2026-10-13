@@ -60,6 +60,19 @@ import { pickInitialLesson } from "@/lib/initial-lesson";
 import { toAdminDashboardView } from "@/lib/admin-stats";
 import { addedThreadCount, firstPageRowCount, QUESTION_TABS, readThreadPage, threadListUrl, threadRowDelay, threadsAddedMessage, threadsEmptyMessage, threadsMoreHint, toQuestionThreadItems } from "@/lib/question-threads";
 import {
+  ADMIN_QUESTION_TABS,
+  DEFAULT_ADMIN_QUESTION_TAB,
+  REPLY_SENT_MESSAGE,
+  adminReplyUrl,
+  adminThreadListUrl,
+  adminThreadsEmptyMessage,
+  adminThreadsMoreHint,
+  interpretReplyResponse,
+  replaceThreadRow,
+  toCourseOptions,
+} from "@/lib/admin-questions";
+import { commentFormState, commentSubmitErrorMessage } from "@/lib/comment-form";
+import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
   buildSubmitBody,
@@ -424,6 +437,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) =
   const adminNav = [
     { id: "admin-dashboard", icon: BarChart3, label: "管理ダッシュボード" },
     { id: "admin-students", icon: Users, label: "生徒管理" },
+    { id: "admin-questions", icon: MessageSquare, label: "質問対応" },
     { id: "admin-courses", icon: BookOpen, label: "コース管理" },
     { id: "admin-lessons", icon: Play, label: "レッスン管理" },
     { id: "admin-quiz", icon: HelpCircle, label: "クイズ管理" },
@@ -2754,6 +2768,326 @@ const Questions = () => {
   );
 };
 
+// ═══════════════════════════════════════════
+// ADMIN QUESTIONS — 講師の質問対応（#32 A-2）
+// ═══════════════════════════════════════════
+// 一覧は GET /api/comments（講師はロックなしで全コース）、回答は POST /api/admin/comments/[id]/replies。
+// タブ・URL・文言は src/lib/admin-questions.ts、回答欄の状態とエラー文言は src/lib/comment-form.ts。
+// 行の表示（名前の匿名化・講師バッジ）は生徒側の Questions と同じ toQuestionThreadItems。
+const AdminQuestions = () => {
+  const [tab, setTab] = useState(DEFAULT_ADMIN_QUESTION_TAB);
+  const [courseId, setCourseId] = useState(null);
+  const [courseOptions, setCourseOptions] = useState([]);
+  const [coursesFailed, setCoursesFailed] = useState(false);
+  const [threadRows, setThreadRows] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const [expandedIds, setExpandedIds] = useState([]);
+  // 1 ページ目の行数（表示の遅れの境界。未回答・回答済みタブでは 20 件未満・0 件もある）
+  const [firstPageCount, setFirstPageCount] = useState(0);
+  // 「もっと見る」で読み足した結果の知らせ（role="status" で読み上げる）
+  const [moreStatus, setMoreStatus] = useState("");
+  // 回答欄（質問の id ごと）：入力中の本文・送信中の id・送信の失敗の文言。入力はタブやコースを切り替えても残す
+  const [drafts, setDrafts] = useState({});
+  const [sendingIds, setSendingIds] = useState([]);
+  const [replyErrors, setReplyErrors] = useState({});
+  // 回答を送れたときの知らせ（role="status" で読み上げる）
+  const [replyStatus, setReplyStatus] = useState("");
+
+  // 一覧の読み込みは 1 本ずつ（再読み込みの連打など）。新しい読み込み（タブ・コースの切り替え）が始まったら、
+  // 古い読み込みの応答は捨て、読み込み中の印も新しい方が持つ（Questions と同じ）
+  const threadsInFlight = useRef(false);
+  const threadsSeq = useRef(0);
+  // セッションが切れたら authFetch がサインアウトして /login へ移る。読み込み中のままにし、もう読まない・送らない
+  const sessionExpired = useRef(false);
+  // 送信中の質問の id。API に二重送信の対策がないため、ボタンの disabled が反映される前の連打でも送らないよう ref で判定する
+  const sendingRef = useRef(new Set());
+
+  const requestThreads = (url, onPage, onFail, onDone) => {
+    const seq = ++threadsSeq.current;
+    threadsInFlight.current = true;
+    let expired = false;
+    authFetch(url).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { expired = true; sessionExpired.current = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (expired || seq !== threadsSeq.current) return;
+      const page = readThreadPage(data);
+      if (page) onPage(page);
+      else onFail();
+    }).catch(() => {
+      if (!expired && seq === threadsSeq.current) onFail();
+    }).finally(() => {
+      if (expired || seq !== threadsSeq.current) return;
+      threadsInFlight.current = false;
+      onDone();
+    });
+  };
+
+  // タブ・コースの 1 ページ目。切り替えたら 1 ページ目から読み直し、前の応答は捨てる
+  const loadThreads = (forTab, forCourseId) => {
+    if (sessionExpired.current) return;
+    if (threadsInFlight.current && forTab === tab && forCourseId === courseId) return;
+    setTab(forTab);
+    setCourseId(forCourseId);
+    setThreadRows([]);
+    setNextCursor(null);
+    setExpandedIds([]);
+    setFirstPageCount(0);
+    setLoading(true);
+    setLoadFailed(false);
+    setLoadingMore(false);
+    setMoreFailed(false);
+    setMoreStatus("");
+    setReplyStatus("");
+    requestThreads(
+      adminThreadListUrl(forTab, forCourseId, null),
+      page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); setFirstPageCount(firstPageRowCount(page.threads)); },
+      () => setLoadFailed(true),
+      () => setLoading(false)
+    );
+  };
+
+  const loadMore = () => {
+    if (sessionExpired.current || threadsInFlight.current || nextCursor === null) return;
+    setLoadingMore(true);
+    setMoreFailed(false);
+    setMoreStatus("");
+    requestThreads(
+      adminThreadListUrl(tab, courseId, nextCursor),
+      page => { setMoreStatus(threadsAddedMessage(addedThreadCount(threadRows, page.threads))); setThreadRows(prev => [...prev, ...page.threads]); setNextCursor(page.nextCursor); },
+      () => setMoreFailed(true),
+      () => setLoadingMore(false)
+    );
+  };
+
+  // コースの選択肢（GET /api/admin/courses）。読めなければ「すべてのコース」だけにする
+  const loadCourses = () => {
+    let expired = false;
+    authFetch("/api/admin/courses").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { expired = true; sessionExpired.current = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (expired) return;
+      const options = toCourseOptions(data);
+      if (options) setCourseOptions(options);
+      else setCoursesFailed(true);
+    }).catch(() => {
+      if (!expired) setCoursesFailed(true);
+    });
+  };
+
+  const toggleThread = (id) => setExpandedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const setDraft = (id, value) => setDrafts(prev => ({ ...prev, [id]: value }));
+  const setReplyError = (id, message) => setReplyErrors(prev => {
+    const next = { ...prev };
+    if (message) next[id] = message;
+    else delete next[id];
+    return next;
+  });
+
+  // 回答を送る。送信中は同じ質問に二度送らない。失敗したら入力を残して文言を出す。
+  // 成功したら応答の thread でその行を置き換える（未回答タブでも行はその場に残り、バッジが「回答済み」に変わる）
+  const submitReply = async (id) => {
+    if (sessionExpired.current || sendingRef.current.has(id)) return;
+    const value = drafts[id] ?? "";
+    if (!commentFormState(value, false).canSubmit) return;
+    sendingRef.current.add(id);
+    setSendingIds(prev => [...prev, id]);
+    setReplyError(id, "");
+    setReplyStatus("");
+    try {
+      let res;
+      try {
+        res = await authFetch(adminReplyUrl(id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: value }) });
+      } catch {
+        setReplyError(id, commentSubmitErrorMessage({ httpStatus: null }));
+        return;
+      }
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") sessionExpired.current = true;
+      // 本文が JSON でない（ゲートウェイのエラーページなど）ときは null とし、ステータスだけで文言を決める
+      const body = await res.json().catch(() => null);
+      const outcome = interpretReplyResponse({ ok: res.ok, status: res.status, redirected: res.redirected, body, threadId: id });
+      if (outcome.kind !== "success") {
+        setReplyError(id, outcome.message);
+        return;
+      }
+      setThreadRows(prev => replaceThreadRow(prev, outcome.thread));
+      setDrafts(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setReplyStatus(REPLY_SENT_MESSAGE);
+    } finally {
+      sendingRef.current.delete(id);
+      setSendingIds(prev => prev.filter(x => x !== id));
+    }
+  };
+
+  useEffect(() => { loadThreads(DEFAULT_ADMIN_QUESTION_TAB, null); loadCourses(); }, []);
+
+  const now = new Date();
+  const items = toQuestionThreadItems(threadRows, now);
+
+  let body;
+  if (loading) {
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+        <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+        <div style={{ fontSize: 13, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Loading...</div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  } else if (loadFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>質問を読み込めませんでした</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={() => loadThreads(tab, courseId)} disabled={loading} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else if (items.length === 0 && nextCursor === null) {
+    // 未回答・回答済みはサーバーで判定して絞るため、0 件でも続き（nextCursor）がありうる。そのときは下の「もっと見る」を出す
+    body = (
+      <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{adminThreadsEmptyMessage(tab, courseId !== null)}</div>
+    );
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {items.map((x, i) => {
+          const open = expandedIds.includes(x.id);
+          const regionId = `admin-question-thread-${x.id}`;
+          const buttonId = `admin-question-thread-button-${x.id}`;
+          const inputId = `admin-question-reply-${x.id}`;
+          const counterId = `admin-question-reply-count-${x.id}`;
+          const place = [x.courseName, x.lessonTitle].filter(Boolean).join(" / ");
+          const draft = drafts[x.id] ?? "";
+          const sending = sendingIds.includes(x.id);
+          const form = commentFormState(draft, sending);
+          const replyError = replyErrors[x.id];
+          return (
+            <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
+              <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
+                <button type="button" id={buttonId} aria-expanded={open} aria-controls={open ? regionId : undefined} onClick={() => toggleThread(x.id)} style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "20px 24px", cursor: "pointer", color: "inherit", font: "inherit" }}>
+                  <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flexWrap: "wrap" }}>
+                      <Avatar aria-hidden="true" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                        <AvatarFallback style={{ background: x.isInstructor ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.initial ?? <User size={14} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
+                      </Avatar>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{x.name}</span>
+                      {x.isInstructor && <Badge variant="outline" style={{ padding: "1px 8px", fontSize: 10, color: T.accent, borderColor: `${T.accent}40` }}>講師</Badge>}
+                      <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: x.answered ? `${T.success}12` : `${T.warning}12`, color: x.answered ? T.success : T.warning, border: "none" }}>{x.answeredLabel}</Badge>
+                    </span>
+                    <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{x.time}</span>
+                  </span>
+                  {/* 閉じているときは要約だけ（ボタン名として全文を読み上げさせない）。開いたら全文を下の領域に出す */}
+                  {!open && <span style={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.summary}</span>}
+                  <span style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                    {place && <span style={{ overflowWrap: "anywhere" }}><BookOpen size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> {place}</span>}
+                    <span><MessageSquare size={12} aria-hidden="true" style={{ verticalAlign: "middle" }} /> 返信 {x.replyCount}件</span>
+                  </span>
+                </button>
+                {open && (
+                  <div id={regionId} role="region" aria-labelledby={buttonId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
+                    <div style={{ paddingTop: 14, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
+                    {x.replies.length === 0 ? (
+                      <div style={{ fontSize: 12, color: T.textMuted, paddingTop: 14 }}>まだ返信はありません</div>
+                    ) : (
+                      x.replies.map(r => (
+                        <div key={r.id} style={{ display: "flex", gap: 12, marginTop: 14 }}>
+                          <Avatar aria-hidden="true" style={{ width: 28, height: 28, flexShrink: 0 }}>
+                            <AvatarFallback style={{ background: r.isInstructor ? `linear-gradient(135deg, ${T.accent}, ${T.purple})` : "linear-gradient(135deg, #22C55E, #16A34A)", color: "#fff", fontSize: 12, fontWeight: 700, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.initial ?? <User size={15} strokeWidth={2} aria-hidden="true" />}</AvatarFallback>
+                          </Avatar>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ ...glassStyle(8), borderRadius: 14, padding: "12px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: T.textPrimary, fontFamily: "var(--font-sora), 'Sora', sans-serif", overflowWrap: "anywhere" }}>{r.name}</span>
+                                {r.isInstructor && <Badge variant="outline" style={{ padding: "1px 8px", fontSize: 10, color: T.accent, borderColor: `${T.accent}40` }}>講師</Badge>}
+                              </div>
+                              <div style={{ fontSize: 13, color: T.textSecondary, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{r.content}</div>
+                            </div>
+                            <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {/* 回答欄。form にしない（Enter で送信しない。IME の確定の Enter と区別するため、送信はボタンだけ） */}
+                    <div style={{ marginTop: 18 }}>
+                      <label htmlFor={inputId} style={{ display: "block", fontSize: 12, fontWeight: 600, color: T.textSecondary, marginBottom: 6 }}>回答する</label>
+                      <textarea id={inputId} value={draft} onChange={e => setDraft(x.id, e.target.value)} readOnly={sending} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="回答を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+                        <span id={counterId} style={{ fontSize: 11, color: form.tooLong ? T.danger : T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{form.counterLabel}</span>
+                        <Button size="sm" onClick={() => submitReply(x.id)} disabled={!form.canSubmit} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+                          {sending ? "送信中..." : "回答を送信"}
+                        </Button>
+                      </div>
+                      {replyError && (
+                        <div role="alert" style={{ fontSize: 12, color: T.danger, marginTop: 8 }}>{replyError}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </FadeIn>
+          );
+        })}
+        {nextCursor !== null && (
+          <div style={{ marginTop: 4, textAlign: "center" }}>
+            {items.length === 0 && (
+              <div style={{ ...glassStyle(), borderRadius: 20, padding: "20px 24px", marginBottom: 12, fontSize: 13, color: T.textMuted }}>{adminThreadsMoreHint(tab)}</div>
+            )}
+            {moreFailed && (
+              <div role="alert" style={{ fontSize: 12, color: T.textMuted, marginBottom: 10 }}>続きを読み込めませんでした。もう一度お試しください。</div>
+            )}
+            <Button size="sm" variant="outline" onClick={loadMore} disabled={loadingMore} style={{ borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+              {loadingMore ? "読み込み中..." : "もっと見る"}
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <ScrollArea style={{ height: "100%" }}>
+      <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 980 }}>
+        <FadeIn><span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>Support</span>
+          <h1 style={{ fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 20px", letterSpacing: "-0.04em" }}>質問対応</h1></FadeIn>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div role="group" aria-label="回答の状態で絞り込み" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {ADMIN_QUESTION_TABS.map(t => (
+              <button key={t.key} type="button" aria-pressed={tab === t.key} onClick={() => { if (t.key !== tab) loadThreads(t.key, courseId); }} style={{ padding: "6px 14px", borderRadius: 999, border: `1px solid ${tab === t.key ? T.accent : T.border}`, background: tab === t.key ? `${T.accent}12` : "transparent", color: tab === t.key ? T.accent : T.textSecondary, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label htmlFor="admin-questions-course" style={{ fontSize: 12, fontWeight: 600, color: T.textSecondary }}>コース</label>
+            <select id="admin-questions-course" value={courseId ?? ""} onChange={e => { const v = e.target.value === "" ? null : e.target.value; if (v !== courseId) loadThreads(tab, v); }} style={{ padding: "6px 10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.textPrimary, fontSize: 12, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+              <option value="">すべてのコース</option>
+              {courseOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {coursesFailed && <span style={{ fontSize: 11, color: T.textMuted }}>コースの一覧を読み込めませんでした（絞り込みはページを開き直すと使えます）</span>}
+          </div>
+        </div>
+        {body}
+        {/* 一覧が空の案内に切り替わっても消えないよう、body の外に置く */}
+        <div role="status" aria-live="polite" className="sr-only">{moreStatus}</div>
+        <div role="status" aria-live="polite" className="sr-only">{replyStatus}</div>
+      </div>
+    </ScrollArea>
+  );
+};
+
 const AdminCourses = () => {
   const [apiCourses, setApiCourses] = useState([]);
   useEffect(() => {
@@ -2967,6 +3301,7 @@ export default function NWALearningPlatform() {
     "questions": <Questions />,
     "admin-dashboard": <AdminDashboard setCurrentPage={handlePageChange} />,
     "admin-students": <AdminStudents setCurrentPage={handlePageChange} />,
+    "admin-questions": <AdminQuestions />,
     "admin-courses": <AdminCourses />,
     "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え（管理APIは実装済み）" />,
     "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定（管理APIは実装済み）" />,
