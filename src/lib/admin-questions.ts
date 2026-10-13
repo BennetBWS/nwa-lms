@@ -157,11 +157,13 @@ export const REPLY_BLOCKED_UNTIL_RELOAD_HINT = "送信できたか確かめる�
 
 /**
  * 読み直した 1 ページ目に結果不明の質問がなかったときの知らせ（role="status"）。
- * 未回答タブでは、回答が保存されて回答済みになり一覧から外れた可能性がある
+ * 未回答タブでは、回答が保存されて回答済みになり一覧から外れた可能性がある。
+ * hasMore：続きのページがある（nextCursor が null でない）か。ないときは「もっと見る」を案内しない
  */
-export function uncertainReplyMissingMessage(tab: AdminQuestionTab): string {
+export function uncertainReplyMissingMessage(tab: AdminQuestionTab, hasMore: boolean): string {
   if (tab === "unanswered") return "回答済みになった可能性があります。回答済みタブで確かめてください。";
-  return "送信結果を確かめる質問がこの一覧に見つかりませんでした。「もっと見る」や他のタブで確かめてください。";
+  if (hasMore) return "送信結果を確かめる質問がこの一覧に見つかりませんでした。「もっと見る」や他のタブで確かめてください。";
+  return "送信結果を確かめる質問がこの一覧に見つかりませんでした。他のタブやコースで確かめてください。";
 }
 
 /** 結果不明の回答の記録 */

@@ -1201,7 +1201,7 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: null }));
     await settle();
     let tree = m.render();
-    const notice = adminQuestions.uncertainReplyMissingMessage("unanswered");
+    const notice = adminQuestions.uncertainReplyMissingMessage("unanswered", false);
     assert.deepEqual(missingStatus(tree).map((e) => text(e)), [notice], "見える知らせがない");
     assert.ok(notice.includes("回答済みタブ"), "回答済みタブの案内がない");
     // 回答済みタブに t1 が出る：自分の回答が増えていたので保存されていた
@@ -1229,7 +1229,10 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     click(tab(m.render(), "回答済み"));
     lastList(m).release(res({ threads: [], nextCursor: null }));
     await settle();
-    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [adminQuestions.uncertainReplyMissingMessage("answered")]);
+    // 続きのページがない（nextCursor が null）ので「もっと見る」は案内しない
+    const answeredNotice = adminQuestions.uncertainReplyMissingMessage("answered", false);
+    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [answeredNotice]);
+    assert.ok(!answeredNotice.includes("もっと見る"), "続きがないのに「もっと見る」を案内した");
     // 未回答に戻ると t1 が出る（読み直しで自分の回答は増えていない）→ 保存されていない可能性が高い
     click(tab(m.render(), "未回答"));
     lastList(m).release(res(PAGE1));
@@ -1247,7 +1250,7 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: "c1" }));
     await settle();
     // 「すべて」の 1 ページ目にない：続きを案内する
-    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [adminQuestions.uncertainReplyMissingMessage("all")]);
+    assert.deepEqual(missingStatus(m.render()).map((e) => text(e)), [adminQuestions.uncertainReplyMissingMessage("all", true)]);
     // 古い描画の送信ボタン（disabled の反映前）を押しても送らない
     click(button(stale, "回答を送信"));
     assert.equal(replyReqs(m).length, 1, "結果不明のまま再送した");
@@ -1408,7 +1411,7 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.match(compSrc, /isUncertainSubmitError\(replyError\) && \(\s*<Button[^>]*onClick=\{\(\) => loadThreads\(tab, courseId\)\} disabled=\{loading \|\| loadingMore\}/);
     assert.match(compSrc, /resolveUncertainReplies\(uncertainRef\.current, seq, rows\)/);
     assert.match(compSrc, /missingUncertainReplies\(uncertainRef\.current, seq, rows\)/);
-    assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq, firstPageTab\); \}/);
+    assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq, firstPageTab, page\.nextCursor !== null\); \}/);
     // 1 ページ目の読み込みだけがタブを渡す（もっと見るの続きでは「見つからない」と知らせない）
     assert.match(compSrc, /\(\) => setLoading\(false\),\s*forTab\s*\);/);
     assert.match(compSrc, /\(\) => setLoadingMore\(false\)\s*\);/);

@@ -2843,7 +2843,7 @@ const AdminQuestions = () => {
     }).then(data => {
       if (expired || seq !== threadsSeq.current) return;
       const page = readThreadPage(data);
-      if (page) { onPage(page); settleUncertainReplies(page.threads, seq, firstPageTab); }
+      if (page) { onPage(page); settleUncertainReplies(page.threads, seq, firstPageTab, page.nextCursor !== null); }
       else onFail();
     }).catch(() => {
       if (!expired && seq === threadsSeq.current) onFail();
@@ -2858,11 +2858,12 @@ const AdminQuestions = () => {
   // 書きかけは送った本文のまま（trim して同じ）なら消し、結果不明の間に書き直されていれば残す（savedDraftOutcome）。
   // 増えていなければエラーを「保存されていない可能性が高い」に変えて書きかけを残す。判定した質問は開いて結果を見せ、
   // 最初の 1 件の結果の文言（保存されていた）か回答欄（保存されていない）へフォーカスを移す。
-  // 1 ページ目に見つからない質問があれば知らせる（記録は残し、送信も止めたまま。別のタブで行が出たら判定する）
-  const settleUncertainReplies = (rows, seq, firstPageTab) => {
+  // 1 ページ目に見つからない質問があれば知らせる（記録は残し、送信も止めたまま。別のタブで行が出たら判定する）。
+  // hasMore：続きのページがあるか（ないときは「もっと見る」を案内しない）
+  const settleUncertainReplies = (rows, seq, firstPageTab, hasMore) => {
     if (firstPageTab !== null) {
       const missing = missingUncertainReplies(uncertainRef.current, seq, rows);
-      setMissingNotice(missing.length > 0 ? uncertainReplyMissingMessage(firstPageTab) : "");
+      setMissingNotice(missing.length > 0 ? uncertainReplyMissingMessage(firstPageTab, hasMore) : "");
     }
     const r = resolveUncertainReplies(uncertainRef.current, seq, rows);
     if (r.saved.length === 0 && r.notSaved.length === 0) return;

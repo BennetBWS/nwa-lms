@@ -154,10 +154,14 @@ describe("missingUncertainReplies", () => {
     assert.deepEqual(missingUncertainReplies({}, 4, rows), []);
   });
 
-  it("知らせの文言：未回答タブは回答済みタブを案内し、他のタブは続き・他のタブを案内する", () => {
-    assert.ok(uncertainReplyMissingMessage("unanswered").includes("回答済みタブ"), "未回答タブの文言");
+  it("知らせの文言：未回答タブは回答済みタブを案内し、他のタブは続きがあるときだけ「もっと見る」を案内する", () => {
+    for (const hasMore of [true, false]) {
+      assert.ok(uncertainReplyMissingMessage("unanswered", hasMore).includes("回答済みタブ"), `未回答タブの文言（hasMore=${hasMore}）`);
+    }
     for (const t of ["answered", "all"] as const) {
-      assert.ok(uncertainReplyMissingMessage(t).includes("もっと見る"), t);
+      assert.ok(uncertainReplyMissingMessage(t, true).includes("もっと見る"), `続きがあるのに「もっと見る」の案内がない：${t}`);
+      assert.ok(!uncertainReplyMissingMessage(t, false).includes("もっと見る"), `続きがないのに「もっと見る」を案内した：${t}`);
+      assert.ok(uncertainReplyMissingMessage(t, false).includes("他のタブ"), `続きがないときに他のタブの案内がない：${t}`);
     }
   });
 });
