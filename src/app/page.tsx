@@ -62,6 +62,7 @@ import { addedThreadCount, firstPageRowCount, QUESTION_TABS, readThreadPage, thr
 import {
   ADMIN_QUESTION_TABS,
   DEFAULT_ADMIN_QUESTION_TAB,
+  REPLY_BLOCKED_UNTIL_RELOAD_HINT,
   REPLY_SAVED_AFTER_UNKNOWN_MESSAGE,
   REPLY_SENT_MESSAGE,
   adminReplyUrl,
@@ -70,6 +71,7 @@ import {
   adminThreadsMoreHint,
   expandResolvedIds,
   interpretReplyResponse,
+  missingUncertainReplies,
   nextReplyDrafts,
   nextReplyErrors,
   nextReplyNotices,
@@ -77,6 +79,7 @@ import {
   replaceThreadRow,
   resolveUncertainReplies,
   toCourseOptions,
+  uncertainReplyMissingMessage,
   uncertainReplyRecord,
 } from "@/lib/admin-questions";
 import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
@@ -2806,6 +2809,8 @@ const AdminQuestions = () => {
   const [replyStatus, setReplyStatus] = useState("");
   // 結果不明だった回答が、一覧の読み直しで保存されていたと分かったときの知らせ（質問の id ごと。回答欄の下に出す）
   const [replyNotices, setReplyNotices] = useState({});
+  // 読み直した 1 ページ目に結果不明の質問がなかったときの知らせ（未回答タブで回答済みになって外れた等。role="status" で見せる）
+  const [missingNotice, setMissingNotice] = useState("");
 
   // 一覧の読み込みは 1 本ずつ（再読み込みの連打など）。新しい読み込み（タブ・コースの切り替え）が始まったら、
   // 古い読み込みの応答は捨て、読み込み中の印も新しい方が持つ（Questions と同じ）
@@ -2819,8 +2824,11 @@ const AdminQuestions = () => {
   // 送信した時点の行にあった自分の同じ本文の回答の件数。uncertainReplyRecord）。
   // その後に始めた一覧の読み込みが成功したら、自分の同じ本文の回答が増えたかで保存されたかを判定する（resolveUncertainReplies）
   const uncertainRef = useRef({});
+  // 判定した後にフォーカスを移す先（{ id, target: "notice" | "input" }）。その要素が描画されたときに 1 回だけ移す
+  const focusAfterResolveRef = useRef(null);
 
-  const requestThreads = (url, onPage, onFail, onDone) => {
+  // firstPageTab：1 ページ目の読み込みならそのタブ（結果不明の質問が見つからないときの知らせに使う）。もっと見るは null
+  const requestThreads = (url, onPage, onFail, onDone, firstPageTab = null) => {
     const seq = ++threadsSeq.current;
     threadsInFlight.current = true;
     let expired = false;
@@ -2831,7 +2839,7 @@ const AdminQuestions = () => {
     }).then(data => {
       if (expired || seq !== threadsSeq.current) return;
       const page = readThreadPage(data);
-      if (page) { onPage(page); settleUncertainReplies(page.threads, seq); }
+      if (page) { onPage(page); settleUncertainReplies(page.threads, seq, firstPageTab); }
       else onFail();
     }).catch(() => {
       if (!expired && seq === threadsSeq.current) onFail();
@@ -2843,16 +2851,32 @@ const AdminQuestions = () => {
   };
 
   // 読み直した一覧で、結果不明だった回答を判定する。自分の同じ本文の回答が増えていればエラーと書きかけを消して「保存されていました」を出し、
-  // 増えていなければエラーを「保存されていない可能性が高い」に変えて書きかけを残す。判定した質問は開いて結果を見せる
-  const settleUncertainReplies = (rows, seq) => {
+  // 増えていなければエラーを「保存されていない可能性が高い」に変えて書きかけを残す。判定した質問は開いて結果を見せ、
+  // 最初の 1 件の結果の文言（保存されていた）か回答欄（保存されていない）へフォーカスを移す。
+  // 1 ページ目に見つからない質問があれば知らせる（記録は残し、送信も止めたまま。別のタブで行が出たら判定する）
+  const settleUncertainReplies = (rows, seq, firstPageTab) => {
+    if (firstPageTab !== null) {
+      const missing = missingUncertainReplies(uncertainRef.current, seq, rows);
+      setMissingNotice(missing.length > 0 ? uncertainReplyMissingMessage(firstPageTab) : "");
+    }
     const r = resolveUncertainReplies(uncertainRef.current, seq, rows);
     if (r.saved.length === 0 && r.notSaved.length === 0) return;
     uncertainRef.current = nextUncertainReplies(uncertainRef.current, r);
+    if (Object.keys(uncertainRef.current).length === 0) setMissingNotice("");
     setReplyErrors(prev => nextReplyErrors(prev, r));
     setDrafts(prev => nextReplyDrafts(prev, r));
     setReplyNotices(prev => nextReplyNotices(prev, r));
     setExpandedIds(prev => expandResolvedIds(prev, r));
     if (r.saved.length > 0) setReplyStatus(REPLY_SAVED_AFTER_UNKNOWN_MESSAGE);
+    focusAfterResolveRef.current = r.saved.length > 0 ? { id: r.saved[0], target: "notice" } : { id: r.notSaved[0], target: "input" };
+  };
+
+  // 判定した行の結果の文言・回答欄が描画されたら、1 回だけフォーカスを移す（ref のコールバックで呼ぶ）
+  const focusIfResolved = (el, id, target) => {
+    const f = focusAfterResolveRef.current;
+    if (!el || !f || f.id !== id || f.target !== target) return;
+    focusAfterResolveRef.current = null;
+    el.focus();
   };
 
   // タブ・コースの 1 ページ目。切り替えたら 1 ページ目から読み直し、前の応答は捨てる
@@ -2871,11 +2895,14 @@ const AdminQuestions = () => {
     setMoreFailed(false);
     setMoreStatus("");
     setReplyStatus("");
+    setMissingNotice("");
+    focusAfterResolveRef.current = null;
     requestThreads(
       adminThreadListUrl(forTab, forCourseId, null),
       page => { setThreadRows(page.threads); setNextCursor(page.nextCursor); setFirstPageCount(firstPageRowCount(page.threads)); },
       () => setLoadFailed(true),
-      () => setLoading(false)
+      () => setLoading(false),
+      forTab
     );
   };
 
@@ -2931,10 +2958,11 @@ const AdminQuestions = () => {
     });
   };
 
-  // 回答を送る。送信中は同じ質問に二度送らない。失敗したら入力を残して文言を出す。
+  // 回答を送る。送信中は同じ質問に二度送らない。結果不明の記録がある間は送らない（二重回答を防ぐ。一覧の再読み込みで判定する）。
+  // 失敗したら入力を残して文言を出す。
   // 成功したら応答の thread でその行を置き換える（未回答タブでも行はその場に残り、バッジが「回答済み」に変わる）
   const submitReply = async (id) => {
-    if (sessionExpired.current || sendingRef.current.has(id)) return;
+    if (sessionExpired.current || sendingRef.current.has(id) || id in uncertainRef.current) return;
     const value = drafts[id] ?? "";
     if (!commentFormState(value, false).canSubmit) return;
     // 結果不明になったときの判定の基準（送った本文と、送信した時点の一覧）
@@ -3017,6 +3045,9 @@ const AdminQuestions = () => {
           const form = commentFormState(draft, sending);
           const replyError = replyErrors[x.id];
           const replyNotice = replyNotices[x.id];
+          // 結果不明の間は送信を止める（エラーの文言と結果不明の記録は setReplyError・settleUncertainReplies で同時に変わる）
+          const awaitingCheck = isUncertainSubmitError(replyError);
+          const blockedHintId = `admin-question-reply-blocked-${x.id}`;
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
@@ -3066,10 +3097,10 @@ const AdminQuestions = () => {
                     {/* 回答欄。form にしない（Enter で送信しない。IME の確定の Enter と区別するため、送信はボタンだけ） */}
                     <div style={{ marginTop: 18 }}>
                       <label htmlFor={inputId} style={{ display: "block", fontSize: 12, fontWeight: 600, color: T.textSecondary, marginBottom: 6 }}>回答する</label>
-                      <textarea id={inputId} value={draft} onChange={e => setDraft(x.id, e.target.value)} readOnly={sending} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="回答を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
+                      <textarea id={inputId} ref={el => focusIfResolved(el, x.id, "input")} value={draft} onChange={e => setDraft(x.id, e.target.value)} readOnly={sending} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="回答を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
                         <span id={counterId} style={{ fontSize: 11, color: form.tooLong ? T.danger : T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{form.counterLabel}</span>
-                        <Button size="sm" onClick={() => submitReply(x.id)} disabled={!form.canSubmit} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+                        <Button size="sm" onClick={() => submitReply(x.id)} disabled={!form.canSubmit || awaitingCheck} aria-describedby={awaitingCheck ? blockedHintId : undefined} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
                           {sending ? "送信中..." : "回答を送信"}
                         </Button>
                       </div>
@@ -3084,8 +3115,11 @@ const AdminQuestions = () => {
                           )}
                         </div>
                       )}
+                      {awaitingCheck && (
+                        <div id={blockedHintId} style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>{REPLY_BLOCKED_UNTIL_RELOAD_HINT}</div>
+                      )}
                       {replyNotice && (
-                        <div style={{ fontSize: 12, color: T.success, marginTop: 8 }}>{replyNotice}</div>
+                        <div id={`admin-question-reply-notice-${x.id}`} ref={el => focusIfResolved(el, x.id, "notice")} tabIndex={-1} style={{ fontSize: 12, color: T.success, marginTop: 8, outline: "none" }}>{replyNotice}</div>
                       )}
                     </div>
                   </div>
@@ -3133,6 +3167,8 @@ const AdminQuestions = () => {
             {coursesFailed && <span style={{ fontSize: 11, color: T.textMuted }}>コースの一覧を読み込めませんでした（絞り込みはページを開き直すと使えます）</span>}
           </div>
         </div>
+        {/* 結果不明の質問が読み直した一覧に見つからないときの知らせ。行がないので見える形で出す（領域は常に置く） */}
+        <div role="status" aria-live="polite" style={{ fontSize: 12, color: T.textSecondary, marginBottom: missingNotice ? 14 : 0 }}>{missingNotice}</div>
         {body}
         {/* 一覧が空の案内に切り替わっても消えないよう、body の外に置く */}
         <div role="status" aria-live="polite" className="sr-only">{moreStatus}</div>

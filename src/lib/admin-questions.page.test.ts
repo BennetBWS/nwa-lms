@@ -81,8 +81,8 @@ describe("AdminQuestions：配線", () => {
     assert.doesNotMatch(compSrc, /(?<![\w$.])fetch\s*\(/);
   });
 
-  it("送信中は ref で同じ質問への再送を止める（authFetch より前で判定する）", () => {
-    const guard = compSrc.indexOf("sendingRef.current.has(id)) return;");
+  it("送信中・結果不明の間は ref で同じ質問への再送を止める（authFetch より前で判定する）", () => {
+    const guard = compSrc.indexOf("sendingRef.current.has(id) || id in uncertainRef.current) return;");
     const add = compSrc.indexOf("sendingRef.current.add(id);");
     const post = compSrc.indexOf("authFetch(adminReplyUrl(id)");
     assert.ok(guard >= 0 && add > guard && post > add, "判定・印付け・送信の順になっていない");

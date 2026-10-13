@@ -412,8 +412,12 @@ describe("AdminQuestions 追加：二重送信", () => {
     assert.equal(textareaOf(m.render(), "t2").props.value, "t2 の書きかけ");
   });
 
-  it("通信エラー・500 の後は同じ質問にもう一度送れる（送る本文は同じ）", async () => {
-    for (const fail of [(r: Req) => r.fail(new TypeError("Failed to fetch")), (r: Req) => r.release(res({ error: "x" }, { status: 500, ok: false }))]) {
+  it("500・400 など結果が確定した失敗の後は、同じ質問にもう一度送れる（送る本文は同じ）", async () => {
+    const fails = [
+      (r: Req) => r.release(res({ error: "x" }, { status: 500, ok: false })),
+      (r: Req) => r.release(res({ error: "Invalid request", reason: "invalid_body" }, { status: 400, ok: false })),
+    ];
+    for (const fail of fails) {
       const m = await typed("講師の回答です");
       click(button(m.render(), "回答を送信"));
       fail(replyReqs(m)[0]);
@@ -423,6 +427,41 @@ describe("AdminQuestions 追加：二重送信", () => {
       assert.equal(textarea(tree).props.readOnly, false, "失敗の後に入力できない");
       click(button(tree, "回答を送信"));
       assert.equal(replyReqs(m).length, 2, "失敗の後に再送できない");
+      assert.equal(replyReqs(m)[1].init?.body, replyReqs(m)[0].init?.body);
+    }
+  });
+
+  it("通信エラー・502〜504 の後は送れず（再読み込みを促す）、再読み込みで保存されていないと分かれば同じ本文で再送できる", async () => {
+    const fails = [
+      (r: Req) => r.fail(new TypeError("Failed to fetch")),
+      ...[502, 503, 504].map((status) => (r: Req) => r.release(res(null, { status, ok: false, json: () => Promise.reject(new SyntaxError("x")) }))),
+    ];
+    for (const fail of fails) {
+      const m = await typed("講師の回答です");
+      click(button(m.render(), "回答を送信"));
+      fail(replyReqs(m)[0]);
+      await settle();
+      let tree = m.render();
+      const b = button(tree, "回答を送信");
+      assert.equal(b.props.disabled, true, "結果不明なのに押せる");
+      assert.equal(typeof b.props["aria-describedby"], "string", "送れない理由が結び付いていない");
+      const hint = findAll(tree, (e) => e.props.id === b.props["aria-describedby"]);
+      assert.equal(hint.length, 1, "送れない理由の要素がない");
+      assert.ok(text(hint[0]).includes("一覧を再読み込み"), "再読み込みを促していない");
+      assert.equal(textarea(tree).props.readOnly, false, "結果不明の間に入力できない");
+      // 描画が古くても（disabled が反映される前の押下）送らない
+      click(b);
+      assert.equal(replyReqs(m).length, 1, "結果不明なのに再送した");
+      // 未回答タブで読み直して、自分の回答が増えていない（保存されていない）
+      click(button(tree, "一覧を再読み込み"));
+      listReqs(m)[listReqs(m).length - 1].release(res(PAGE1));
+      await settle();
+      tree = m.render();
+      assert.deepEqual(alertsOf(tree), [adminQuestions.REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE]);
+      assert.equal(button(tree, "回答を送信").props.disabled, false, "保存されていないと分かったのに押せない");
+      assert.equal(button(tree, "回答を送信").props["aria-describedby"], undefined, "送れない理由が残る");
+      click(button(tree, "回答を送信"));
+      assert.equal(replyReqs(m).length, 2, "保存されていないと分かったのに再送できない");
       assert.equal(replyReqs(m)[1].init?.body, replyReqs(m)[0].init?.body);
     }
   });
@@ -952,6 +991,7 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
       (r) => r.fail(new TypeError("Failed to fetch")),
       (r) => r.release(res({ thread: { ...answeredT1(), id: "t2" } }, { status: 201, url: REPLY_URL("t1") })),
       (r) => r.release(res(null, { status: 201, url: REPLY_URL("t1"), json: () => Promise.reject(new SyntaxError("x")) })),
+      (r) => r.release(res(null, { status: 503, ok: false, url: REPLY_URL("t1"), json: () => Promise.reject(new SyntaxError("x")) })),
     ];
     for (const finish of finishes) {
       const m = await sentOnAll();
@@ -1208,6 +1248,10 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
   it("ソース：再読み込みのボタンは loadThreads(tab, courseId) を呼び、判定は lib の関数で行う", () => {
     assert.match(compSrc, /isUncertainSubmitError\(replyError\) && \(\s*<Button[^>]*onClick=\{\(\) => loadThreads\(tab, courseId\)\} disabled=\{loading \|\| loadingMore\}/);
     assert.match(compSrc, /resolveUncertainReplies\(uncertainRef\.current, seq, rows\)/);
-    assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq\); \}/);
+    assert.match(compSrc, /missingUncertainReplies\(uncertainRef\.current, seq, rows\)/);
+    assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq, firstPageTab\); \}/);
+    // 1 ページ目の読み込みだけがタブを渡す（もっと見るの続きでは「見つからない」と知らせない）
+    assert.match(compSrc, /\(\) => setLoading\(false\),\s*forTab\s*\);/);
+    assert.match(compSrc, /\(\) => setLoadingMore\(false\)\s*\);/);
   });
 });
