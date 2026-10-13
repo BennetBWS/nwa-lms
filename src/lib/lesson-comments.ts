@@ -50,6 +50,21 @@ export type CreateCommentReason =
   | "too_long"
   | "invalid_parent_id";
 
+/**
+ * POST /api/comments で、入力の形は正しいが投稿を断る理由（#46、Tec 決定 2026-10-09）。
+ * - forbidden_role（403）：受講生以外（講師の回答は POST /api/admin/comments/[id]/replies に一本化）
+ * - reply_not_allowed（403）：受講生は親の質問だけ投稿できる（parentId 付きは断る）
+ * - course_locked（403）：ロック中のコースのレッスン
+ * - rate_limited（429）：投稿の間隔が短い、または 24 時間の上限（comment-rate-limit.ts）
+ * - duplicate（409）：60 秒以内に直前の自分の投稿と同じ本文
+ */
+export type CommentPostRejectReason =
+  | "forbidden_role"
+  | "reply_not_allowed"
+  | "course_locked"
+  | "rate_limited"
+  | "duplicate";
+
 export type ParseResult<T, R> = { ok: true; value: T } | { ok: false; reason: R };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

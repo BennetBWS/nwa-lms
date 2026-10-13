@@ -3,7 +3,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { safeErrorSummary } from "@/lib/safe-error";
 import type { Prisma } from "@prisma/client";
-import { parseCreateComment, toCommentThreadView } from "@/lib/lesson-comments";
+import { parseCreateComment, toCommentThreadView, type CommentPostRejectReason } from "@/lib/lesson-comments";
+import { COMMENT_DAILY_LIMIT, commentWindowStart, decideCommentRate } from "@/lib/comment-rate-limit";
+import { lessonAccessFor } from "@/lib/lesson-access";
 import {
   THREADS_PAGE_SIZE,
   encodeThreadCursor,
@@ -22,7 +24,7 @@ const COMMENT_SELECT = {
   user: { select: { name: true, role: true, deactivatedAt: true } },
 } as const;
 
-// 質問スレッド一覧（#32）。親の質問を新しい順に 20 件ずつ（カーソル方式）。読み取りだけ（投稿は #46）。
+// 質問スレッド一覧（#32）。親の質問を新しい順に 20 件ずつ（カーソル方式）。読み取りだけ（投稿は下の POST。#46）。
 // 受講生には、自分にとってロック中のコースの質問を返さない（自分の質問は常に返す）。講師はロックなし。
 // 絞り込み：mine（自分の質問）・status（answered / unanswered）・courseId
 // status の回答済み／未回答は、DB で 21 件読んだ後に JS で「親と同じレッスンの返信」だけで判定して絞る。
@@ -102,12 +104,23 @@ export async function GET(request: Request) {
 }
 
 
-// 画面からは使わない（投稿欄の公開は #46）。入力検証だけ強化して残す（#32）
+// 受講生が親の質問を投稿する（#46。画面の投稿欄は B-2）。入力と 201 の応答（CommentThreadView）の形は #32 と同じ。
+// 判定の順（DB をなるべく読まない順。拒否の理由に他人の投稿の情報を含めない）：
+// 1. 未ログイン 401
+// 2. 受講生以外 403 forbidden_role（講師の回答は POST /api/admin/comments/[id]/replies に一本化）
+// 3. 入力検証 400（parseCreateComment）
+// 4. parentId 付き 403 reply_not_allowed（受講生は返信できない。親の存在は確かめない）
+// 5. 自分の直近の投稿だけを読み、連投 409 duplicate / 429 rate_limited（comment-rate-limit.ts）
+// 6. レッスンがない 404、ロック中のコース 403 course_locked（lesson-access.ts）
+// 同時に送られた投稿が両方とも 5 を通り抜ける競合は許容する（DB の関数やロックは使わない）
 export async function POST(request: Request) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (session.user.role !== "STUDENT") {
+      return NextResponse.json({ error: "Forbidden", reason: "forbidden_role" satisfies CommentPostRejectReason }, { status: 403 });
     }
 
     let body: unknown;
@@ -124,25 +137,39 @@ export async function POST(request: Request) {
     }
     const { lessonId, content, parentId } = parsed.value;
 
-    const lesson = await prisma.lesson.findUnique({ where: { id: lessonId }, select: { id: true } });
-    if (!lesson) {
-      return NextResponse.json({ error: "Lesson not found" }, { status: 404 });
-    }
-
     if (parentId !== null) {
-      // 返信は、同じレッスンの親の質問（parentId が null）にだけ付けられる。返信への返信は禁止
-      const parent = await prisma.comment.findUnique({
-        where: { id: parentId },
-        select: { lessonId: true, parentId: true },
-      });
-      if (!parent || parent.lessonId !== lessonId || parent.parentId !== null) {
-        return NextResponse.json({ error: "Invalid request", reason: "invalid_parent_id" }, { status: 400 });
-      }
+      return NextResponse.json({ error: "Forbidden", reason: "reply_not_allowed" satisfies CommentPostRejectReason }, { status: 403 });
     }
 
     const userId = session.user.id;
+    const now = new Date();
+    const recent = await prisma.comment.findMany({
+      where: { userId, createdAt: { gt: commentWindowStart(now) } },
+      select: { content: true, createdAt: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: COMMENT_DAILY_LIMIT,
+    });
+    const rate = decideCommentRate(recent, content, now);
+    if (rate.kind === "duplicate") {
+      return NextResponse.json({ error: "Conflict", reason: "duplicate" satisfies CommentPostRejectReason }, { status: 409 });
+    }
+    if (rate.kind === "rate_limited") {
+      return NextResponse.json(
+        { error: "Too many requests", reason: "rate_limited" satisfies CommentPostRejectReason, retryAfterSeconds: rate.retryAfterSeconds },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } }
+      );
+    }
+
+    const access = await lessonAccessFor(prisma, userId, lessonId);
+    if (access === "not_found") {
+      return NextResponse.json({ error: "Lesson not found" }, { status: 404 });
+    }
+    if (access === "locked") {
+      return NextResponse.json({ error: "Forbidden", reason: "course_locked" satisfies CommentPostRejectReason }, { status: 403 });
+    }
+
     const comment = await prisma.comment.create({
-      data: { userId, lessonId, content, parentId },
+      data: { userId, lessonId, content, parentId: null },
       select: {
         id: true,
         content: true,
