@@ -214,8 +214,13 @@ describe("prisma/seed.ts（偽の PrismaClient で実行）", () => {
       .map((q) => {
         const author = byId("user", q.userId);
         const lesson = byId("lesson", q.lessonId);
+        const instructorReply = repliesOf(q).find((r) => roleOf(r.userId) === "INSTRUCTOR");
+        assert.ok(instructorReply, `質問 ${q.id} に講師の回答がある`);
         assert.equal(
-          shouldNotifyQuestionAuthor({ id: author.id, role: String(author.role), deactivatedAt: (author.deactivatedAt as Date) ?? null }, "instructor"),
+          shouldNotifyQuestionAuthor(
+            { id: String(author.id), role: String(author.role), deactivatedAt: (author.deactivatedAt as Date) ?? null },
+            String(instructorReply.userId)
+          ),
           true,
           "回答済みの質問者は通知の対象"
         );
