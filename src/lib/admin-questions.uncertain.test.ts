@@ -175,6 +175,7 @@ describe("判定の反映", () => {
     assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("送信してください"), "再送の案内がない");
     assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("可能性"), "保存されていないと言い切っている（サーバーが処理中かもしれない）");
     assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("再読み込み"), "待ってから読み直す案内がない");
+    assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("スレッドに自分の回答が出ていないか確かめて"), "再送の前にスレッドを確かめる案内がない（遅れて保存された回答は検出しない）");
     assert.equal(isUncertainSubmitError(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE), false);
   });
 
