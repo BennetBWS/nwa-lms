@@ -388,7 +388,7 @@ describe("POST /api/admin/comments/[id]/replies：応答", () => {
     await post("q_stu", { content: "回答" });
     const reread = calls.filter((c) => c.method === "comment.findUnique")[1];
     assert.ok(reread, "スレッドを読み直す");
-    assert.equal(reread.inTx, false, "読み直しはトランザクションの後");
+    assert.equal(reread.inTx, true, "読み直しは回答の作成と同じトランザクションの中");
     const base = { id: true, content: true, createdAt: true, userId: true, user: { select: { name: true, role: true, deactivatedAt: true } } };
     assert.deepEqual(reread.args.select, {
       ...base,
@@ -723,20 +723,45 @@ describe("POST /api/admin/comments/[id]/replies：エラー（追加）", () => 
     assert.equal(calls.some((c) => c.method === "$transaction"), false, "トランザクションを始めない");
   });
 
-  it("回答の作成後に親を読み直せなければ 404（作成済みの回答は残る：削除 API がないので通常は起きない）", async () => {
-    const orig = fakePrisma.comment.findUnique;
+  it("回答の作成後に親を読み直せなければ、トランザクションの中で例外を投げて 500・汎用本文（ログはエラー名だけ）", async () => {
+    const origFind = fakePrisma.comment.findUnique;
+    const origTx = fakePrisma.$transaction;
     let n = 0;
-    const m = mock.method(fakePrisma.comment, "findUnique", async (args: Record<string, unknown>) => {
+    const find = mock.method(fakePrisma.comment, "findUnique", async (args: Record<string, unknown>) => {
       n += 1;
-      return n === 1 ? orig.call(fakePrisma.comment, args) : null;
+      if (n === 1) return origFind.call(fakePrisma.comment, args);
+      record("comment.findUnique", args);
+      return null;
     });
+    // 偽の $transaction はロールバックを再現しないので、コールバックが例外で終わる（実物ならロールバックされる）ことを確かめる
+    let callbackRejected = false;
+    const tx = mock.method(fakePrisma, "$transaction", async (fn: unknown) => {
+      try {
+        return await origTx.call(fakePrisma, fn);
+      } catch (e) {
+        callbackRejected = true;
+        throw e;
+      }
+    });
+    const done = captureLogs();
     try {
-      const res = await post("q_stu", { content: "回答" });
-      assert.equal(res.status, 404);
-      assert.deepEqual(await res.json(), { error: "Question not found" });
-      assert.equal(notifications.length, 1, "通知は作成済み");
+      const res = await post("q_stu", { content: "秘密の回答本文" });
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.equal(callbackRejected, true, "トランザクションのコールバックが例外で終わる（回答と通知はロールバックされる）");
+      const reread = calls.filter((c) => c.method === "comment.findUnique")[1];
+      assert.ok(reread, "スレッドを読み直す");
+      assert.equal(reread.inTx, true, "読み直しはトランザクションの中");
+      assert.equal(out, "POST /api/admin/comments/[id]/replies error: Error", "ログはルート名とエラー名だけ");
+      for (const s of ["秘密の回答本文", "example.com", "stu_active", "q_stu"]) {
+        assert.ok(!out.includes(s), `ログに「${s}」を出さない`);
+      }
     } finally {
-      m.mock.restore();
+      tx.mock.restore();
+      find.mock.restore();
+      assert.equal(fakePrisma.comment.findUnique, origFind, "元に戻す");
+      assert.equal(fakePrisma.$transaction, origTx, "元に戻す");
     }
   });
 });

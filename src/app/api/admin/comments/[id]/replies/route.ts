@@ -75,12 +75,13 @@ export async function POST(
     }
 
     const replierId = session.user.id;
+    // 通知の判定はトランザクションの外で行う（READ COMMITTED では中に移しても無効化との競合を完全には防げず、無効化された受講生は通知を見られないので影響が小さい）
     const notify = shouldNotifyQuestionAuthor(
       { id: parent.userId, role: parent.user.role, deactivatedAt: parent.user.deactivatedAt },
       replierId
     );
 
-    await prisma.$transaction(async (tx) => {
+    const thread = await prisma.$transaction(async (tx) => {
       await tx.comment.create({
         data: { userId: replierId, lessonId: parent.lessonId, content, parentId: parent.id },
         select: { id: true },
@@ -95,25 +96,26 @@ export async function POST(
           select: { id: true },
         });
       }
-    });
 
-    // 応答に使うスレッド（GET /api/comments の 1 件と同じ select）
-    const thread = await prisma.comment.findUnique({
-      where: { id: parent.id },
-      select: {
-        ...COMMENT_SELECT,
-        lesson: { select: { id: true, title: true, section: { select: { course: { select: { id: true, name: true } } } } } },
-        // 親と同じレッスンの返信だけを使う（toQuestionThreadView で lessonId を見て絞る）
-        replies: {
-          select: { ...COMMENT_SELECT, lessonId: true },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      // 応答に使うスレッド（GET /api/comments の 1 件と同じ select）。作成と同じトランザクションで読み直す
+      const reread = await tx.comment.findUnique({
+        where: { id: parent.id },
+        select: {
+          ...COMMENT_SELECT,
+          lesson: { select: { id: true, title: true, section: { select: { course: { select: { id: true, name: true } } } } } },
+          // 親と同じレッスンの返信だけを使う（toQuestionThreadView で lessonId を見て絞る）
+          replies: {
+            select: { ...COMMENT_SELECT, lessonId: true },
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          },
         },
-      },
+      });
+      if (!reread) {
+        // 親が途中で消えた（削除の API はないので通常は起きない）。例外で回答と通知をロールバックし、500 を返す
+        throw new Error("Question thread not found after reply");
+      }
+      return reread;
     });
-    if (!thread) {
-      // 回答の作成後に親が消えた（削除の API はないので通常は起きない）
-      return NextResponse.json({ error: "Question not found" }, { status: 404 });
-    }
 
     return NextResponse.json({ thread: toQuestionThreadView(thread, replierId) }, { status: 201 });
   } catch (error) {
