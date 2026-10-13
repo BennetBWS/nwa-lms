@@ -77,6 +77,7 @@ import {
   replaceThreadRow,
   resolveUncertainReplies,
   toCourseOptions,
+  uncertainReplyRecord,
 } from "@/lib/admin-questions";
 import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
 import {
@@ -2814,8 +2815,9 @@ const AdminQuestions = () => {
   const sessionExpired = useRef(false);
   // 送信中の質問の id。API に二重送信の対策がないため、ボタンの disabled が反映される前の連打でも送らないよう ref で判定する
   const sendingRef = useRef(new Set());
-  // 送信の結果が分からない（通信エラー・2xx で応答を読めない）質問の id → その時点の threadsSeq。
-  // その後に始めた一覧の読み込みが成功したら、行の answered で保存されたかを判定する（resolveUncertainReplies）
+  // 送信の結果が分からない（通信エラー・2xx で応答を読めない）質問の id → 記録（その時点の threadsSeq・送った本文・
+  // 送信した時点の行にあった自分の同じ本文の回答の件数。uncertainReplyRecord）。
+  // その後に始めた一覧の読み込みが成功したら、自分の同じ本文の回答が増えたかで保存されたかを判定する（resolveUncertainReplies）
   const uncertainRef = useRef({});
 
   const requestThreads = (url, onPage, onFail, onDone) => {
@@ -2840,8 +2842,8 @@ const AdminQuestions = () => {
     });
   };
 
-  // 読み直した一覧で、結果不明だった回答を判定する。回答済みならエラーと書きかけを消して「保存されていました」を出し、
-  // 未回答のままならエラーを「保存されていませんでした」に変えて書きかけを残す。判定した質問は開いて結果を見せる
+  // 読み直した一覧で、結果不明だった回答を判定する。自分の同じ本文の回答が増えていればエラーと書きかけを消して「保存されていました」を出し、
+  // 増えていなければエラーを「保存されていない可能性が高い」に変えて書きかけを残す。判定した質問は開いて結果を見せる
   const settleUncertainReplies = (rows, seq) => {
     const r = resolveUncertainReplies(uncertainRef.current, seq, rows);
     if (r.saved.length === 0 && r.notSaved.length === 0) return;
@@ -2916,9 +2918,10 @@ const AdminQuestions = () => {
     return next;
   });
   const setDraft = (id, value) => { setDrafts(prev => ({ ...prev, [id]: value })); clearReplyNotice(id); };
-  // 結果不明の文言なら、その時点の読み込みの番号を記録する（それより後に始めた読み込みで判定する）。それ以外は記録を外す
-  const setReplyError = (id, message) => {
-    if (isUncertainSubmitError(message)) uncertainRef.current = { ...uncertainRef.current, [id]: threadsSeq.current };
+  // 結果不明の文言なら、その時点の読み込みの番号と、送った本文・送信した時点の一覧（sent）を記録する
+  // （それより後に始めた読み込みで判定する）。それ以外は記録を外す
+  const setReplyError = (id, message, sent = null) => {
+    if (isUncertainSubmitError(message)) uncertainRef.current = { ...uncertainRef.current, [id]: uncertainReplyRecord(threadsSeq.current, id, sent?.value, sent?.rows ?? []) };
     else if (id in uncertainRef.current) { const next = { ...uncertainRef.current }; delete next[id]; uncertainRef.current = next; }
     setReplyErrors(prev => {
       const next = { ...prev };
@@ -2934,6 +2937,8 @@ const AdminQuestions = () => {
     if (sessionExpired.current || sendingRef.current.has(id)) return;
     const value = drafts[id] ?? "";
     if (!commentFormState(value, false).canSubmit) return;
+    // 結果不明になったときの判定の基準（送った本文と、送信した時点の一覧）
+    const sent = { value, rows: threadRows };
     sendingRef.current.add(id);
     setSendingIds(prev => [...prev, id]);
     setReplyError(id, "");
@@ -2944,7 +2949,7 @@ const AdminQuestions = () => {
       try {
         res = await authFetch(adminReplyUrl(id), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: value }) });
       } catch {
-        setReplyError(id, commentSubmitErrorMessage({ httpStatus: null }));
+        setReplyError(id, commentSubmitErrorMessage({ httpStatus: null }), sent);
         return;
       }
       if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") sessionExpired.current = true;
@@ -2952,7 +2957,7 @@ const AdminQuestions = () => {
       const body = await res.json().catch(() => null);
       const outcome = interpretReplyResponse({ ok: res.ok, status: res.status, redirected: res.redirected, body, threadId: id });
       if (outcome.kind !== "success") {
-        setReplyError(id, outcome.message);
+        setReplyError(id, outcome.message, sent);
         return;
       }
       setThreadRows(prev => replaceThreadRow(prev, outcome.thread));

@@ -138,34 +138,97 @@ export function replaceThreadRow(rows: unknown[], thread: Record<string, unknown
 
 // ───────────── 結果不明の回答を一覧の読み直しで確かめる ─────────────
 
-/** 結果不明の後、読み直した一覧で回答済みになっていたときの知らせ（書きかけは消す） */
-export const REPLY_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていました（この質問は回答済みになっています）。入力欄は空にしました。";
-/** 結果不明の後、読み直した一覧で未回答のままだったときのエラー（書きかけは残す） */
-export const REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていませんでした。入力は残してあります。もう一度送信してください。";
+/** 結果不明の後、読み直した一覧に自分の回答が増えていたときの知らせ（書きかけは消す） */
+export const REPLY_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていました。入力欄は空にしました。";
+/**
+ * 結果不明の後、読み直した一覧に自分の回答が増えていなかったときのエラー（書きかけは残す）。
+ * サーバーがまだ処理中の可能性もあるため「保存されていない」とは言い切らない
+ */
+export const REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE =
+  "回答は保存されていない可能性が高いです。入力は残してあります。少し待ってから一覧を再読み込みし、まだ反映されていなければ送信してください。";
+/** 結果不明の記録がある間、送信ボタンの横に出す補足（送信は止め、再読み込みを促す） */
+export const REPLY_BLOCKED_UNTIL_RELOAD_HINT = "送信できたか確かめるまで、この質問への送信は止めています。「一覧を再読み込み」を押してください。";
 
-/** 結果不明の質問の id → 結果不明になった時点の一覧の読み込みの通し番号 */
-export type UncertainReplies = Readonly<Record<string, number>>;
+/**
+ * 読み直した 1 ページ目に結果不明の質問がなかったときの知らせ（role="status"）。
+ * 未回答タブでは、回答が保存されて回答済みになり一覧から外れた可能性がある
+ */
+export function uncertainReplyMissingMessage(tab: AdminQuestionTab): string {
+  if (tab === "unanswered") return "回答済みになった可能性があります。回答済みタブで確かめてください。";
+  return "送信結果を確かめる質問がこの一覧に見つかりませんでした。「もっと見る」や他のタブで確かめてください。";
+}
+
+/** 結果不明の回答の記録 */
+export type UncertainReply = {
+  /** 結果不明になった時点の一覧の読み込みの通し番号（これより後に始めた読み込みだけで判定する） */
+  seq: number;
+  /** 送った本文（サーバーの parseCommentContent と同じく前後の空白を除いたもの） */
+  content: string;
+  /** 送信した時点の行にあった「自分の講師の返信で、本文が content と同じもの」の件数 */
+  mineCount: number;
+};
+
+/** 結果不明の質問の id → 記録 */
+export type UncertainReplies = Readonly<Record<string, UncertainReply>>;
 
 export type UncertainReplyResolution = { saved: string[]; notSaved: string[] };
 
 /**
+ * 行（GET /api/comments の threads の 1 件・回答の応答の thread）の返信のうち、
+ * 自分の（mine が true の）講師の返信で本文が content と同じものの件数。replies が配列でなければ null（数えられない）
+ */
+export function countMyInstructorReplies(row: unknown, content: string): number | null {
+  if (!isPlainObject(row) || !Array.isArray(row.replies)) return null;
+  let n = 0;
+  for (const r of row.replies) {
+    if (!isPlainObject(r) || r.mine !== true || r.content !== content) continue;
+    if (!isPlainObject(r.author) || r.author.isInstructor !== true) continue;
+    n++;
+  }
+  return n;
+}
+
+/**
+ * 結果不明になった回答の記録を作る。value は送った本文（前後の空白はここで除く。サーバーと同じ）、
+ * rows は送信した時点の一覧（id が同じ最初の行で数える。行がない・数えられないときは 0 件として扱う）
+ */
+export function uncertainReplyRecord(seq: number, threadId: string, value: unknown, rows: unknown[]): UncertainReply {
+  const content = typeof value === "string" ? value.trim() : "";
+  const row = rows.find((r) => isPlainObject(r) && r.id === threadId);
+  return { seq, content, mineCount: countMyInstructorReplies(row, content) ?? 0 };
+}
+
+/**
  * 読み直した一覧（GET /api/comments の threads）から、結果不明だった質問の結果を判定する。
- * - 結果不明になった後に始めた読み込み（pageSeq が記録した番号より大きい）だけで判定する。
+ * - 結果不明になった後に始めた読み込み（pageSeq が記録した seq より大きい）だけで判定する。
  *   それより前に始めた読み込みは、回答が保存される前の一覧かもしれないため使わない
- * - 一覧にあり answered が true：saved（回答は保存されていた）。false：notSaved（保存されていない）
- * - 一覧にない・answered が boolean でない：判定しない（未回答タブでは回答済みの質問は一覧から外れる。
+ * - 行にある「自分の講師の返信で、送った本文と同じもの」が記録した件数より増えていれば saved、増えていなければ notSaved。
+ *   answered（講師の返信があるか）では判定しない：回答済みの質問への追加の回答や、別の講師の回答で誤判定するため
+ * - 一覧にない・replies が配列でない：判定しない（未回答タブでは回答済みになった質問は一覧から外れる。
  *   2 ページ目以降にあるかもしれない）。結果不明のまま残る
  */
 export function resolveUncertainReplies(uncertain: UncertainReplies, pageSeq: number, rows: unknown[]): UncertainReplyResolution {
   const saved: string[] = [];
   const notSaved: string[] = [];
   for (const id of Object.keys(uncertain)) {
-    if (!(pageSeq > uncertain[id])) continue;
+    const rec = uncertain[id];
+    if (!(pageSeq > rec.seq)) continue;
     const row = rows.find((r) => isPlainObject(r) && r.id === id);
-    if (!isPlainObject(row) || typeof row.answered !== "boolean") continue;
-    (row.answered ? saved : notSaved).push(id);
+    const count = countMyInstructorReplies(row, rec.content);
+    if (count === null) continue;
+    (count > rec.mineCount ? saved : notSaved).push(id);
   }
   return { saved, notSaved };
+}
+
+/**
+ * 判定の対象（pageSeq が記録より大きい）なのに、読み直した一覧に見つからなかった質問の id。
+ * 1 ページ目の読み直しのときだけ、画面が uncertainReplyMissingMessage で知らせる
+ */
+export function missingUncertainReplies(uncertain: UncertainReplies, pageSeq: number, rows: unknown[]): string[] {
+  return Object.keys(uncertain).filter(
+    (id) => pageSeq > uncertain[id].seq && countMyInstructorReplies(rows.find((r) => isPlainObject(r) && r.id === id), uncertain[id].content) === null
+  );
 }
 
 function omitIds<V>(prev: Readonly<Record<string, V>>, ids: readonly string[]): Record<string, V> {
@@ -175,11 +238,11 @@ function omitIds<V>(prev: Readonly<Record<string, V>>, ids: readonly string[]): 
 }
 
 /** 判定した質問を結果不明の記録から外す */
-export function nextUncertainReplies(prev: UncertainReplies, r: UncertainReplyResolution): Record<string, number> {
+export function nextUncertainReplies(prev: UncertainReplies, r: UncertainReplyResolution): Record<string, UncertainReply> {
   return omitIds(prev, [...r.saved, ...r.notSaved]);
 }
 
-/** 回答欄のエラー：saved は消し、notSaved は「保存されていませんでした」に変える。それ以外の質問はそのまま */
+/** 回答欄のエラー：saved は消し、notSaved は「保存されていない可能性が高い」に変える。それ以外の質問はそのまま */
 export function nextReplyErrors(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
   const next = omitIds(prev, r.saved);
   for (const id of r.notSaved) next[id] = REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE;

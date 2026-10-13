@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import {
   REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE,
   REPLY_SAVED_AFTER_UNKNOWN_MESSAGE,
+  countMyInstructorReplies,
   expandResolvedIds,
+  missingUncertainReplies,
   nextReplyDrafts,
   nextReplyErrors,
   nextReplyNotices,
   nextUncertainReplies,
   resolveUncertainReplies,
+  uncertainReplyMissingMessage,
+  uncertainReplyRecord,
 } from "./admin-questions";
 import {
   COMMENT_NETWORK_ERROR_MESSAGE,
@@ -38,31 +42,118 @@ describe("isUncertainSubmitError", () => {
   });
 });
 
-const row = (id: string, answered: unknown) => ({ id, content: "ダミー", answered });
+type Reply = { content: unknown; mine?: unknown; isInstructor?: unknown };
+const reply = (r: Reply, i: number) => ({
+  id: `r${i}`,
+  content: r.content,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  author: { name: "講師ダミー", isInstructor: r.isInstructor ?? true },
+  mine: r.mine ?? true,
+});
+const row = (id: string, replies: Reply[], answered = replies.some((r) => r.isInstructor !== false)) => ({
+  id,
+  content: "ダミー",
+  answered,
+  replies: replies.map(reply),
+});
+const rec = (seq: number, content: string, mineCount = 0) => ({ seq, content, mineCount });
+
+describe("countMyInstructorReplies", () => {
+  it("自分の（mine: true の）講師の返信で、本文が同じものだけを数える", () => {
+    const r = row("t1", [
+      { content: "回答" },
+      { content: "回答" },
+      { content: "回答", mine: false },
+      { content: "回答", isInstructor: false },
+      { content: "回答 " },
+      { content: "別の回答" },
+    ]);
+    assert.equal(countMyInstructorReplies(r, "回答"), 2);
+  });
+
+  it("replies が配列でない・行でないときは null（数えられない）、返信がなければ 0", () => {
+    for (const v of [null, undefined, "t1", { id: "t1" }, { id: "t1", replies: "x" }]) {
+      assert.equal(countMyInstructorReplies(v, "回答"), null, JSON.stringify(v));
+    }
+    assert.equal(countMyInstructorReplies(row("t1", []), "回答"), 0);
+  });
+
+  it("壊れた返信（null・mine が文字列・author がない）は数えない", () => {
+    const r = { id: "t1", replies: [null, { content: "回答", mine: "true", author: { isInstructor: true } }, { content: "回答", mine: true }] };
+    assert.equal(countMyInstructorReplies(r, "回答"), 0);
+  });
+});
+
+describe("uncertainReplyRecord", () => {
+  it("送った本文の前後の空白を除き（サーバーと同じ）、送信した時点の行の件数を記録する", () => {
+    const rows = [row("t0", [{ content: "回答" }]), row("t1", [{ content: "回答" }, { content: "前の回答" }])];
+    assert.deepEqual(uncertainReplyRecord(5, "t1", " \n回答\u3000", rows), { seq: 5, content: "回答", mineCount: 1 });
+  });
+
+  it("行がない・数えられないときは 0 件、本文が文字列でなければ空", () => {
+    assert.deepEqual(uncertainReplyRecord(1, "t9", "回答", [row("t1", [{ content: "回答" }])]), { seq: 1, content: "回答", mineCount: 0 });
+    assert.deepEqual(uncertainReplyRecord(1, "t1", undefined, [{ id: "t1" }]), { seq: 1, content: "", mineCount: 0 });
+  });
+});
 
 describe("resolveUncertainReplies", () => {
-  it("記録より後に始めた読み込みで、回答済みは saved、未回答は notSaved", () => {
-    const r = resolveUncertainReplies({ t1: 3, t2: 3 }, 4, [row("t1", true), row("t2", false), row("t3", true)]);
+  it("記録より後に始めた読み込みで、自分の同じ本文の回答が増えていれば saved、増えていなければ notSaved", () => {
+    const r = resolveUncertainReplies(
+      { t1: rec(3, "回答"), t2: rec(3, "回答") },
+      4,
+      [row("t1", [{ content: "回答" }]), row("t2", []), row("t3", [{ content: "回答" }])]
+    );
     assert.deepEqual(r, { saved: ["t1"], notSaved: ["t2"] });
+  });
+
+  it("回答済みの質問への追加の回答：前からある自分の回答（別の本文・同じ本文）では saved にしない", () => {
+    // 送信前から「前の回答」と「回答」が 1 件ずつあった
+    const before = [{ content: "前の回答" }, { content: "回答" }];
+    const uncertain = { t1: rec(3, "回答", 1) };
+    assert.deepEqual(resolveUncertainReplies(uncertain, 4, [row("t1", before)]), { saved: [], notSaved: ["t1"] }, "増えていないのに saved");
+    assert.deepEqual(resolveUncertainReplies(uncertain, 4, [row("t1", [...before, { content: "回答" }])]), { saved: ["t1"], notSaved: [] }, "増えたのに saved でない");
+  });
+
+  it("別の講師の回答・受講生の返信が増えても saved にしない（answered が true でも）", () => {
+    const rows = [row("t1", [{ content: "回答", mine: false }, { content: "回答", isInstructor: false, mine: true }], true)];
+    assert.deepEqual(resolveUncertainReplies({ t1: rec(3, "回答") }, 4, rows), { saved: [], notSaved: ["t1"] });
   });
 
   it("記録した時点以前に始めた読み込み（pageSeq が同じ・小さい）では判定しない", () => {
     for (const seq of [2, 3]) {
-      assert.deepEqual(resolveUncertainReplies({ t1: 3 }, seq, [row("t1", true)]), { saved: [], notSaved: [] }, String(seq));
+      assert.deepEqual(resolveUncertainReplies({ t1: rec(3, "回答") }, seq, [row("t1", [{ content: "回答" }])]), { saved: [], notSaved: [] }, String(seq));
     }
   });
 
-  it("一覧にない・answered が boolean でない・行が壊れているときは判定しない", () => {
-    const rows: unknown[] = [null, "t1", row("t2", "true"), row("t3", undefined), { id: "t4" }];
-    assert.deepEqual(resolveUncertainReplies({ t1: 0, t2: 0, t3: 0, t4: 0, t5: 0 }, 1, rows), { saved: [], notSaved: [] });
+  it("一覧にない・replies が配列でない・行が壊れているときは判定しない", () => {
+    const rows: unknown[] = [null, "t1", { id: "t2", replies: "x" }, { id: "t3", answered: true }];
+    const uncertain = { t1: rec(0, "回答"), t2: rec(0, "回答"), t3: rec(0, "回答"), t4: rec(0, "回答") };
+    assert.deepEqual(resolveUncertainReplies(uncertain, 1, rows), { saved: [], notSaved: [] });
   });
 
   it("結果不明の記録がなければ何もしない（通常の行は対象外）", () => {
-    assert.deepEqual(resolveUncertainReplies({}, 9, [row("t1", true), row("t2", false)]), { saved: [], notSaved: [] });
+    assert.deepEqual(resolveUncertainReplies({}, 9, [row("t1", [{ content: "回答" }]), row("t2", [])]), { saved: [], notSaved: [] });
   });
 
   it("同じ id の行が複数あれば最初の行で判定する", () => {
-    assert.deepEqual(resolveUncertainReplies({ t1: 0 }, 1, [row("t1", false), row("t1", true)]), { saved: [], notSaved: ["t1"] });
+    const rows = [row("t1", []), row("t1", [{ content: "回答" }])];
+    assert.deepEqual(resolveUncertainReplies({ t1: rec(0, "回答") }, 1, rows), { saved: [], notSaved: ["t1"] });
+  });
+});
+
+describe("missingUncertainReplies", () => {
+  it("判定の対象なのに一覧にない（数えられない）質問だけを返す", () => {
+    const uncertain = { t1: rec(3, "回答"), t2: rec(3, "回答"), t3: rec(5, "回答"), t4: rec(3, "回答") };
+    const rows = [row("t1", []), { id: "t4", replies: null }];
+    assert.deepEqual(missingUncertainReplies(uncertain, 4, rows), ["t2", "t4"]);
+    assert.deepEqual(missingUncertainReplies({}, 4, rows), []);
+  });
+
+  it("知らせの文言：未回答タブは回答済みタブを案内し、他のタブは続き・他のタブを案内する", () => {
+    assert.ok(uncertainReplyMissingMessage("unanswered").includes("回答済みタブ"), "未回答タブの文言");
+    for (const t of ["answered", "all"] as const) {
+      assert.ok(uncertainReplyMissingMessage(t).includes("もっと見る"), t);
+    }
   });
 });
 
@@ -70,13 +161,15 @@ describe("判定の反映", () => {
   const r = { saved: ["t1"], notSaved: ["t2"] };
 
   it("結果不明の記録から判定した質問を外す（他は残す）", () => {
-    assert.deepEqual(nextUncertainReplies({ t1: 1, t2: 1, t3: 1 }, r), { t3: 1 });
+    assert.deepEqual(nextUncertainReplies({ t1: rec(1, "a"), t2: rec(1, "b"), t3: rec(1, "c") }, r), { t3: rec(1, "c") });
   });
 
-  it("エラー：saved は消し、notSaved は「保存されていませんでした」、他の質問のエラーはそのまま", () => {
+  it("エラー：saved は消し、notSaved は「保存されていない可能性が高い」、他の質問のエラーはそのまま", () => {
     const prev = { t1: COMMENT_NETWORK_ERROR_MESSAGE, t2: COMMENT_UNKNOWN_RESULT_MESSAGE, t3: COMMENT_SERVER_ERROR_MESSAGE };
     assert.deepEqual(nextReplyErrors(prev, r), { t2: REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE, t3: COMMENT_SERVER_ERROR_MESSAGE });
-    assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("もう一度送信"), "再送の案内がない");
+    assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("送信してください"), "再送の案内がない");
+    assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("可能性"), "保存されていないと言い切っている（サーバーが処理中かもしれない）");
+    assert.ok(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE.includes("再読み込み"), "待ってから読み直す案内がない");
     assert.equal(isUncertainSubmitError(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE), false);
   });
 
@@ -92,11 +185,11 @@ describe("判定の反映", () => {
   it("前の値を書き換えない", () => {
     const errors = { t1: "e" };
     const drafts = { t1: "d" };
-    const uncertain = { t1: 1 };
+    const uncertain = { t1: rec(1, "a") };
     nextReplyErrors(errors, r);
     nextReplyDrafts(drafts, r);
     nextUncertainReplies(uncertain, r);
-    assert.deepEqual([errors, drafts, uncertain], [{ t1: "e" }, { t1: "d" }, { t1: 1 }]);
+    assert.deepEqual([errors, drafts, uncertain], [{ t1: "e" }, { t1: "d" }, { t1: rec(1, "a") }]);
   });
 
   it("判定した質問を開く（順序を保ち重複させない）", () => {
