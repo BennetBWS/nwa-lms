@@ -520,7 +520,7 @@ describe("AdminQuestions 描画：回答欄", () => {
     let tree = m.render();
     assert.ok(text(tree).includes("4 / 2000"), "前後の空白を除いた文字数でない");
     assert.equal(button(tree, "回答を送信").props.disabled, false);
-    for (const v of ["   ", "​　"]) {
+    for (const v of ["   ", "\u200B\u3000"]) {
       change(textarea(tree), v);
       tree = m.render();
       assert.equal(button(tree, "回答を送信").props.disabled, true, JSON.stringify(v));

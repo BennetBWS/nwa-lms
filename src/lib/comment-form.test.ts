@@ -16,7 +16,7 @@ describe("commentFormState：文字数と送信の可否", () => {
   });
 
   it("空・空白だけ・見えない文字だけは送れない", () => {
-    for (const v of ["", "   ", "\n\n", "​", "　​﻿", " "]) {
+    for (const v of ["", "   ", "\n\n", "\u200B", "\u3000\u200B\uFEFF", "\u00A0"]) {
       const s = commentFormState(v, false);
       assert.equal(s.empty, true, JSON.stringify(v));
       assert.equal(s.canSubmit, false, JSON.stringify(v));
@@ -63,7 +63,7 @@ describe("commentFormState：文字数と送信の可否", () => {
   });
 
   it("送れる判定はサーバーの parseCommentContent と一致する", () => {
-    const samples = ["", " ", "​", "あ", " a ", "x".repeat(2000), "x".repeat(2001), " " + "y".repeat(2000) + " ", "\u{1F600}"];
+    const samples = ["", " ", "\u200B", "あ", " a ", "x".repeat(2000), "x".repeat(2001), " " + "y".repeat(2000) + " ", "\u{1F600}"];
     for (const v of samples) {
       const server = parseCommentContent(v);
       assert.equal(commentFormState(v, false).canSubmit, server.ok, `不一致：${JSON.stringify(v.slice(0, 10))}…（${v.length}）`);
