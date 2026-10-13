@@ -63,7 +63,6 @@ import {
   ADMIN_QUESTION_TABS,
   DEFAULT_ADMIN_QUESTION_TAB,
   REPLY_BLOCKED_UNTIL_RELOAD_HINT,
-  REPLY_SAVED_AFTER_UNKNOWN_MESSAGE,
   REPLY_SENT_MESSAGE,
   adminReplyUrl,
   adminThreadListUrl,
@@ -78,6 +77,8 @@ import {
   nextUncertainReplies,
   replaceThreadRow,
   resolveUncertainReplies,
+  savedDraftOutcome,
+  savedReplyStatusMessage,
   toCourseOptions,
   uncertainReplyMissingMessage,
   uncertainReplyRecord,
@@ -2803,6 +2804,9 @@ const AdminQuestions = () => {
   const [moreStatus, setMoreStatus] = useState("");
   // 回答欄（質問の id ごと）：入力中の本文・送信中の id・送信の失敗の文言。入力はタブやコースを切り替えても残す
   const [drafts, setDrafts] = useState({});
+  // 最新の書きかけ（読み込みの応答のコールバックは古い描画の drafts を見るため、判定ではこちらを使う）。更新は updateDrafts だけで行う
+  const draftsRef = useRef({});
+  const updateDrafts = (fn) => { const next = fn(draftsRef.current); draftsRef.current = next; setDrafts(next); };
   const [sendingIds, setSendingIds] = useState([]);
   const [replyErrors, setReplyErrors] = useState({});
   // 回答を送れたときの知らせ（role="status" で読み上げる）
@@ -2850,7 +2854,8 @@ const AdminQuestions = () => {
     });
   };
 
-  // 読み直した一覧で、結果不明だった回答を判定する。自分の同じ本文の回答が増えていればエラーと書きかけを消して「保存されていました」を出し、
+  // 読み直した一覧で、結果不明だった回答を判定する。自分の同じ本文の回答が増えていればエラーを消して「保存されていました」を出し、
+  // 書きかけは送った本文のまま（trim して同じ）なら消し、結果不明の間に書き直されていれば残す（savedDraftOutcome）。
   // 増えていなければエラーを「保存されていない可能性が高い」に変えて書きかけを残す。判定した質問は開いて結果を見せ、
   // 最初の 1 件の結果の文言（保存されていた）か回答欄（保存されていない）へフォーカスを移す。
   // 1 ページ目に見つからない質問があれば知らせる（記録は残し、送信も止めたまま。別のタブで行が出たら判定する）
@@ -2861,13 +2866,16 @@ const AdminQuestions = () => {
     }
     const r = resolveUncertainReplies(uncertainRef.current, seq, rows);
     if (r.saved.length === 0 && r.notSaved.length === 0) return;
+    // 判定前の記録（送った本文）と今の書きかけを比べる
+    const d = savedDraftOutcome(draftsRef.current, uncertainRef.current, r);
     uncertainRef.current = nextUncertainReplies(uncertainRef.current, r);
     if (Object.keys(uncertainRef.current).length === 0) setMissingNotice("");
     setReplyErrors(prev => nextReplyErrors(prev, r));
-    setDrafts(prev => nextReplyDrafts(prev, r));
-    setReplyNotices(prev => nextReplyNotices(prev, r));
+    updateDrafts(prev => nextReplyDrafts(prev, d));
+    setReplyNotices(prev => nextReplyNotices(prev, r, d));
     setExpandedIds(prev => expandResolvedIds(prev, r));
-    if (r.saved.length > 0) setReplyStatus(REPLY_SAVED_AFTER_UNKNOWN_MESSAGE);
+    const status = savedReplyStatusMessage(d);
+    if (status !== null) setReplyStatus(status);
     focusAfterResolveRef.current = r.saved.length > 0 ? { id: r.saved[0], target: "notice" } : { id: r.notSaved[0], target: "input" };
   };
 
@@ -2944,7 +2952,7 @@ const AdminQuestions = () => {
     delete next[id];
     return next;
   });
-  const setDraft = (id, value) => { setDrafts(prev => ({ ...prev, [id]: value })); clearReplyNotice(id); };
+  const setDraft = (id, value) => { updateDrafts(prev => ({ ...prev, [id]: value })); clearReplyNotice(id); };
   // 結果不明の文言なら、その時点の読み込みの番号と、送った本文・送信した時点の一覧（sent）を記録する
   // （それより後に始めた読み込みで判定する）。それ以外は記録を外す
   const setReplyError = (id, message, sent = null) => {
@@ -2989,7 +2997,7 @@ const AdminQuestions = () => {
         return;
       }
       setThreadRows(prev => replaceThreadRow(prev, outcome.thread));
-      setDrafts(prev => {
+      updateDrafts(prev => {
         const next = { ...prev };
         delete next[id];
         return next;

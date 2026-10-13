@@ -138,14 +138,19 @@ export function replaceThreadRow(rows: unknown[], thread: Record<string, unknown
 
 // ───────────── 結果不明の回答を一覧の読み直しで確かめる ─────────────
 
-/** 結果不明の後、読み直した一覧に自分の回答が増えていたときの知らせ（書きかけは消す） */
+/** 結果不明の後、読み直した一覧に自分の回答が増えていたときの知らせ（入力欄が送った本文のままだったので消した） */
 export const REPLY_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていました。入力欄は空にしました。";
+/** 結果不明の後、読み直した一覧に自分の回答が増えていたが、入力欄が書き直されていたときの知らせ（書き直した内容は残す） */
+export const REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE =
+  "回答は保存されていました。入力欄の書き直した内容は残してあります。追加で送る必要があるか確かめてください。";
+/** 複数の質問で、入力欄を空にしたものと残したものがあるときの読み上げの知らせ（各質問の文言は回答欄の下に出す） */
+export const REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていました。各質問の回答欄の下の知らせを確かめてください。";
 /**
  * 結果不明の後、読み直した一覧に自分の回答が増えていなかったときのエラー（書きかけは残す）。
  * サーバーがまだ処理中の可能性もあるため「保存されていない」とは言い切らない
  */
 export const REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE =
-  "回答は保存されていない可能性が高いです。入力は残してあります。少し待ってから一覧を再読み込みし、まだ反映されていなければ送信してください。";
+    "回答は保存されていない可能性が高いです。入力は残してあります。少し待ってから一覧を再読み込みし、まだ反映されていなければ送信してください。";
 /** 結果不明の記録がある間、送信ボタンの横に出す補足（送信は止め、再読み込みを促す） */
 export const REPLY_BLOCKED_UNTIL_RELOAD_HINT = "送信できたか確かめるまで、この質問への送信は止めています。「一覧を再読み込み」を押してください。";
 
@@ -249,16 +254,51 @@ export function nextReplyErrors(prev: Readonly<Record<string, string>>, r: Uncer
   return next;
 }
 
-/** 書きかけ：saved だけ消す（二重回答を防ぐ）。notSaved とそれ以外の質問は残す */
-export function nextReplyDrafts(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
-  return omitIds(prev, r.saved);
+/** saved の質問の書きかけの扱い：cleared は消す（送った本文のまま）、kept は残す（結果不明の間に書き直された） */
+export type SavedDraftOutcome = { cleared: string[]; kept: string[] };
+
+/**
+ * saved の質問ごとに、今の書きかけを消すか残すかを決める。uncertain は判定前の記録（nextUncertainReplies で外す前のもの）。
+ * 結果不明の間も回答欄は編集できるため、今の書きかけを trim した値（サーバーの parseCommentContent と同じ
+ * String.prototype.trim）が記録の content と同じとき、または空のときだけ消す。違うときは書き直した内容として残す
+ */
+export function savedDraftOutcome(
+  drafts: Readonly<Record<string, string>>,
+  uncertain: UncertainReplies,
+  r: UncertainReplyResolution
+): SavedDraftOutcome {
+  const cleared: string[] = [];
+  const kept: string[] = [];
+  for (const id of r.saved) {
+    const draft = (drafts[id] ?? "").trim();
+    const rec = uncertain[id];
+    (draft === "" || (rec !== undefined && draft === rec.content) ? cleared : kept).push(id);
+  }
+  return { cleared, kept };
 }
 
-/** 回答欄の知らせ：saved に「保存されていました」を出し、notSaved の古い知らせは消す */
-export function nextReplyNotices(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
+/** 書きかけ：送った本文のままの saved（cleared）だけ消す（二重回答を防ぐ）。書き直したもの・notSaved・それ以外の質問は残す */
+export function nextReplyDrafts(prev: Readonly<Record<string, string>>, d: SavedDraftOutcome): Record<string, string> {
+  return omitIds(prev, d.cleared);
+}
+
+/**
+ * 回答欄の知らせ：saved のうち書きかけを消したものに「入力欄は空にしました」、残したものに「書き直した内容は残してあります」を出す。
+ * notSaved の古い知らせは消す
+ */
+export function nextReplyNotices(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution, d: SavedDraftOutcome): Record<string, string> {
   const next = omitIds(prev, r.notSaved);
-  for (const id of r.saved) next[id] = REPLY_SAVED_AFTER_UNKNOWN_MESSAGE;
+  for (const id of d.cleared) next[id] = REPLY_SAVED_AFTER_UNKNOWN_MESSAGE;
+  for (const id of d.kept) next[id] = REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE;
   return next;
+}
+
+/** 読み上げの知らせ（role="status"）。saved がなければ null（知らせない） */
+export function savedReplyStatusMessage(d: SavedDraftOutcome): string | null {
+  if (d.cleared.length === 0 && d.kept.length === 0) return null;
+  if (d.kept.length === 0) return REPLY_SAVED_AFTER_UNKNOWN_MESSAGE;
+  if (d.cleared.length === 0) return REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE;
+  return REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE;
 }
 
 /** 判定した質問を開いた状態にする（読み直すと開いた行は閉じるため、結果をその場で見せる）。順序は保ち、重複させない */
