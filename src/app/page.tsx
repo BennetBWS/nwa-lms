@@ -3117,7 +3117,7 @@ const AdminQuestions = () => {
                         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
                           <div role="alert" style={{ fontSize: 12, color: T.danger }}>{replyError}</div>
                           {/* 送れたか分からないときは、その場で今のタブ・コースの一覧を読み直せるようにする（読み直すと結果を判定する） */}
-                          {isUncertainSubmitError(replyError) && (
+                          {awaitingCheck && (
                             <Button size="sm" variant="outline" onClick={() => loadThreads(tab, courseId)} disabled={loading || loadingMore} style={{ borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "4px 12px" }}>
                               一覧を再読み込み
                             </Button>

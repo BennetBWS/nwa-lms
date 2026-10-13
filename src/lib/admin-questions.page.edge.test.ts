@@ -1408,7 +1408,8 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
   });
 
   it("ソース：再読み込みのボタンは loadThreads(tab, courseId) を呼び、判定は lib の関数で行う", () => {
-    assert.match(compSrc, /isUncertainSubmitError\(replyError\) && \(\s*<Button[^>]*onClick=\{\(\) => loadThreads\(tab, courseId\)\} disabled=\{loading \|\| loadingMore\}/);
+    assert.match(compSrc, /const awaitingCheck = isUncertainSubmitError\(replyError\);/);
+    assert.match(compSrc, /\{awaitingCheck && \(\s*<Button[^>]*onClick=\{\(\) => loadThreads\(tab, courseId\)\} disabled=\{loading \|\| loadingMore\}/);
     assert.match(compSrc, /resolveUncertainReplies\(uncertainRef\.current, seq, rows\)/);
     assert.match(compSrc, /missingUncertainReplies\(uncertainRef\.current, seq, rows\)/);
     assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq, firstPageTab, page\.nextCursor !== null\); \}/);
