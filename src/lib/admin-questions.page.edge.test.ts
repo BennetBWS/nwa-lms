@@ -1071,6 +1071,36 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.ok(!text(regionOf(m.render(), "t1")[0]).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "入力しても知らせが残る");
   });
 
+  it("結果不明の間に回答欄を書き直していたら、保存されていたと分かっても書き直した内容は残し、「空にしました」とは言わない", async () => {
+    const m = await networkErrorOnAll();
+    // 書き直す前の描画の「一覧を再読み込み」を押す（応答のコールバックは古い描画の drafts を見る）
+    const stale = m.render();
+    change(textareaOf(stale, "t1"), "書き直した回答");
+    click(reloadButtons(stale)[0]);
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), [], "エラーが残っている");
+    assert.equal(textareaOf(tree, "t1").props.value, "書き直した回答", "書き直した内容が消えた");
+    const region = text(regionOf(tree, "t1")[0]);
+    assert.ok(region.includes(adminQuestions.REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE), "残した旨の知らせがない");
+    assert.ok(!region.includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "残したのに「空にしました」と出た");
+    assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE), "読み上げの知らせがない");
+    assert.equal(sendButtonOf(tree, "t1").props.disabled, false, "判定の後も送れない");
+  });
+
+  it("結果不明の間の書き直しが前後の空白だけなら、送った本文と同じとみなして消す", async () => {
+    const m = await networkErrorOnAll();
+    const stale = m.render();
+    change(textareaOf(stale, "t1"), "\u3000講師の回答です\n");
+    click(reloadButtons(stale)[0]);
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.equal(textareaOf(tree, "t1").props.value, "", "送った本文と同じなのに残った（二重回答のおそれ）");
+    assert.ok(text(regionOf(tree, "t1")[0]).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "空にした旨の知らせがない");
+  });
+
   it("再現：送信 → 通信エラー → 再読み込みで未回答のまま：「保存されていませんでした」に変え、書きかけを残して再送できる", async () => {
     const m = await networkErrorOnAll();
     click(reloadButtons(m.render())[0]);

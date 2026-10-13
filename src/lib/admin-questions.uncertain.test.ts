@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE,
   REPLY_SAVED_AFTER_UNKNOWN_MESSAGE,
+  REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE,
+  REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE,
   countMyInstructorReplies,
   expandResolvedIds,
   missingUncertainReplies,
@@ -11,6 +13,8 @@ import {
   nextReplyNotices,
   nextUncertainReplies,
   resolveUncertainReplies,
+  savedDraftOutcome,
+  savedReplyStatusMessage,
   uncertainReplyMissingMessage,
   uncertainReplyRecord,
 } from "./admin-questions";
@@ -174,13 +178,28 @@ describe("判定の反映", () => {
     assert.equal(isUncertainSubmitError(REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE), false);
   });
 
-  it("書きかけ：saved だけ消し、notSaved と他の質問は残す", () => {
-    assert.deepEqual(nextReplyDrafts({ t1: "a", t2: "b", t3: "c" }, r), { t2: "b", t3: "c" });
+  it("書きかけ：saved のうち送った本文のまま（cleared）だけ消し、書き直したもの・notSaved・他の質問は残す", () => {
+    assert.deepEqual(nextReplyDrafts({ t1: "a", t2: "b", t3: "c" }, { cleared: ["t1"], kept: [] }), { t2: "b", t3: "c" });
+    assert.deepEqual(nextReplyDrafts({ t1: "a", t2: "b", t3: "c" }, { cleared: [], kept: ["t1"] }), { t1: "a", t2: "b", t3: "c" });
   });
 
-  it("知らせ：saved に「保存されていました」、notSaved の知らせは消す", () => {
-    assert.deepEqual(nextReplyNotices({ t2: "古い知らせ", t3: "x" }, r), { t1: REPLY_SAVED_AFTER_UNKNOWN_MESSAGE, t3: "x" });
-    assert.ok(REPLY_SAVED_AFTER_UNKNOWN_MESSAGE.includes("保存されていました"), "保存の知らせでない");
+  it("知らせ：書きかけを消した saved に「入力欄は空にしました」、残した saved に「残してあります」、notSaved の知らせは消す", () => {
+    assert.deepEqual(nextReplyNotices({ t2: "古い知らせ", t3: "x" }, r, { cleared: ["t1"], kept: [] }), { t1: REPLY_SAVED_AFTER_UNKNOWN_MESSAGE, t3: "x" });
+    assert.deepEqual(nextReplyNotices({ t2: "古い知らせ", t3: "x" }, r, { cleared: [], kept: ["t1"] }), { t1: REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE, t3: "x" });
+    for (const m of [REPLY_SAVED_AFTER_UNKNOWN_MESSAGE, REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE, REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE]) {
+      assert.ok(m.includes("保存されていました"), `保存の知らせでない：${m}`);
+    }
+    assert.ok(REPLY_SAVED_AFTER_UNKNOWN_MESSAGE.includes("入力欄は空にしました"), "消したのに空にした旨がない");
+    assert.ok(!REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE.includes("空にしました"), "残したのに空にしたと言っている");
+    assert.ok(REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE.includes("残してあります"), "残した旨がない");
+    assert.ok(!REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE.includes("空にしました"), "混在なのに空にしたと言い切っている");
+  });
+
+  it("読み上げの知らせ：消しただけ・残しただけ・混在・saved なしで分ける", () => {
+    assert.equal(savedReplyStatusMessage({ cleared: ["t1"], kept: [] }), REPLY_SAVED_AFTER_UNKNOWN_MESSAGE);
+    assert.equal(savedReplyStatusMessage({ cleared: [], kept: ["t1"] }), REPLY_SAVED_DRAFT_KEPT_AFTER_UNKNOWN_MESSAGE);
+    assert.equal(savedReplyStatusMessage({ cleared: ["t1"], kept: ["t2"] }), REPLY_SAVED_MIXED_AFTER_UNKNOWN_MESSAGE);
+    assert.equal(savedReplyStatusMessage({ cleared: [], kept: [] }), null);
   });
 
   it("前の値を書き換えない", () => {
@@ -188,7 +207,7 @@ describe("判定の反映", () => {
     const drafts = { t1: "d" };
     const uncertain = { t1: rec(1, "a") };
     nextReplyErrors(errors, r);
-    nextReplyDrafts(drafts, r);
+    nextReplyDrafts(drafts, { cleared: ["t1"], kept: [] });
     nextUncertainReplies(uncertain, r);
     assert.deepEqual([errors, drafts, uncertain], [{ t1: "e" }, { t1: "d" }, { t1: rec(1, "a") }]);
   });
@@ -196,5 +215,40 @@ describe("判定の反映", () => {
   it("判定した質問を開く（順序を保ち重複させない）", () => {
     assert.deepEqual(expandResolvedIds(["t2", "t9"], r), ["t2", "t9", "t1"]);
     assert.deepEqual(expandResolvedIds([], { saved: [], notSaved: [] }), []);
+  });
+});
+
+describe("savedDraftOutcome", () => {
+  const uncertain = { t1: rec(1, "送った回答"), t2: rec(1, "送った回答") };
+
+  it("結果不明の間に書き直した書きかけは残す（kept）", () => {
+    assert.deepEqual(savedDraftOutcome({ t1: "書き直した回答" }, uncertain, { saved: ["t1"], notSaved: [] }), { cleared: [], kept: ["t1"] });
+  });
+
+  it("送った本文と同じ書きかけは消す（cleared）", () => {
+    assert.deepEqual(savedDraftOutcome({ t1: "送った回答" }, uncertain, { saved: ["t1"], notSaved: [] }), { cleared: ["t1"], kept: [] });
+  });
+
+  it("前後の空白だけが違う書きかけは同じとみなして消す（String.prototype.trim と同じ）", () => {
+    // 全角空白（U+3000）・改行・タブも trim で除かれる
+    const drafts = { t1: "  送った回答\n", t2: "\u3000\t送った回答\u3000" };
+    assert.deepEqual(savedDraftOutcome(drafts, uncertain, { saved: ["t1", "t2"], notSaved: [] }), { cleared: ["t1", "t2"], kept: [] });
+    // 本文の途中の空白の違いは書き直しとみなす
+    assert.deepEqual(savedDraftOutcome({ t1: "送った 回答" }, uncertain, { saved: ["t1"], notSaved: [] }), { cleared: [], kept: ["t1"] });
+  });
+
+  it("書きかけがない・空白だけのときは消す（残すものがない）", () => {
+    assert.deepEqual(savedDraftOutcome({ t2: " \n" }, uncertain, { saved: ["t1", "t2"], notSaved: [] }), { cleared: ["t1", "t2"], kept: [] });
+  });
+
+  it("notSaved は対象にしない。saved の順序を保つ", () => {
+    const drafts = { t1: "書き直し", t2: "送った回答", t3: "x" };
+    assert.deepEqual(savedDraftOutcome(drafts, uncertain, { saved: ["t2", "t1"], notSaved: ["t3"] }), { cleared: ["t2"], kept: ["t1"] });
+  });
+
+  it("前の値を書き換えない", () => {
+    const drafts = { t1: "書き直し" };
+    savedDraftOutcome(drafts, uncertain, { saved: ["t1"], notSaved: [] });
+    assert.deepEqual([drafts, uncertain], [{ t1: "書き直し" }, { t1: rec(1, "送った回答"), t2: rec(1, "送った回答") }]);
   });
 });
