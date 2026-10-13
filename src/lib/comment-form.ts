@@ -56,6 +56,15 @@ export const COMMENT_UNKNOWN_RESULT_MESSAGE =
   "送信できたかどうか確かめられませんでした。一覧を再読み込みして確かめてください。";
 export const COMMENT_SERVER_ERROR_MESSAGE = "サーバーでエラーが発生しました。時間をおいて、もう一度お試しください。";
 
+/**
+ * 送信できたかどうか分からない失敗（通信エラー・2xx なのに応答を読めない）の文言か。
+ * このときは再送ではなく一覧の再読み込みで確かめるよう案内し、画面は「一覧を再読み込み」ボタンを出す（#32 A-2）。
+ * 400 / 401 / 403 / 404 / 5xx の文言は false（サーバーが受け付けなかったと分かっている）
+ */
+export function isUncertainSubmitError(message: unknown): boolean {
+  return message === COMMENT_NETWORK_ERROR_MESSAGE || message === COMMENT_UNKNOWN_RESULT_MESSAGE;
+}
+
 const REASON_MESSAGES: Readonly<Record<string, string>> = {
   empty: "本文を入力してください。",
   too_long: `本文は ${COMMENT_MAX_LENGTH} 文字以内で入力してください。`,

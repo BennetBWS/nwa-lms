@@ -135,3 +135,72 @@ export function replaceThreadRow(rows: unknown[], thread: Record<string, unknown
   });
   return hit ? next : rows;
 }
+
+// ───────────── 結果不明の回答を一覧の読み直しで確かめる ─────────────
+
+/** 結果不明の後、読み直した一覧で回答済みになっていたときの知らせ（書きかけは消す） */
+export const REPLY_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていました（この質問は回答済みになっています）。入力欄は空にしました。";
+/** 結果不明の後、読み直した一覧で未回答のままだったときのエラー（書きかけは残す） */
+export const REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE = "回答は保存されていませんでした。入力は残してあります。もう一度送信してください。";
+
+/** 結果不明の質問の id → 結果不明になった時点の一覧の読み込みの通し番号 */
+export type UncertainReplies = Readonly<Record<string, number>>;
+
+export type UncertainReplyResolution = { saved: string[]; notSaved: string[] };
+
+/**
+ * 読み直した一覧（GET /api/comments の threads）から、結果不明だった質問の結果を判定する。
+ * - 結果不明になった後に始めた読み込み（pageSeq が記録した番号より大きい）だけで判定する。
+ *   それより前に始めた読み込みは、回答が保存される前の一覧かもしれないため使わない
+ * - 一覧にあり answered が true：saved（回答は保存されていた）。false：notSaved（保存されていない）
+ * - 一覧にない・answered が boolean でない：判定しない（未回答タブでは回答済みの質問は一覧から外れる。
+ *   2 ページ目以降にあるかもしれない）。結果不明のまま残る
+ */
+export function resolveUncertainReplies(uncertain: UncertainReplies, pageSeq: number, rows: unknown[]): UncertainReplyResolution {
+  const saved: string[] = [];
+  const notSaved: string[] = [];
+  for (const id of Object.keys(uncertain)) {
+    if (!(pageSeq > uncertain[id])) continue;
+    const row = rows.find((r) => isPlainObject(r) && r.id === id);
+    if (!isPlainObject(row) || typeof row.answered !== "boolean") continue;
+    (row.answered ? saved : notSaved).push(id);
+  }
+  return { saved, notSaved };
+}
+
+function omitIds<V>(prev: Readonly<Record<string, V>>, ids: readonly string[]): Record<string, V> {
+  const next: Record<string, V> = { ...prev };
+  for (const id of ids) delete next[id];
+  return next;
+}
+
+/** 判定した質問を結果不明の記録から外す */
+export function nextUncertainReplies(prev: UncertainReplies, r: UncertainReplyResolution): Record<string, number> {
+  return omitIds(prev, [...r.saved, ...r.notSaved]);
+}
+
+/** 回答欄のエラー：saved は消し、notSaved は「保存されていませんでした」に変える。それ以外の質問はそのまま */
+export function nextReplyErrors(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
+  const next = omitIds(prev, r.saved);
+  for (const id of r.notSaved) next[id] = REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE;
+  return next;
+}
+
+/** 書きかけ：saved だけ消す（二重回答を防ぐ）。notSaved とそれ以外の質問は残す */
+export function nextReplyDrafts(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
+  return omitIds(prev, r.saved);
+}
+
+/** 回答欄の知らせ：saved に「保存されていました」を出し、notSaved の古い知らせは消す */
+export function nextReplyNotices(prev: Readonly<Record<string, string>>, r: UncertainReplyResolution): Record<string, string> {
+  const next = omitIds(prev, r.notSaved);
+  for (const id of r.saved) next[id] = REPLY_SAVED_AFTER_UNKNOWN_MESSAGE;
+  return next;
+}
+
+/** 判定した質問を開いた状態にする（読み直すと開いた行は閉じるため、結果をその場で見せる）。順序は保ち、重複させない */
+export function expandResolvedIds(prev: readonly string[], r: UncertainReplyResolution): string[] {
+  const next = [...prev];
+  for (const id of [...r.saved, ...r.notSaved]) if (!next.includes(id)) next.push(id);
+  return next;
+}
