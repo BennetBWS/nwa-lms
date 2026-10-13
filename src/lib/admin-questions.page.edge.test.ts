@@ -919,3 +919,259 @@ describe("AdminQuestions 追加：表示", () => {
     assert.doesNotMatch(q, /回答を送信|質問対応/);
   });
 });
+
+describe("AdminQuestions 追加：送信結果が分からないときの再読み込み", () => {
+  const RELOAD = "一覧を再読み込み";
+  const reloadButtons = (tree: El) => buttons(tree).filter((b) => text(b).trim() === RELOAD);
+  const regionOf = (tree: El, id: string) => findAll(tree, (e) => e.props.id === `admin-question-thread-${id}`);
+  const lastList = (m: { reqs: Req[] }) => listReqs(m)[listReqs(m).length - 1];
+
+  /** 「すべて」タブ（回答済みの行も一覧に残る）で t1 を開き、入力して送信した状態 */
+  async function sentOnAll(value = "講師の回答です") {
+    const m = await loaded();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res(PAGE1));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    change(textareaOf(m.render(), "t1"), value);
+    click(sendButtonOf(m.render(), "t1"));
+    assert.equal(replyReqs(m).length, 1, "送信していない");
+    return m;
+  }
+  async function networkErrorOnAll() {
+    const m = await sentOnAll();
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    return m;
+  }
+
+  it("通信エラー・2xx で別 id／読めない応答のときは、エラーの横に「一覧を再読み込み」が出る", async () => {
+    const finishes: Array<(r: Req) => void> = [
+      (r) => r.fail(new TypeError("Failed to fetch")),
+      (r) => r.release(res({ thread: { ...answeredT1(), id: "t2" } }, { status: 201, url: REPLY_URL("t1") })),
+      (r) => r.release(res(null, { status: 201, url: REPLY_URL("t1"), json: () => Promise.reject(new SyntaxError("x")) })),
+    ];
+    for (const finish of finishes) {
+      const m = await sentOnAll();
+      finish(replyReqs(m)[0]);
+      await settle();
+      const tree = m.render();
+      assert.equal(alertsOf(tree).length, 1, "エラーが 1 つでない");
+      assert.ok(commentForm.isUncertainSubmitError(alertsOf(tree)[0]), `結果不明の文言でない：${alertsOf(tree)[0]}`);
+      const region = regionOf(tree, "t1");
+      assert.equal(reloadButtons(region[0]).length, 1, "t1 の欄に「一覧を再読み込み」がない");
+      assert.equal(reloadButtons(region[0])[0].props.disabled, false, "「一覧を再読み込み」が押せない");
+      // ボタンは alert の外に置く（読み上げる文言はエラーだけ）
+      assert.equal(reloadButtons(byRole(tree, "alert")[0]).length, 0, "ボタンが alert の中にある");
+    }
+  });
+
+  it("400 / 403 / 404 / 500 のエラーでは「一覧を再読み込み」を出さない", async () => {
+    const cases: Array<Partial<FakeRes> & { body: unknown }> = [
+      { status: 400, ok: false, body: { reason: "not_a_question" } },
+      { status: 403, ok: false, body: { error: "Forbidden" } },
+      { status: 404, ok: false, body: { error: "Not found" } },
+      { status: 500, ok: false, body: { error: "x" } },
+    ];
+    for (const { body, ...p } of cases) {
+      const m = await sentOnAll();
+      replyReqs(m)[0].release(res(body, { ...p, url: REPLY_URL("t1") }));
+      await settle();
+      const tree = m.render();
+      assert.equal(alertsOf(tree).length, 1, String(p.status));
+      assert.equal(reloadButtons(tree).length, 0, `${p.status} で再読み込みのボタンが出た`);
+    }
+  });
+
+  it("押すと今のタブ・コースの 1 ページ目を読み直し、連打しても 1 本だけ", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res(PAGE1));
+    await settle();
+    change(courseSelect(m.render()), "co1");
+    lastList(m).release(res(PAGE1));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    change(textareaOf(m.render(), "t1"), "講師の回答です");
+    click(sendButtonOf(m.render(), "t1"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    const tree = m.render();
+    const before = listReqs(m).length;
+    const b = reloadButtons(tree)[0];
+    click(b);
+    click(b);
+    click(b);
+    assert.equal(listReqs(m).length, before + 1, "連打で二重に読んだ");
+    assert.equal(lastList(m).url, "/api/comments?courseId=co1", "今のタブ・コースで読み直していない");
+    const during = m.render();
+    assert.ok(text(during).includes("Loading..."), "読み込み中にならない");
+    assert.equal(reloadButtons(during).length, 0, "読み込み中もボタンが残る");
+  });
+
+  it("再現：送信 → 通信エラー → 再読み込みで回答済み：エラーと書きかけを消し、「保存されていました」を出して行を開く", async () => {
+    const m = await networkErrorOnAll();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), [], "エラーが残っている");
+    assert.equal(regionOf(tree, "t1").length, 1, "判定した行が開いていない");
+    assert.ok(text(regionOf(tree, "t1")[0]).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "保存されていた旨がない");
+    assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "読み上げの知らせがない");
+    assert.equal(textareaOf(tree, "t1").props.value, "", "書きかけが残っている（二重回答のおそれ）");
+    assert.equal(sendButtonOf(tree, "t1").props.disabled, true, "空なのに送信できる");
+    assert.equal(reloadButtons(tree).length, 0, "再読み込みのボタンが残っている");
+    assert.ok(text(threadButton(tree, "t1")).includes("回答済み"), "回答済みの行でない");
+    assert.equal(regionOf(tree, "t2").length, 0, "判定していない行まで開いた");
+    // 書き始めると知らせは消える
+    change(textareaOf(tree, "t1"), "追記");
+    assert.ok(!text(regionOf(m.render(), "t1")[0]).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "入力しても知らせが残る");
+  });
+
+  it("再現：送信 → 通信エラー → 再読み込みで未回答のまま：「保存されていませんでした」に変え、書きかけを残して再送できる", async () => {
+    const m = await networkErrorOnAll();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res(PAGE1));
+    await settle();
+    let tree = m.render();
+    assert.deepEqual(alertsOf(tree), [adminQuestions.REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE]);
+    assert.equal(regionOf(tree, "t1").length, 1, "判定した行が開いていない");
+    assert.equal(textareaOf(tree, "t1").props.value, "講師の回答です", "書きかけが消えた");
+    assert.equal(reloadButtons(tree).length, 0, "結果が分かったのに再読み込みのボタンが残る");
+    assert.ok(!statusTexts(tree).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "保存されていた知らせが出た");
+    const b = sendButtonOf(tree, "t1");
+    assert.equal(b.props.disabled, false, "再送できない");
+    click(b);
+    assert.equal(replyReqs(m).length, 2, "再送していない");
+    assert.equal(replyReqs(m)[1].init?.body, replyReqs(m)[0].init?.body, "再送の本文が違う");
+    tree = m.render();
+    assert.deepEqual(alertsOf(tree), [], "再送中も前のエラーが残る");
+    replyReqs(m)[1].release(res({ thread: answeredT1() }, { status: 201, url: REPLY_URL("t1") }));
+    await settle();
+    tree = m.render();
+    assert.equal(textareaOf(tree, "t1").props.value, "");
+    assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_SENT_MESSAGE), "送信の知らせがない");
+  });
+
+  it("201 で別 id が返った後の再読み込みでも判定する（回答済み）", async () => {
+    const m = await sentOnAll();
+    replyReqs(m)[0].release(res({ thread: { ...answeredT1(), id: "t2" } }, { status: 201, url: REPLY_URL("t1") }));
+    await settle();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), []);
+    assert.equal(textareaOf(tree, "t1").props.value, "");
+  });
+
+  it("未回答タブで読み直して質問が一覧にないときは判定せず、エラーと書きかけを残す（「すべて」で読めば判定する）", async () => {
+    const m = await typed("講師の回答です");
+    click(button(m.render(), "回答を送信"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ threads: [PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res(PAGE1));
+    await settle();
+    const tree = m.render();
+    // 「すべて」の読み直しで未回答と分かった
+    assert.deepEqual(alertsOf(tree), [adminQuestions.REPLY_NOT_SAVED_AFTER_UNKNOWN_MESSAGE]);
+    assert.equal(textareaOf(tree, "t1").props.value, "講師の回答です");
+  });
+
+  it("エラーより前に始めた読み込みの結果では判定しない（回答が保存される前の一覧かもしれない）", async () => {
+    const m = await sentOnAll();
+    // 送信中に読み込みを始める（タブを切り替えて戻る）
+    click(tab(m.render(), "未回答"));
+    click(tab(m.render(), "すべて"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    lastList(m).release(res(PAGE1));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    let tree = m.render();
+    assert.deepEqual(alertsOf(tree), [commentForm.COMMENT_NETWORK_ERROR_MESSAGE], "古い一覧で判定した");
+    assert.equal(textareaOf(tree, "t1").props.value, "講師の回答です");
+    // 改めて読み直せば判定する
+    click(reloadButtons(tree)[0]);
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    tree = m.render();
+    assert.deepEqual(alertsOf(tree), []);
+    assert.equal(textareaOf(tree, "t1").props.value, "");
+  });
+
+  it("読み直しが失敗したら判定せず、成功したときに判定する", async () => {
+    const m = await networkErrorOnAll();
+    click(reloadButtons(m.render())[0]);
+    lastList(m).release(res({ error: "x" }, { status: 500, ok: false }));
+    await settle();
+    click(button(m.render(), "再読み込み"));
+    lastList(m).release(res({ threads: [answeredT1(), PAGE1.threads[1]], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), []);
+    assert.equal(textareaOf(tree, "t1").props.value, "");
+  });
+
+  it("「結果不明」以外のエラー（500）と、別の質問の書きかけは読み直しても変えない", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res(PAGE1));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    click(threadButton(m.render(), "t2"));
+    change(textareaOf(m.render(), "t1"), "t1 への回答");
+    change(textareaOf(m.render(), "t2"), "t2 の書きかけ");
+    click(sendButtonOf(m.render(), "t1"));
+    replyReqs(m)[0].release(res({ error: "x" }, { status: 500, ok: false, url: REPLY_URL("t1") }));
+    await settle();
+    click(tab(m.render(), "回答済み"));
+    lastList(m).release(res({ threads: [], nextCursor: null }));
+    await settle();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res({ threads: [answeredT1(), thread("t2", { answered: true })], nextCursor: null }));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    click(threadButton(m.render(), "t2"));
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), [commentForm.COMMENT_SERVER_ERROR_MESSAGE], "500 のエラーが変わった");
+    assert.equal(textareaOf(tree, "t1").props.value, "t1 への回答", "500 の後の書きかけが消えた");
+    assert.equal(textareaOf(tree, "t2").props.value, "t2 の書きかけ", "別の質問の書きかけが消えた");
+    assert.ok(!statusTexts(tree).includes(adminQuestions.REPLY_SAVED_AFTER_UNKNOWN_MESSAGE), "保存されていた知らせが出た");
+  });
+
+  it("「もっと見る」で読んだ続きに質問があれば判定する。続きの読み込み中は「一覧を再読み込み」を押せない", async () => {
+    const m = await loaded();
+    click(tab(m.render(), "すべて"));
+    lastList(m).release(res({ threads: [thread("t1")], nextCursor: "c1" }));
+    await settle();
+    click(threadButton(m.render(), "t1"));
+    change(textareaOf(m.render(), "t1"), "講師の回答です");
+    click(sendButtonOf(m.render(), "t1"));
+    replyReqs(m)[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    click(button(m.render(), "もっと見る"));
+    const before = listReqs(m).length;
+    const during = m.render();
+    assert.equal(reloadButtons(during)[0].props.disabled, true, "続きの読み込み中に押せる");
+    click(reloadButtons(during)[0]);
+    assert.equal(listReqs(m).length, before, "続きの読み込み中に読み直した");
+    // 続きのページに（並べ替わって）t1 が回答済みで入っていた
+    lastList(m).release(res({ threads: [{ ...answeredT1(), id: "t1" }], nextCursor: null }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alertsOf(tree), []);
+    assert.equal(textareaOf(tree, "t1").props.value, "");
+  });
+
+  it("ソース：再読み込みのボタンは loadThreads(tab, courseId) を呼び、判定は lib の関数で行う", () => {
+    assert.match(compSrc, /isUncertainSubmitError\(replyError\) && \(\s*<Button[^>]*onClick=\{\(\) => loadThreads\(tab, courseId\)\} disabled=\{loading \|\| loadingMore\}/);
+    assert.match(compSrc, /resolveUncertainReplies\(uncertainRef\.current, seq, rows\)/);
+    assert.match(compSrc, /if \(page\) \{ onPage\(page\); settleUncertainReplies\(page\.threads, seq\); \}/);
+  });
+});
