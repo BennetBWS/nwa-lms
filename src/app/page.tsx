@@ -3065,7 +3065,9 @@ const AdminQuestions = () => {
   // 失敗したら入力を残して文言を出す。
   // 成功したら応答の thread でその行を置き換える（未回答タブでも行はその場に残り、バッジが「回答済み」に変わる）
   const submitReply = async (id) => {
-    if (sessionExpired.current || sendingRef.current.has(id) || id in uncertainRef.current || deletingThreadsRef.current.has(id)) return;
+    // 削除の処理中の質問へは送らない（#47）。送信中・結果不明の判定は既存のとおり
+    if (deletingThreadsRef.current.has(id)) return;
+    if (sessionExpired.current || sendingRef.current.has(id) || id in uncertainRef.current) return;
     const value = drafts[id] ?? "";
     if (!commentFormState(value, false).canSubmit) return;
     // 結果不明になったときの判定の基準（送った本文と、送信した時点の一覧）
