@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
 import { hideLockedLessonContent } from "@/lib/lesson-access";
 import { unlockedCourseIds } from "@/lib/question-threads";
+import { safeErrorSummary } from "@/lib/safe-error";
 
 // コース一覧。受講生（講師以外）には、ロック中のコースも一覧には返すが、
 // そのレッスンは LOCKED_LESSON_VISIBLE_FIELDS の項目だけにし（videoUrl・content・pdfUrl などを出さない）、コースに locked: true を付ける（#47 P4、Tec 決定 D-a）。
@@ -68,7 +69,7 @@ export async function GET() {
       headers: { "Cache-Control": "private, max-age=0, stale-while-revalidate=60" },
     });
   } catch (error) {
-    console.error("GET /api/courses error:", error);
+    console.error("GET /api/courses error:", safeErrorSummary(error).name);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

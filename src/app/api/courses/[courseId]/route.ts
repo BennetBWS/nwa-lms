@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
 import { COURSE_LOCKED_REASON, courseAccessFor } from "@/lib/lesson-access";
+import { safeErrorSummary } from "@/lib/safe-error";
 
 // コースの詳細（レッスンの本文・動画・資料を含む）。
 // 受講生（講師以外）のロック中のコースは 403 { reason: "course_locked" } で、コースの中身を読まない（#47 P4、Tec 決定 D-a）。
@@ -76,7 +77,7 @@ export async function GET(
       headers: { "Cache-Control": "private, max-age=0, stale-while-revalidate=60" },
     });
   } catch (error) {
-    console.error("GET /api/courses/[courseId] error:", error);
+    console.error("GET /api/courses/[courseId] error:", safeErrorSummary(error).name);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

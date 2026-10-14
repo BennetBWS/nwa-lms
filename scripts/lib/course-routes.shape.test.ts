@@ -1,4 +1,4 @@
-import { before, beforeEach, describe, it } from "node:test";
+import { before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 
@@ -13,6 +13,16 @@ import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession 
 
 type Row = Record<string, unknown>;
 type Call = { method: string; args: Row };
+
+/** ログにメッセージ・code・meta を出さないことを確かめるための、Prisma の既知エラーに似せたダミー */
+class DummyPrismaError extends Error {
+  code = "P2002";
+  meta = { target: ["dummy"] };
+  constructor(message: string) {
+    super(message);
+    this.name = "PrismaClientKnownRequestError";
+  }
+}
 
 const STUDENT_ID = (STUDENT_SESSION as { user: { id: string } }).user.id;
 const OTHER_ID = "stu_other";
@@ -195,6 +205,23 @@ describe("GET /api/courses：応答の形（#47 P3 で変わっていない。P4
     }
   });
 
+  it("DB のエラーは 500（本文にエラーの中身を出さない。ログはエラー名だけ）", async () => {
+    const orig = fakePrisma.course.findMany;
+    fakePrisma.course.findMany = async () => {
+      throw new DummyPrismaError("dummy-db-failure student@example.com");
+    };
+    const logged = mock.method(console, "error", () => {});
+    try {
+      const res = await courseList.GET();
+      assert.equal(res.status, 500, `status ${res.status}`);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.deepEqual(logged.mock.calls.map((c) => c.arguments), [["GET /api/courses error:", "PrismaClientKnownRequestError"]]);
+    } finally {
+      fakePrisma.course.findMany = orig;
+      logged.mock.restore();
+    }
+  });
+
   it("進捗は自分の userId で、完了だけを読む", async () => {
     await courseList.GET();
     const p = calls.find((c) => c.method === "progress.findMany");
@@ -283,21 +310,21 @@ describe("GET /api/courses/[courseId]：応答の形・認証・他人のデー�
     assert.deepEqual(calls, [], "未ログインで DB を読んでいる");
   });
 
-  it("DB のエラーは 500（本文にエラーの中身を出さない）", async () => {
+  it("DB のエラーは 500（本文にエラーの中身を出さない。ログはエラー名だけ）", async () => {
     const orig = fakePrisma.course.findUnique;
     fakePrisma.course.findUnique = async () => {
-      throw new Error("dummy-db-failure");
+      throw new DummyPrismaError("dummy-db-failure student@example.com");
     };
-    const origError = console.error;
-    console.error = () => {};
+    const logged = mock.method(console, "error", () => {});
     try {
       const res = await detail("c_1");
       assert.equal(res.status, 500, `status ${res.status}`);
       const text = await res.text();
       assert.ok(!text.includes("dummy-db-failure"), "エラーの中身が応答に出ている");
+      assert.deepEqual(logged.mock.calls.map((c) => c.arguments), [["GET /api/courses/[courseId] error:", "PrismaClientKnownRequestError"]]);
     } finally {
       fakePrisma.course.findUnique = orig;
-      console.error = origError;
+      logged.mock.restore();
     }
   });
 });
