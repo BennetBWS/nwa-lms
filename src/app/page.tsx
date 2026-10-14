@@ -55,6 +55,7 @@ import {
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
+import { formatBadgeCount, readMarkReadResponse, readUnreadCountResponse, toUnreadCount, unreadBadgeLabel, unreadIdsToMark } from "@/lib/notification-read";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
 import { toAdminDashboardView } from "@/lib/admin-stats";
@@ -436,13 +437,14 @@ const ThemeToggle = ({ isDark, onToggle }) => {
 // ═══════════════════════════════════════════
 // SIDEBAR
 // ═══════════════════════════════════════════
-const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) => {
+const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName, unreadCount }) => {
   const studentNav = [
     { id: "dashboard", icon: Home, label: "ダッシュボード" },
     { id: "courses", icon: BookOpen, label: "コース一覧" },
     { id: "lesson", icon: Play, label: "レッスン" },
     { id: "quiz", icon: HelpCircle, label: "確認テスト受講" },
-    { id: "notifications", icon: Bell, label: "通知" },
+    // #62 未読件数のバッジ（受講生だけ。10 件以上は「9+」、0 件・未取得なら出さない）
+    { id: "notifications", icon: Bell, label: "通知", badge: formatBadgeCount(unreadCount), badgeLabel: unreadBadgeLabel(unreadCount) },
     { id: "questions", icon: MessageSquare, label: "質問" },
     { id: "settings", icon: Settings, label: "設定" },
   ];
@@ -497,7 +499,7 @@ const Sidebar = ({ currentPage, setCurrentPage, isAdmin, onLogout, userName }) =
               <Icon size={18} strokeWidth={active ? 2 : 1.6} />
               <span style={{ flex: 1 }}>{item.label}</span>
               {item.badge != null && item.badge !== 0 && (
-                <span style={{ minWidth: 20, height: 20, borderRadius: 99, background: T.danger, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", boxShadow: `0 0 8px ${T.danger}40` }}>
+                <span role={item.badgeLabel ? "img" : undefined} aria-label={item.badgeLabel ?? undefined} style={{ minWidth: 20, height: 20, borderRadius: 99, background: T.danger, color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px", boxShadow: `0 0 8px ${T.danger}40` }}>
                   {item.badge}
                 </span>
               )}
@@ -2479,7 +2481,7 @@ const QuizPage = () => {
 // ═══════════════════════════════════════════
 // NOTIFICATIONS / QUESTIONS / ADMIN COURSES
 // ═══════════════════════════════════════════
-const Notifications = () => {
+const Notifications = ({ onUnreadChange }) => {
   const [notifs, setNotifs] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -2512,6 +2514,33 @@ const Notifications = () => {
   };
 
   useEffect(() => { loadNotifications(); }, []);
+
+  // #62 Mark the unread rows just shown (up to 50) as read. The bold text and dots stay
+  // until the page is left (notifs is not changed); only the sidebar badge goes down,
+  // through onUnreadChange with the unreadCount of the response. A failure shows nothing
+  // and keeps the badge; the next visit tries again. One request at a time (StrictMode
+  // runs the effect twice; the API is idempotent anyway). An expired session is handled
+  // by authFetch (sign out and go to /login): keep the flag so nothing is sent again.
+  const markReadInFlight = useRef(false);
+  const markShownAsRead = (rows) => {
+    const ids = unreadIdsToMark(toNewsItems(rows, new Date()));
+    if (ids.length === 0 || markReadInFlight.current) return;
+    markReadInFlight.current = true;
+    let sessionExpired = false;
+    authFetch("/api/notifications/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) }).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (sessionExpired) return;
+      const count = readMarkReadResponse(data);
+      if (count !== null && onUnreadChange) onUnreadChange(count);
+    }).catch(() => {}).finally(() => {
+      if (sessionExpired) return;
+      markReadInFlight.current = false;
+    });
+  };
+  useEffect(() => { if (notifs) markShownAsRead(notifs); }, [notifs]);
 
   const now = new Date();
   const n = toNewsItems(notifs, now);
@@ -3343,6 +3372,11 @@ export default function NWALearningPlatform() {
   const [transitioning, setTransitioning] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(null);
+  // #62 Unread notifications for the sidebar badge (students only). null until the first load.
+  const [unreadCount, setUnreadCount] = useState(null);
+  // Each count request (and each count from the mark-read response) takes a new number;
+  // a response whose number is no longer the latest is stale and dropped.
+  const unreadSeq = useRef(0);
 
   // Load the session on mount. Any API call that finds the session revoked
   // switches to "expired" through sessionExpiredListener.
@@ -3366,6 +3400,37 @@ export default function NWALearningPlatform() {
   }, [sessionView.kind]);
 
   const admin = sessionView.kind === "authenticated" && sessionView.role === "INSTRUCTOR";
+  const student = sessionView.kind === "authenticated" && sessionView.role === "STUDENT";
+
+  // #62 Load the unread count. A failure keeps the previous value (nothing on the first
+  // load) and shows no error. An expired session is handled by authFetch (sign out and go
+  // to /login), so it is just ignored here.
+  const loadUnreadCount = () => {
+    const seq = ++unreadSeq.current;
+    authFetch("/api/notifications/unread-count").then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") return null;
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (seq !== unreadSeq.current) return;
+      const count = readUnreadCountResponse(data);
+      if (count !== null) setUnreadCount(count);
+    }).catch(() => {});
+  };
+
+  // #62 The count returned by POST /api/notifications/read. It is newer than any count
+  // request still in flight, so those are made stale.
+  const applyUnreadCount = (value) => {
+    const count = toUnreadCount(value);
+    if (count === null) return;
+    unreadSeq.current++;
+    setUnreadCount(count);
+  };
+
+  // #62 After sign-in (students only; instructors have no notifications item)
+  useEffect(() => {
+    if (student) loadUnreadCount();
+  }, [student]);
 
   const handleLogout = async () => {
     const { signOut } = await import("next-auth/react");
@@ -3375,6 +3440,7 @@ export default function NWALearningPlatform() {
   const handlePageChange = (p, data) => {
     setPage(p); setMobileMenu(false);
     if (data?.courseId) setSelectedCourseId(data.courseId);
+    if (student) loadUnreadCount();
   };
 
   // Update global T when theme changes + toggle dark class on html
@@ -3396,7 +3462,7 @@ export default function NWALearningPlatform() {
     "courses": <CourseList setCurrentPage={handlePageChange} />,
     "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} isDark={isDark} onThemeToggle={handleThemeToggle} />,
     "quiz": <QuizPage />,
-    "notifications": <Notifications />,
+    "notifications": <Notifications onUnreadChange={applyUnreadCount} />,
     "questions": <Questions />,
     "admin-dashboard": <AdminDashboard setCurrentPage={handlePageChange} />,
     "admin-students": <AdminStudents setCurrentPage={handlePageChange} />,
@@ -3513,7 +3579,7 @@ export default function NWALearningPlatform() {
         {mobileMenu && <div className="nwa-sidebar-overlay" onClick={() => setMobileMenu(false)} />}
 
         <div className={`nwa-sidebar ${mobileMenu ? "open" : ""}`}>
-          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} onLogout={handleLogout} userName={sessionView.name} />
+          <Sidebar currentPage={page} setCurrentPage={handlePageChange} isAdmin={admin} onLogout={handleLogout} userName={sessionView.name} unreadCount={student ? unreadCount : null} />
         </div>
         <main style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column" }}>
           {/* Mobile header */}
