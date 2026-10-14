@@ -24,7 +24,7 @@ const COMMENT_SELECT = {
 // 返信の lessonId は親と同じ値を使い、クライアントからは受け取らない。
 // 質問の投稿者が「回答者本人でない・STUDENT・無効化されていない」ときだけ、同じトランザクションで通知を作る
 // （無効化された受講生の質問にも回答できるが、通知は作らない。Tec 決定 2026-10-09）。
-// 応答は 201 { thread }（GET /api/comments の 1 件と同じ QuestionThreadView）。編集・削除の API はない
+// 応答は 201 { thread }（GET /api/comments の 1 件と同じ QuestionThreadView）。編集の API はない（削除は講師用の DELETE /api/admin/comments/[id]。#47）
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -111,7 +111,7 @@ export async function POST(
         },
       });
       if (!reread) {
-        // 親が途中で消えた（削除の API はないので通常は起きない）。例外で回答と通知をロールバックし、500 を返す
+        // 親が途中で消えた（講師が DELETE /api/admin/comments/[id] で同時に質問を削除した場合。#47）。例外で回答と通知をロールバックし、500 を返す
         throw new Error("Question thread not found after reply");
       }
       return reread;
