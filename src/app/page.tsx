@@ -3418,9 +3418,16 @@ const AdminQuestions = () => {
               <h3 id="nwa-delete-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
                 {deleteDialogTitle(deleteDialog.kind)}
               </h3>
-              <p id="nwa-delete-dialog-message" style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 12px", whiteSpace: "pre-wrap" }}>
-                {deleteTarget ? deleteConfirmMessage(deleteTarget) : DELETE_TARGET_MISSING_MESSAGE}
-              </p>
+              {deleteTarget ? (
+                <p id="nwa-delete-dialog-message" style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 12px", whiteSpace: "pre-wrap" }}>
+                  {deleteConfirmMessage(deleteTarget)}
+                </p>
+              ) : (
+                // 開いた後に対象が一覧から消えた。確認の文言と入れ替えて差し込み、role="alert" で知らせる
+                <div id="nwa-delete-dialog-message" role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, lineHeight: 1.7, marginBottom: 12 }}>
+                  {DELETE_TARGET_MISSING_MESSAGE}
+                </div>
+              )}
               {deleteTarget && deleteTarget.quote && (
                 <blockquote style={{ margin: "0 0 20px", padding: "8px 12px", borderLeft: `3px solid ${T.border}`, fontSize: 13, lineHeight: 1.6, color: T.textSecondary, overflowWrap: "anywhere" }}>「{deleteTarget.quote}」</blockquote>
               )}

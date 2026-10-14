@@ -1092,11 +1092,15 @@ describe("AdminQuestions 削除：開いた後に対象の行が変わったと�
     await settle();
     const d = dialog(m.render());
     assert.ok(text(d).includes(adminQuestions.DELETE_TARGET_MISSING_MESSAGE), `見つからない文言がない：${text(d)}`);
+    assert.deepEqual(alerts(d), [adminQuestions.DELETE_TARGET_MISSING_MESSAGE], "見つからない文言を role=\"alert\" で 1 回だけ知らせていない");
+    assert.equal(findAll(d, (e) => e.props.id === "nwa-delete-dialog-message").length, 1, "ダイアログの説明（aria-describedby の先）が 1 つでない");
+    assert.ok(!text(d).includes("元に戻せません"), "見つからないのに確認の文言が残っている");
     assert.equal(findAll(d, (e) => e.type === "blockquote").length, 0, "消えた対象の引用を出した");
     const confirm = button(d, "削除する");
     assert.equal(confirm.props.disabled, true, "見つからないのに押せる");
     click(confirm);
     assert.equal(deleteReqs(m).length, 0, "見つからない対象を送った");
+    assert.deepEqual(alerts(dialog(m.render())), [adminQuestions.DELETE_TARGET_MISSING_MESSAGE], "押した後に文言が重なった");
     assert.equal(button(dialog(m.render()), "キャンセル").props.disabled, false, "閉じられない");
   });
 });
