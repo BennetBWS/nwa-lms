@@ -456,16 +456,18 @@ describe("DELETE /api/admin/comments/[id]：返信の削除", () => {
         ["comment.findMany", true],
         ["comment.delete", true],
         ["comment.findUnique", true],
+        ["comment.findUnique", true],
       ]
     );
     assert.deepEqual(calls[2].args, { where: { parentId: { in: ["r_stu"] } }, select: { id: true } });
     assert.deepEqual((calls[3].args as { where: unknown }).where, { id: "r_stu" });
+    assert.deepEqual(calls[4].args, { where: { id: "q_stu" }, select: { parentId: true } }, "親の parentId だけを読んで、根の質問か確かめる");
     assert.deepEqual(ids(), ["q_stu", "r_ins", "r_other", "q_gone", "r_gone", "q_alone"], "r_stu だけが消える");
   });
 
-  it("読み直しは親の id で、GET /api/comments と同じ select", async () => {
+  it("読み直しは根の質問（直下の返信なら親）の id で、GET /api/comments と同じ select", async () => {
     await del("r_stu");
-    const reread = calls.filter((c) => c.method === "comment.findUnique")[1];
+    const reread = calls.filter((c) => c.method === "comment.findUnique")[2];
     assert.ok(reread, "親を読み直す");
     assert.equal(reread.inTx, true, "読み直しは削除と同じトランザクションの中");
     assert.deepEqual(reread.args.where, { id: "q_stu" });

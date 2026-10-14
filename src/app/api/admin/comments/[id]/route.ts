@@ -9,6 +9,7 @@ import {
   DELETE_LOG_MESSAGE,
   collectDescendantIds,
   deletedCommentKind,
+  findRootQuestionId,
   questionDeletedResponse,
   replyDeletedResponse,
 } from "@/lib/admin-comment-delete";
@@ -45,6 +46,7 @@ async function deleteDescendantReplies(tx: Prisma.TransactionClient, rootId: str
 // 既に送った回答の通知には触れない（通知はコメントを参照していない。Tec 決定 C-a）。
 // ログは固定文だけ（id・本文・名前を出さない。Tec 決定 E-a）。
 // 確認と delete の間に別の講師が消した（delete が P2025）場合は 404。返信の削除後に親を読み直せない場合は 500（削除はロールバック）。
+// トランザクションは Prisma の既定のタイムアウト（5 秒）で、超えたら P2028 で 500・ロールバックになる。
 // 既知の残存リスク：子孫を集めてから delete するまでの間に、別の講師の回答が commit されると、その回答は SET NULL で質問として残りうる（設計のリスク 2、許容）
 export async function DELETE(
   _request: Request,
@@ -91,9 +93,19 @@ export async function DELETE(
       await deleteDescendantReplies(tx, target.id);
       await tx.comment.delete({ where: { id: target.id }, select: { id: true } });
 
+      // 応答に使うスレッドの根の質問。返信への返信（#32 より前のデータ）を消した場合、親は中間の返信なので、
+      // parentId を根までたどる（読む回数は MAX_REPLY_DEPTH 回まで。循環・上限超えは例外で 500・ロールバック）
+      const rootId = await findRootQuestionId(parentId, (cur) =>
+        tx.comment.findUnique({ where: { id: cur }, select: { parentId: true } })
+      );
+      if (!rootId) {
+        // 親（または途中の返信）が見つからない（同時に質問ごと削除された等）。例外で削除をロールバックし、500 を返す
+        throw new Error("Question thread not found after reply deletion");
+      }
+
       // 応答に使うスレッド（GET /api/comments の 1 件と同じ select）。削除と同じトランザクションで読み直す
       const reread = await tx.comment.findUnique({
-        where: { id: parentId },
+        where: { id: rootId },
         select: {
           ...COMMENT_SELECT,
           lesson: { select: { id: true, title: true, section: { select: { course: { select: { id: true, name: true } } } } } },
@@ -105,7 +117,7 @@ export async function DELETE(
         },
       });
       if (!reread) {
-        // 親が見つからない（同時に質問ごと削除された等）。例外で削除をロールバックし、500 を返す
+        // 根の質問が見つからない（たどったあとに同時に削除された等）。例外で削除をロールバックし、500 を返す
         throw new Error("Question thread not found after reply deletion");
       }
       return reread;
