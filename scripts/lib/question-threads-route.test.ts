@@ -84,9 +84,10 @@ function matchComment(c: CommentRow, where: Where): boolean {
         return c[k] === v;
       case "createdAt": {
         if (v instanceof Date) return c.createdAt.getTime() === v.getTime();
-        const lt = (v as { lt?: unknown }).lt;
-        assert.ok(lt instanceof Date && Object.keys(v as object).length === 1, `createdAt: ${inspect(v)}`);
-        return c.createdAt.getTime() < lt.getTime();
+        // gt は POST の連投の判定（#46）
+        const { lt, gt } = v as { lt?: unknown; gt?: unknown };
+        assert.ok((lt instanceof Date || gt instanceof Date) && Object.keys(v as object).length === 1, `createdAt: ${inspect(v)}`);
+        return lt instanceof Date ? c.createdAt.getTime() < lt.getTime() : c.createdAt.getTime() > (gt as Date).getTime();
       }
       case "id": {
         if (typeof v === "string") return c.id === v;
@@ -207,7 +208,9 @@ const fakePrisma = {
       calls.push({ method: "lesson.findUnique", args });
       if (failWith !== undefined) throw failWith;
       const id = (args.where as { id: string }).id;
-      return lessons.some((l) => l.id === id) ? { id } : null;
+      // POST は lesson-access でコースの id だけを読む（#46）
+      const lesson = lessons.find((l) => l.id === id);
+      return lesson ? { section: { courseId: lesson.courseId } } : null;
     },
   },
   course: {
@@ -637,14 +640,20 @@ describe("GET /api/comments：エラー", () => {
 
 // ───────────── POST（回帰） ─────────────
 
-const post = (body: unknown) =>
-  POST(
-    new Request("https://nwa-lms.example.com/api/comments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-  );
+// 現在時刻は BASE に固定する（連投の判定。#46）
+const post = async (body: unknown) => {
+  const req = new Request("https://nwa-lms.example.com/api/comments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  mock.timers.enable({ apis: ["Date"], now: BASE });
+  try {
+    return await POST(req);
+  } finally {
+    mock.timers.reset();
+  }
+};
 
 describe("POST /api/comments：回帰（GET の追加で変わらない）", () => {
   it("未ログインは 401 で、DB を読まない", async () => {
@@ -670,9 +679,10 @@ describe("POST /api/comments：回帰（GET の追加で変わらない）", () 
     assert.equal(body.mine, true);
   });
 
-  it("返信への返信は 400", async () => {
+  it("受講生の返信（返信への返信を含む）は 403 reply_not_allowed（#46）", async () => {
     const res = await post({ lessonId: "l1", content: "返信", parentId: "r1" });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "reply_not_allowed");
     assert.equal(calls.some((c) => c.method === "comment.create"), false);
   });
 });

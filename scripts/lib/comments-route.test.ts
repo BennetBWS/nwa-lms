@@ -3,30 +3,45 @@ import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 
-// #32 GET /api/comments/[lessonId] と POST /api/comments（レッスンの質問タブ）。
+// #32 GET /api/comments/[lessonId] と POST /api/comments（レッスンの質問タブ）。#46 で POST にロール・返信・ロック・連投の制限を追加。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
-// （受け取った引数を記録し、where・orderBy・take・select（入れ子の user / replies を含む）を最低限だけ再現する）。
+// （受け取った引数を記録し、where（等号と createdAt の gt）・orderBy・take・select（入れ子の user / replies を含む）を最低限だけ再現する）。
+// POST の現在時刻は mock.timers で BASE に固定する（偽の create も createdAt に BASE を入れる）。
 // NextAuth は installFakeAuth で差し替える。データはすべてダミー（example.com）。
 
 type UserRow = { id: string; email: string; name: string; role: "STUDENT" | "INSTRUCTOR"; avatar: string | null; deactivatedAt: Date | null; password: string };
 type CommentRow = { id: string; userId: string; lessonId: string; content: string; parentId: string | null; createdAt: Date };
 type Call = { method: string; args: Record<string, unknown> };
 type Select = Record<string, unknown>;
+type CourseRow = { id: string; order: number; lessons: string[] };
+type ProgressRow = { userId: string; lessonId: string; completed: boolean };
 
 const STUDENT = "stu_active";
 const LESSON = "lesson_1";
 const OTHER_LESSON = "lesson_2";
+const LOCKED_LESSON = "lesson_locked";
 const DUMMY_EMAIL = "student@example.com";
 const BASE = Date.parse("2026-10-06T12:00:00.000Z");
 
 let session: FakeSession;
 let calls: Call[];
 let users: UserRow[];
-let lessons: string[];
+let courses: CourseRow[];
+let progress: ProgressRow[];
 let comments: CommentRow[];
 let failWith: unknown;
 let GET: (req: Request, ctx: { params: Promise<{ lessonId: string }> }) => Promise<Response>;
 let POST: (req: Request) => Promise<Response>;
+
+/** where の 1 項目。等号と、Date の gt だけ */
+function matchValue(actual: unknown, cond: unknown): boolean {
+  if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
+    const c = cond as Record<string, unknown>;
+    if (Object.keys(c).length === 1 && c.gt instanceof Date) return actual instanceof Date && actual.getTime() > c.gt.getTime();
+    throw new Error(`fake prisma: unsupported condition ${JSON.stringify(cond)}`);
+  }
+  return actual === cond;
+}
 
 function sortRows<R extends Record<string, unknown>>(rows: R[], orderBy: unknown): R[] {
   const keys = (Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : []) as Array<Record<string, "asc" | "desc">>;
@@ -82,7 +97,7 @@ const fakePrisma = {
       calls.push({ method: "comment.findMany", args });
       if (failWith !== undefined) throw failWith;
       const where = (args.where ?? {}) as Record<string, unknown>;
-      let rows = comments.filter((r) => Object.entries(where).every(([k, v]) => r[k as keyof CommentRow] === v));
+      let rows = comments.filter((r) => Object.entries(where).every(([k, v]) => matchValue(r[k as keyof CommentRow], v)));
       rows = sortRows(rows as unknown as Record<string, unknown>[], args.orderBy) as unknown as CommentRow[];
       if (typeof args.take === "number") rows = rows.slice(0, args.take);
       return rows.map((r) => projectComment(r, args.select as Select | undefined));
@@ -108,7 +123,25 @@ const fakePrisma = {
       calls.push({ method: "lesson.findUnique", args });
       if (failWith !== undefined) throw failWith;
       const id = (args.where as { id: string }).id;
-      return lessons.includes(id) ? { id } : null;
+      const course = courses.find((c) => c.lessons.includes(id));
+      return course ? { section: { courseId: course.id } } : null;
+    },
+  },
+  course: {
+    async findMany(args: Record<string, unknown>) {
+      calls.push({ method: "course.findMany", args });
+      if (failWith !== undefined) throw failWith;
+      return [...courses]
+        .sort((a, b) => a.order - b.order)
+        .map((c) => ({ id: c.id, sections: [{ lessons: c.lessons.map((id) => ({ id })) }] }));
+    },
+  },
+  progress: {
+    async findMany(args: Record<string, unknown>) {
+      calls.push({ method: "progress.findMany", args });
+      if (failWith !== undefined) throw failWith;
+      const where = args.where as { userId: string; completed: boolean };
+      return progress.filter((p) => p.userId === where.userId && p.completed === where.completed).map((p) => ({ lessonId: p.lessonId }));
     },
   },
 };
@@ -126,7 +159,12 @@ beforeEach(() => {
   session = STUDENT_SESSION;
   calls = [];
   failWith = undefined;
-  lessons = [LESSON, OTHER_LESSON];
+  // course_1 は最初のコース（ロックなし）。course_2 は course_1 を終えるまでロック
+  courses = [
+    { id: "course_1", order: 1, lessons: [LESSON, OTHER_LESSON] },
+    { id: "course_2", order: 2, lessons: [LOCKED_LESSON] },
+  ];
+  progress = [];
   users = [
     { id: STUDENT, email: DUMMY_EMAIL, name: "受講生エー", role: "STUDENT", avatar: "avatar-a.png", deactivatedAt: null, password: "hash-a" },
     { id: "stu_gone", email: "gone@example.com", name: "受講生ゴーン", role: "STUDENT", avatar: null, deactivatedAt: new Date(BASE - 86_400_000), password: "hash-b" },
@@ -291,18 +329,35 @@ describe("GET /api/comments/[lessonId]：エラー", () => {
 
 // ───────────── POST ─────────────
 
-const post = (body: unknown, raw?: string) =>
-  POST(
-    new Request("https://nwa-lms.example.com/api/comments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: raw ?? JSON.stringify(body),
-    })
-  );
+const SEC = 1000;
+const HOUR = 60 * 60 * SEC;
+const ago = (ms: number) => new Date(BASE - ms);
+
+const post = async (body: unknown, raw?: string) => {
+  const req = new Request("https://nwa-lms.example.com/api/comments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw ?? JSON.stringify(body),
+  });
+  mock.timers.enable({ apis: ["Date"], now: BASE });
+  try {
+    return await POST(req);
+  } finally {
+    mock.timers.reset();
+  }
+};
 
 const writes = () => calls.filter((c) => c.method === "comment.create");
+const methods = () => calls.map((c) => c.method);
 
-describe("POST /api/comments：認証・入力", () => {
+/** STUDENT の投稿を足す（連投の判定用。別レッスン・別本文） */
+function addMine(n: number, at: (i: number) => Date, content: (i: number) => string = (i) => `前の質問${i}`) {
+  for (let i = 0; i < n; i++) {
+    comments.push({ id: `mine_${i}`, userId: STUDENT, lessonId: OTHER_LESSON, content: content(i), parentId: null, createdAt: at(i) });
+  }
+}
+
+describe("POST /api/comments：認証・ロール（#46）", () => {
   it("セッションがなければ 401 で、DB を読まない", async () => {
     session = null;
     const res = await post({ lessonId: LESSON, content: "質問" });
@@ -310,6 +365,25 @@ describe("POST /api/comments：認証・入力", () => {
     assert.equal(calls.length, 0);
   });
 
+  it("講師は 403 forbidden_role で、本文を読まず DB も読まない（壊れた JSON でも 403）", async () => {
+    session = INSTRUCTOR_SESSION;
+    for (const res of [await post({ lessonId: LESSON, content: "回答", parentId: "c1" }), await post(undefined, "{ not json")]) {
+      assert.equal(res.status, 403);
+      assert.deepEqual(await res.json(), { error: "Forbidden", reason: "forbidden_role" });
+    }
+    assert.equal(calls.length, 0);
+  });
+
+  it("role のないセッションも 403 forbidden_role（受講生だけが投稿できる）", async () => {
+    session = { user: { id: STUDENT } };
+    const res = await post({ lessonId: LESSON, content: "質問" });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "forbidden_role");
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe("POST /api/comments：入力", () => {
   it("壊れた JSON は 400 で、DB を読まない", async () => {
     const res = await post(undefined, "{ not json");
     assert.equal(res.status, 400);
@@ -346,32 +420,178 @@ describe("POST /api/comments：認証・入力", () => {
   });
 });
 
-describe("POST /api/comments：返信", () => {
-  it("存在しない parentId は 400", async () => {
-    const res = await post({ lessonId: LESSON, content: "返信", parentId: "c_missing" });
-    assert.equal(res.status, 400);
-    assert.equal((await res.json()).reason, "invalid_parent_id");
-    assert.equal(writes().length, 0);
-  });
+describe("POST /api/comments：受講生の返信は禁止（#46）", () => {
+  // 親が存在する・しない・別レッスン・返信、のどれでも同じ応答（他人の投稿の有無を漏らさない）で、DB を読まない
+  for (const [label, parentId] of [
+    ["自分の質問", "c1"],
+    ["他の受講生の質問", "c2"],
+    ["存在しない id", "c_missing"],
+    ["別レッスンの質問", "x1"],
+    ["返信", "r1"],
+  ] as Array<[string, string]>) {
+    it(`parentId が${label}なら 403 reply_not_allowed で、DB を読まない`, async () => {
+      const res = await post({ lessonId: LESSON, content: "返信", parentId });
+      assert.equal(res.status, 403);
+      assert.deepEqual(await res.json(), { error: "Forbidden", reason: "reply_not_allowed" });
+      assert.equal(calls.length, 0);
+    });
+  }
 
-  it("別レッスンの質問を parentId にすると 400", async () => {
-    const res = await post({ lessonId: LESSON, content: "返信", parentId: "x1" });
-    assert.equal(res.status, 400);
-    assert.equal(writes().length, 0);
-  });
-
-  it("返信への返信は 400", async () => {
-    const res = await post({ lessonId: LESSON, content: "返信の返信", parentId: "r1" });
-    assert.equal(res.status, 400);
-    assert.equal(writes().length, 0);
-  });
-
-  it("親の質問への返信は 201 で、parentId が入る", async () => {
-    const res = await post({ lessonId: LESSON, content: "返信", parentId: "c1" });
+  it("parentId が null なら親の質問として 201", async () => {
+    const res = await post({ lessonId: LESSON, content: "質問", parentId: null });
     assert.equal(res.status, 201);
-    const parentLookup = calls.find((c) => c.method === "comment.findUnique");
-    assert.deepEqual(parentLookup?.args, { where: { id: "c1" }, select: { lessonId: true, parentId: true } });
-    assert.equal((writes()[0].args.data as { parentId: string }).parentId, "c1");
+    assert.equal((writes()[0].args.data as { parentId: unknown }).parentId, null);
+  });
+});
+
+describe("POST /api/comments：ロック中のコース（#46）", () => {
+  it("ロック中のコースのレッスンは 403 course_locked で、書き込まない", async () => {
+    const res = await post({ lessonId: LOCKED_LESSON, content: "質問" });
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: "Forbidden", reason: "course_locked" });
+    assert.equal(writes().length, 0);
+  });
+
+  it("前のコースを全部終えると 201", async () => {
+    progress = [
+      { userId: STUDENT, lessonId: LESSON, completed: true },
+      { userId: STUDENT, lessonId: OTHER_LESSON, completed: true },
+    ];
+    const res = await post({ lessonId: LOCKED_LESSON, content: "質問" });
+    assert.equal(res.status, 201);
+    assert.equal((writes()[0].args.data as { lessonId: string }).lessonId, LOCKED_LESSON);
+  });
+
+  it("前のコースの完了が一部だけ・未完了（completed: false）・他の受講生の完了では解放されない", async () => {
+    progress = [
+      { userId: STUDENT, lessonId: LESSON, completed: true },
+      { userId: STUDENT, lessonId: OTHER_LESSON, completed: false },
+      { userId: "stu_gone", lessonId: OTHER_LESSON, completed: true },
+    ];
+    const res = await post({ lessonId: LOCKED_LESSON, content: "質問" });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "course_locked");
+  });
+
+  it("進捗はセッションのユーザーで読む", async () => {
+    await post({ lessonId: LESSON, content: "質問" });
+    const p = calls.find((c) => c.method === "progress.findMany");
+    assert.ok(p, "progress.findMany が呼ばれていない");
+    assert.deepEqual(p.args.where, { userId: STUDENT, completed: true });
+  });
+});
+
+describe("POST /api/comments：連投（#46）", () => {
+  it("自分の直近 24 時間の投稿を新しい順に 20 件まで、本文と日時だけ読む", async () => {
+    await post({ lessonId: LESSON, content: "質問" });
+    const q = calls.find((c) => c.method === "comment.findMany");
+    assert.ok(q, "comment.findMany が呼ばれていない");
+    assert.deepEqual(q.args, {
+      where: { userId: STUDENT, createdAt: { gt: new Date(BASE - 24 * HOUR) } },
+      select: { content: true, createdAt: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 20,
+    });
+  });
+
+  it("直前の投稿から 10 秒なら 429（retryAfterSeconds と Retry-After は 20）で、レッスンを読まず書き込まない", async () => {
+    addMine(1, () => ago(10 * SEC));
+    const res = await post({ lessonId: LESSON, content: "質問" });
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get("Retry-After"), "20");
+    assert.deepEqual(await res.json(), { error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 20 });
+    assert.deepEqual(methods(), ["comment.findMany"]);
+  });
+
+  it("直前の投稿からちょうど 30 秒なら 201", async () => {
+    addMine(1, () => ago(30 * SEC));
+    assert.equal((await post({ lessonId: LESSON, content: "質問" })).status, 201);
+  });
+
+  it("続けて 2 回送ると 2 回目は 429（1 回目の投稿で間隔を数える）", async () => {
+    assert.equal((await post({ lessonId: LESSON, content: "質問A" })).status, 201);
+    const res = await post({ lessonId: LESSON, content: "質問B" });
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get("Retry-After"), "30");
+    assert.equal(writes().length, 1);
+  });
+
+  it("24 時間以内に 20 件なら 429（いちばん古い 1 件が期間外に出るまで）、19 件なら 201", async () => {
+    // beforeEach のデータ（c1・c3・r3・r4・x1）は 24 時間以内の自分の投稿なので外す
+    comments = comments.filter((c) => c.userId !== STUDENT);
+    addMine(20, (i) => ago(HOUR + i * 60 * SEC));
+    const res = await post({ lessonId: LESSON, content: "質問" });
+    assert.equal(res.status, 429);
+    // 20 件目は 1 時間 19 分前 → 残り 22 時間 41 分
+    const expected = 24 * 3600 - (3600 + 19 * 60);
+    assert.equal(res.headers.get("Retry-After"), String(expected));
+    assert.equal((await res.json()).retryAfterSeconds, expected);
+    assert.equal(writes().length, 0);
+
+    comments = comments.filter((c) => c.id !== "mine_19");
+    assert.equal((await post({ lessonId: LESSON, content: "質問" })).status, 201);
+  });
+
+  it("24 時間より前の投稿と、他の人の投稿は数えない", async () => {
+    comments = comments.filter((c) => c.userId !== STUDENT);
+    addMine(20, (i) => ago(24 * HOUR + i * SEC));
+    for (let i = 0; i < 20; i++) {
+      comments.push({ id: `other_${i}`, userId: "stu_gone", lessonId: LESSON, content: "質問", parentId: null, createdAt: ago(i * SEC) });
+    }
+    assert.equal((await post({ lessonId: LESSON, content: "質問" })).status, 201);
+  });
+
+  it("60 秒以内に直前と同じ本文（前後の空白を除く）なら 409 duplicate で、書き込まない", async () => {
+    addMine(1, () => ago(40 * SEC), () => "同じ質問");
+    const res = await post({ lessonId: LESSON, content: "  同じ質問\n" });
+    assert.equal(res.status, 409);
+    const text = await res.text();
+    assert.deepEqual(JSON.parse(text), { error: "Conflict", reason: "duplicate" });
+    assert.doesNotMatch(text, /同じ質問/);
+    assert.deepEqual(methods(), ["comment.findMany"]);
+  });
+
+  it("同じ本文でも 60 秒たっていれば 201、別のレッスンでも 60 秒以内なら 409", async () => {
+    addMine(1, () => ago(60 * SEC), () => "同じ質問");
+    assert.equal((await post({ lessonId: LESSON, content: "同じ質問" })).status, 201);
+    comments = comments.filter((c) => c.id !== "mine_0" && !c.id.startsWith("c_new_"));
+    addMine(1, () => ago(59 * SEC), () => "同じ質問");
+    assert.equal((await post({ lessonId: LOCKED_LESSON, content: "同じ質問" })).status, 409);
+  });
+
+  it("他の人の同じ本文は重複にしない", async () => {
+    comments.push({ id: "o1", userId: "stu_gone", lessonId: LESSON, content: "同じ質問", parentId: null, createdAt: ago(SEC) });
+    assert.equal((await post({ lessonId: LESSON, content: "同じ質問" })).status, 201);
+  });
+});
+
+describe("POST /api/comments：判定の順（#46）", () => {
+  it("連投の判定はレッスンの存在・ロックより先（429 のとき、存在しないレッスンでもロック中でも 429）", async () => {
+    addMine(1, () => ago(SEC));
+    for (const lessonId of ["lesson_missing", LOCKED_LESSON]) {
+      calls = [];
+      const res = await post({ lessonId, content: "質問" });
+      assert.equal(res.status, 429, lessonId);
+      assert.deepEqual(methods(), ["comment.findMany"], lessonId);
+    }
+  });
+
+  it("返信の禁止は連投の判定より先（DB を読まない）", async () => {
+    addMine(1, () => ago(SEC));
+    const res = await post({ lessonId: LESSON, content: "返信", parentId: "c1" });
+    assert.equal(res.status, 403);
+    assert.equal(calls.length, 0);
+  });
+
+  it("入力検証は返信の禁止より先（不正な本文に parentId があっても 400）", async () => {
+    const res = await post({ lessonId: LESSON, content: "", parentId: "c1" });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).reason, "empty");
+  });
+
+  it("通るときの読み取りは、連投 → レッスン → コースと進捗 → 作成 の順", async () => {
+    assert.equal((await post({ lessonId: LESSON, content: "質問" })).status, 201);
+    assert.deepEqual(methods(), ["comment.findMany", "lesson.findUnique", "course.findMany", "progress.findMany", "comment.create"]);
   });
 });
 
@@ -426,7 +646,7 @@ describe("POST /api/comments：エラー", () => {
     const out = done();
     assert.equal(res.status, 500);
     assert.deepEqual(await res.json(), { error: "Internal server error" });
-    assert.ok(out.length > 0);
+    assert.ok(out.length > 0, "ログが出ていない");
     assert.doesNotMatch(out, /example\.com/);
     assert.doesNotMatch(out, new RegExp(STUDENT));
     assert.doesNotMatch(out, /lookup failed/);
