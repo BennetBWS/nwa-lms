@@ -20,7 +20,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 ## コマンド
 - 開発: `npm run dev`
 - 型チェック: `npm run typecheck`（`prisma/seed.ts` は tsconfig の exclude により対象外）
-- テスト: `npm test`（node:test + `tsx --test`。seed ガードの単体テストと seed スクリプトをダミー URL で起動する E2E テスト、ローカル DB 用スクリプト（`scripts/lib/db-local.test.ts`。子プロセスの起動を差し替え、リモートのダミー URL だけで E2E）、forgot-password・リセットトークン系（verify-reset-token / reset-password）・受講生管理 API・change-password / reset-password のセッション失効（#11）のルートテスト（偽 prisma・偽 auth・fetch モックでネットワーク / DB に接続しない。偽 `$transaction` は原子性を再現しない）、`src/lib` の単体テスト（mail-config / safe-error / initial-password / student-status / account-access / student-invite / session-guard）。seed の E2E は `npm install` と Prisma Client 生成済みが前提）
+- テスト: `npm test`（node:test + `tsx --test`。seed ガードの単体テストと seed スクリプトをダミー URL で起動する E2E テスト、ローカル DB 用スクリプト（`scripts/lib/db-local.test.ts`。子プロセスの起動を差し替え、リモートのダミー URL だけで E2E）、forgot-password・リセットトークン系（verify-reset-token / reset-password）・受講生管理 API・change-password / reset-password のセッション失効（#11）のルートテスト（偽 prisma・偽 auth・fetch モックでネットワーク / DB に接続しない。偽 `$transaction` は原子性を再現しない）、`src/lib` の単体テスト（mail-config / safe-error / initial-password / student-status / account-access / student-invite / session-guard / comment-rate-limit / lesson-access など）。seed の E2E は `npm install` と Prisma Client 生成済みが前提）
 - DB の接続先の確認: `npm run db:where`（DATABASE_URL / DIRECT_URL の「ホスト:ポート」とガードの判定だけを表示。接続しない）
 - マイグレーションの適用（ローカル DB のみ）: `npm run db:local:deploy`（ガードを通したあとで `prisma migrate deploy`）
 - ローカル DB の作り直し（ローカル DB のみ）: `npm run db:local:reset`（ガードを通したあとで `prisma migrate reset --force`。続けて seed も走る）
@@ -49,3 +49,4 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - `src/lib/supabase.ts` は現在未使用
 - AI チャット（`src/components/Chat*.tsx`、`src/lib/chat-mock.ts`）は見本の回答を返すモックで、リリースでは非表示（#32）。画面から import しない
 - 受講生の無効化は論理削除（#7）。`PUT /api/admin/students/[id]/deactivate` は `User.deactivatedAt` を設定し、`sessionVersion` を +1、未使用のパスワードリセットトークンを失効させる（データは削除しない）。`PUT /api/admin/students/[id]/reactivate` は `deactivatedAt` を null に戻す。無効化済みの受講生はログインとパスワードリセットができず、既存のログイン（JWT セッション）も API では即座に失効する（#11）。受講生一覧 API は既定で有効な受講生だけを返す（`?status=deactivated|all` で切り替え）
+- 質問の投稿（#46）：`POST /api/comments` は受講生（STUDENT）だけが親の質問を投稿できる。講師は 403 `forbidden_role`（講師の回答は `POST /api/admin/comments/[id]/replies` だけで行う）、受講生の返信は 403 `reply_not_allowed`、ロック中のコースのレッスンへの投稿は 403 `course_locked`。連投は 30 秒間隔・24 時間 20 件で 429（`Retry-After`）、60 秒以内に直前と同じ本文なら 409（`src/lib/comment-rate-limit.ts`）。同時に送られた投稿の競合は許容している。ロックの確認は今は POST だけで、GET 側は #47 で揃える

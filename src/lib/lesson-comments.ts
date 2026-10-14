@@ -42,6 +42,8 @@ export function hasVisibleText(value: unknown): boolean {
 
 export type CreateCommentInput = { lessonId: string; content: string; parentId: string | null };
 
+// invalid_parent_id は parentId の形（型・長さ）が不正なときだけ返す。親の有無や同じレッスンかは確かめない
+// （受講生の返信は POST /api/comments では reply_not_allowed で断る。#46）
 export type CreateCommentReason =
   | "invalid_body"
   | "invalid_lesson_id"
