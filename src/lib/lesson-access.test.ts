@@ -2,7 +2,7 @@ import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   COURSE_LOCKED_REASON,
-  LOCKED_LESSON_HIDDEN_FIELDS,
+  LOCKED_LESSON_VISIBLE_FIELDS,
   courseAccessFor,
   hideLockedLessonContent,
   lessonAccessFor,
@@ -170,7 +170,7 @@ describe("courseAccessFor（#47 P4）", () => {
 });
 
 describe("hideLockedLessonContent・COURSE_LOCKED_REASON（#47 P4）", () => {
-  it("videoUrl・content・pdfUrl だけを除き、ほかの項目は残す（元のオブジェクトは変えない）", () => {
+  it("残す項目だけにし、videoUrl・content・pdfUrl を除く（元のオブジェクトは変えない）", () => {
     const lesson = {
       id: "l1",
       sectionId: "s1",
@@ -193,8 +193,13 @@ describe("hideLockedLessonContent・COURSE_LOCKED_REASON（#47 P4）", () => {
     assert.deepEqual(Object.keys(out), ["id"]);
   });
 
-  it("除く項目と理由の値", () => {
-    assert.deepEqual([...LOCKED_LESSON_HIDDEN_FIELDS], ["videoUrl", "content", "pdfUrl"]);
+  it("一覧にない項目（将来 Lesson に足す本文系の列など）は出さない（許可リスト）", () => {
+    const out = hideLockedLessonContent({ id: "l1", completed: true, transcript: "ダミー書き起こし", attachmentUrl: "https://example.com/a" });
+    assert.deepEqual(out, { id: "l1", completed: true });
+  });
+
+  it("残す項目と理由の値", () => {
+    assert.deepEqual([...LOCKED_LESSON_VISIBLE_FIELDS], ["id", "sectionId", "title", "type", "duration", "order", "completed"]);
     assert.equal(COURSE_LOCKED_REASON, "course_locked");
   });
 });

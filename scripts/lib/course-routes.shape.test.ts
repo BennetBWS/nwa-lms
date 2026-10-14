@@ -5,7 +5,7 @@ import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession 
 // #47 P3 で並び順だけを変えた 3 つのルート（これまでルートのテストがなかった）の、応答の形・認証・他人のデータを確かめる。
 // - GET /api/courses、GET /api/courses/[courseId]、GET /api/admin/courses
 // - 応答の項目は変えていない（並び順だけ）ことを、項目の一覧で固定する
-//   （#47 P4 で /api/courses に locked を足し、受講生のロック中のコースのレッスンから videoUrl・content・pdfUrl を除いた。
+//   （#47 P4 で /api/courses に locked を足し、受講生のロック中のコースのレッスンを許可リストの項目だけにした。
 //   /api/courses/[courseId] は受講生のロック中のコースを 403 course_locked にした）
 // - 未ログイン・ロール違いは DB を読む前に拒否する
 // - 他の受講生の進捗が自分の completed に混ざらない（userId で絞る）
@@ -124,7 +124,7 @@ const COURSE_KEYS = ["color", "description", "icon", "id", "name", "order", "pro
 const LIST_COURSE_KEYS = [...COURSE_KEYS, "locked"].sort();
 const SECTION_KEYS = ["courseId", "id", "lessons", "order", "title"];
 const LESSON_KEYS = ["completed", "content", "duration", "id", "order", "pdfUrl", "sectionId", "title", "type", "videoUrl"];
-/** /api/courses の、受講生のロック中のコースのレッスン（videoUrl・content・pdfUrl を除く。#47 P4） */
+/** /api/courses の、受講生のロック中のコースのレッスン（LOCKED_LESSON_VISIBLE_FIELDS の項目だけ。#47 P4） */
 const LOCKED_LESSON_KEYS = ["completed", "duration", "id", "order", "sectionId", "title", "type"];
 
 type ApiCourse = { id: string; progress: number; sections: Array<{ id: string; lessons: Array<{ id: string; completed: boolean }> }> };
@@ -156,6 +156,22 @@ describe("GET /api/courses：応答の形（#47 P3 で変わっていない。P4
       "completed が自分の完了だけになっていない（他の受講生の完了が混ざっている）"
     );
     assert.deepEqual(body.map((c) => c.progress), [50, 0]);
+  });
+
+  it("Lesson に将来列が増えても、ロック中のコースのレッスンには出さない（許可リスト）", async () => {
+    const target = COURSES[1].sections[0].lessons[0] as Row;
+    target.transcript = "SECRET_future_column";
+    try {
+      const res = await courseList.GET();
+      assert.equal(res.status, 200, `status ${res.status}`);
+      const text = await res.text();
+      assert.ok(!text.includes("SECRET_future_column"), "ロック中のコースのレッスンに、許可リストにない列が出ている");
+      const body = JSON.parse(text) as Array<ApiCourse & { locked: unknown }>;
+      assert.equal(body[1].locked, true, "c_2 がロック中になっていない");
+      for (const l of body[1].sections[0].lessons) assert.deepEqual(keys(l), LOCKED_LESSON_KEYS, `${l.id} の項目が違う`);
+    } finally {
+      delete target.transcript;
+    }
   });
 
   it("講師には、どのコースも locked: false で、レッスンの項目を除かない", async () => {

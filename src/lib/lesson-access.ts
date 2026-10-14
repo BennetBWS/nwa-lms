@@ -84,16 +84,22 @@ export async function lessonAccessFor(db: LessonAccessDb, userId: string, lesson
 
 // ───────────── GET /api/courses の応答 ─────────────
 
-/** ロック中のコースのレッスンから除く項目（本文・動画・資料。#47 P4） */
-export const LOCKED_LESSON_HIDDEN_FIELDS = ["videoUrl", "content", "pdfUrl"] as const;
+/**
+ * ロック中のコースのレッスンに残す項目（#47 P4、reviewer 指摘で除外リストから許可リストに変更）。
+ * 画面（page.tsx の CourseList・LessonView）がロック中のコースで使うのは、ロック計算（course-lock の countCourseLessons）と
+ * 一覧表示に要るレッスンの数・completed だけ。id・sectionId・title・type・duration・order は表示用の見出しとして残す。
+ * ここにない項目（videoUrl・content・pdfUrl や、将来 Lesson に足す列）は出さない。
+ * Lesson に列を足したら lesson-access.schema.test.ts が落ちるので、ロック中に出すかを決めてどちらかの一覧に入れる。
+ */
+export const LOCKED_LESSON_VISIBLE_FIELDS = ["id", "sectionId", "title", "type", "duration", "order", "completed"] as const;
 
-type HiddenField = (typeof LOCKED_LESSON_HIDDEN_FIELDS)[number];
+type VisibleField = (typeof LOCKED_LESSON_VISIBLE_FIELDS)[number];
 
 /**
- * ロック中のコースのレッスンを、画面のロック計算に要る項目だけにする（videoUrl・content・pdfUrl を除く）。
- * それ以外の項目（id・title・type・completed など）はそのまま残す。元のオブジェクトは変えない。
+ * ロック中のコースのレッスンを、LOCKED_LESSON_VISIBLE_FIELDS の項目だけにする（それ以外は値が null でも項目ごと除く）。
+ * 元のオブジェクトは変えない。
  */
-export function hideLockedLessonContent<L extends object>(lesson: L): Omit<L, HiddenField> {
-  const hidden: ReadonlyArray<string> = LOCKED_LESSON_HIDDEN_FIELDS;
-  return Object.fromEntries(Object.entries(lesson).filter(([k]) => !hidden.includes(k))) as Omit<L, HiddenField>;
+export function hideLockedLessonContent<L extends object>(lesson: L): Pick<L, Extract<keyof L, VisibleField>> {
+  const visible: ReadonlyArray<string> = LOCKED_LESSON_VISIBLE_FIELDS;
+  return Object.fromEntries(Object.entries(lesson).filter(([k]) => visible.includes(k))) as Pick<L, Extract<keyof L, VisibleField>>;
 }

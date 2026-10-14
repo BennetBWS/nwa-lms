@@ -6,8 +6,8 @@ import { hideLockedLessonContent } from "@/lib/lesson-access";
 import { unlockedCourseIds } from "@/lib/question-threads";
 
 // コース一覧。受講生（講師以外）には、ロック中のコースも一覧には返すが、
-// そのレッスンから videoUrl・content・pdfUrl を除き、コースに locked: true を付ける（#47 P4、Tec 決定 D-a）。
-// 画面のロック計算（course-lock の isCourseLocked）に要る id・title・type・completed は残す。講師は常に locked: false。
+// そのレッスンは LOCKED_LESSON_VISIBLE_FIELDS の項目だけにし（videoUrl・content・pdfUrl などを出さない）、コースに locked: true を付ける（#47 P4、Tec 決定 D-a）。
+// 残すのは画面のロック計算（course-lock の isCourseLocked）と一覧表示に要る項目だけ（lesson-access.ts 参照）。講師は常に locked: false。
 // ロックはここで読んだコース（COURSE_ORDER_BY の順）と自分の完了から計算する（lesson-access と同じ規則）
 export async function GET() {
   try {
