@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY } from "@/lib/course-order";
 import { safeErrorSummary } from "@/lib/safe-error";
 import type { Prisma } from "@prisma/client";
 import { parseCreateComment, toCommentThreadView } from "@/lib/lesson-comments";
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     if (session.user.role !== "INSTRUCTOR") {
       const [courses, progress] = await Promise.all([
         prisma.course.findMany({
-          orderBy: [{ order: "asc" }, { id: "asc" }],
+          orderBy: COURSE_ORDER_BY,
           select: { id: true, sections: { select: { lessons: { select: { id: true } } } } },
         }),
         prisma.progress.findMany({

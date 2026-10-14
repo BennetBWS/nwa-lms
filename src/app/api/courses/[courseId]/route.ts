@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
 
 export async function GET(
   request: Request,
@@ -20,8 +21,8 @@ export async function GET(
         where: { id: courseId },
         include: {
           sections: {
-            orderBy: { order: "asc" },
-            include: { lessons: { orderBy: { order: "asc" } } },
+            orderBy: SECTION_ORDER_BY,
+            include: { lessons: { orderBy: LESSON_ORDER_BY } },
           },
         },
       }),

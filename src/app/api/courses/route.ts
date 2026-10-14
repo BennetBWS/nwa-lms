@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
 
 export async function GET() {
   try {
@@ -13,11 +14,11 @@ export async function GET() {
 
     const [courses, progressRecords] = await Promise.all([
       prisma.course.findMany({
-        orderBy: { order: "asc" },
+        orderBy: COURSE_ORDER_BY,
         include: {
           sections: {
-            orderBy: { order: "asc" },
-            include: { lessons: { orderBy: { order: "asc" } } },
+            orderBy: SECTION_ORDER_BY,
+            include: { lessons: { orderBy: LESSON_ORDER_BY } },
           },
         },
       }),

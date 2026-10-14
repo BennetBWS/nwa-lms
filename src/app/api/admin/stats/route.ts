@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY } from "@/lib/course-order";
 import { safeErrorSummary } from "@/lib/safe-error";
 import { buildAdminStats } from "@/lib/admin-stats";
 
@@ -33,7 +34,7 @@ export async function GET() {
       }),
       prisma.course.findMany({
         select: COURSE_SELECT,
-        orderBy: { order: "asc" },
+        orderBy: COURSE_ORDER_BY,
       }),
       // 完了行（completedAt が null の古い行も含む）。受講生以外の行は buildAdminStats が除く
       prisma.progress.findMany({

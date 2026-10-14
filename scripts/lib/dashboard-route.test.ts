@@ -262,7 +262,7 @@ describe("GET /api/dashboard：クエリの指定", () => {
     const select = c.args.select as {
       sections: { orderBy: unknown; select: { lessons: { orderBy: unknown; select: Record<string, boolean> } } };
     };
-    assert.deepEqual(c.args.orderBy, { order: "asc" });
+    assert.deepEqual(c.args.orderBy, [{ order: "asc" }, { id: "asc" }]);
     assert.deepEqual(select.sections.orderBy, [{ order: "asc" }, { id: "asc" }]);
     assert.deepEqual(select.sections.select.lessons.orderBy, [{ order: "asc" }, { id: "asc" }]);
     assert.deepEqual(select.sections.select.lessons.select, { id: true, title: true, order: true });
