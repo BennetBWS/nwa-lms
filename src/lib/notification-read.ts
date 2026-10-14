@@ -45,7 +45,7 @@ export function parseMarkReadBody(body: unknown): ParseResult<MarkReadInput, Mar
     // 上限を超えた時点で止める（残りの要素を見ない。大きな配列でも検査の手間が増えない）
     if (ids.length > MARK_READ_MAX_IDS) return { ok: false, reason: "invalid_ids" };
   }
-  if (ids.length === 0 || ids.length > MARK_READ_MAX_IDS) return { ok: false, reason: "invalid_ids" };
+  if (ids.length === 0) return { ok: false, reason: "invalid_ids" };
   return { ok: true, value: { ids } };
 }
 
