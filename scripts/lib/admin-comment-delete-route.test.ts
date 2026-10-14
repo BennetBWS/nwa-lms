@@ -895,7 +895,7 @@ describe("DELETE /api/admin/comments/[id]：入力の境界（追加）", () => 
     ["32 個の絵文字（UTF-16 で 64）", "\u{1F600}".repeat(32), 404],
     ["33 個の絵文字（UTF-16 で 66）", "\u{1F600}".repeat(33), 400],
     ["パーセントエンコードのまま（%71 は q）", "%71_stu", 404],
-    ["先頭にゼロ幅スペース", "​q_stu", 404],
+    ["先頭にゼロ幅スペース", "\u200Bq_stu", 404],
     ["末尾に改行", "q_stu\n", 404],
   ] as Array<[string, string, number]>) {
     it(`id が${label}なら ${status}（何も消さない）`, async () => {
