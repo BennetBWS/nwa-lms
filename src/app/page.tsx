@@ -2918,6 +2918,8 @@ const AdminQuestions = () => {
   const [deleteStatus, setDeleteStatus] = useState("");
   // 削除中の質問・返信の id。ボタンの disabled が反映される前の連打でも送らないよう ref で判定する
   const deletingRef = useRef(new Set());
+  // 削除の処理中の対象の根の質問の id。その質問へは回答を送らない（返信が質問として残る・500 になるのを防ぐ。submitReply の入口で弾く）
+  const deletingThreadsRef = useRef(new Set());
   // 確認ダイアログを開いたボタン。閉じたらここにフォーカスを戻す（行ごと消えたときは削除の知らせへ移す）
   const deleteTriggerRef = useRef(null);
   const deleteStatusRef = useRef(null);
@@ -3063,7 +3065,7 @@ const AdminQuestions = () => {
   // 失敗したら入力を残して文言を出す。
   // 成功したら応答の thread でその行を置き換える（未回答タブでも行はその場に残り、バッジが「回答済み」に変わる）
   const submitReply = async (id) => {
-    if (sessionExpired.current || sendingRef.current.has(id) || id in uncertainRef.current) return;
+    if (sessionExpired.current || sendingRef.current.has(id) || id in uncertainRef.current || deletingThreadsRef.current.has(id)) return;
     const value = drafts[id] ?? "";
     if (!commentFormState(value, false).canSubmit) return;
     // 結果不明になったときの判定の基準（送った本文と、送信した時点の一覧）
@@ -3176,6 +3178,7 @@ const AdminQuestions = () => {
       return;
     }
     deletingRef.current.add(target.id);
+    deletingThreadsRef.current.add(target.threadId);
     setDeleting(true);
     setDeleteError("");
     try {
@@ -3207,6 +3210,7 @@ const AdminQuestions = () => {
       setDeleteDialog(null);
     } finally {
       deletingRef.current.delete(target.id);
+      deletingThreadsRef.current.delete(target.threadId);
       setDeleting(false);
     }
   };
@@ -3265,6 +3269,8 @@ const AdminQuestions = () => {
           const deleteBlockedId = `admin-question-delete-blocked-${x.id}`;
           // 確認ダイアログが開いている間・削除の処理中は、背後の行の削除ボタンも押せない（Tab で移って押せないように）
           const deleteDisabled = deleteBlocked || deleteDialogOpen || deleting;
+          // この質問（またはその返信）を削除している間は、回答欄と送信ボタンも止める（submitReply でも弾く）
+          const deletingThis = deleting && deleteDialog !== null && deleteDialog.threadId === x.id;
           const deleteButtonStyle = { flexShrink: 0, color: T.danger, borderRadius: 8, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "4px 10px" };
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
@@ -3326,10 +3332,10 @@ const AdminQuestions = () => {
                     {/* 回答欄。form にしない（Enter で送信しない。IME の確定の Enter と区別するため、送信はボタンだけ） */}
                     <div style={{ marginTop: 18 }}>
                       <label htmlFor={inputId} style={{ display: "block", fontSize: 12, fontWeight: 600, color: T.textSecondary, marginBottom: 6 }}>回答する</label>
-                      <textarea id={inputId} ref={el => focusIfResolved(el, x.id, "input")} value={draft} onChange={e => setDraft(x.id, e.target.value)} readOnly={sending} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="回答を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
+                      <textarea id={inputId} ref={el => focusIfResolved(el, x.id, "input")} value={draft} onChange={e => setDraft(x.id, e.target.value)} readOnly={sending || deletingThis} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="回答を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
                         <span id={counterId} style={{ fontSize: 11, color: form.tooLong ? T.danger : T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{form.counterLabel}</span>
-                        <Button size="sm" onClick={() => submitReply(x.id)} disabled={!form.canSubmit || awaitingCheck} aria-describedby={awaitingCheck ? blockedHintId : undefined} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+                        <Button size="sm" onClick={() => submitReply(x.id)} disabled={!form.canSubmit || awaitingCheck || deletingThis} aria-describedby={awaitingCheck ? blockedHintId : undefined} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
                           {sending ? "送信中..." : "回答を送信"}
                         </Button>
                       </div>

@@ -993,6 +993,51 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
   });
 });
 
+describe("AdminQuestions 削除：削除の通信中の回答の送信", () => {
+  const sendButtonIn = (n: El) => {
+    const hit = findAll(n, (e) => e.type === Button && (text(e).trim() === "回答を送信" || text(e).trim() === "送信中..."));
+    assert.equal(hit.length, 1, "送信ボタンが 1 つでない");
+    return hit[0];
+  };
+
+  it("質問の削除の通信中は、同じ質問の回答欄と送信ボタンを止め、（古い描画のボタンで）押しても送らない。別の質問へは送れる", async () => {
+    const m = await opened();
+    click(threadButton(m.render(), "t2"));
+    change(textareaOf(m.render(), "t1"), "t1 への回答");
+    change(textareaOf(m.render(), "t2"), "t2 への回答");
+    const staleSendT1 = sendButtonIn(region(m.render(), "t1"));
+    click(deleteButton(region(m.render(), "t1"), "この質問を削除"), m.target("q"));
+    click(button(dialog(m.render()), "削除する"));
+    const tree = m.render();
+    assert.equal(sendButtonIn(region(tree, "t1")).props.disabled, true, "削除中の質問の送信ボタンが押せる");
+    assert.equal(textareaOf(tree, "t1").props.readOnly, true, "削除中の質問の回答欄を書き換えられる");
+    click(sendButtonIn(region(tree, "t1")));
+    click(staleSendT1);
+    assert.equal(m.reqs.filter((r) => r.url === "/api/admin/comments/t1/replies").length, 0, "削除中の質問へ回答を送った");
+    const sendT2 = sendButtonIn(region(tree, "t2"));
+    assert.equal(sendT2.props.disabled, false, "別の質問の送信まで止めた");
+    assert.equal(textareaOf(tree, "t2").props.readOnly, false);
+    click(sendT2);
+    assert.equal(m.reqs.filter((r) => r.url === "/api/admin/comments/t2/replies").length, 1, "別の質問へ送れない");
+  });
+
+  it("返信の削除の通信中も、その質問へは送らない。失敗して処理が終われば送れる", async () => {
+    const m = await opened();
+    change(textareaOf(m.render(), "t1"), "t1 への回答");
+    click(deleteButton(region(m.render(), "t1"), "受講生エー の返信「受講生の追記です」を削除"), m.target("r2"));
+    click(button(dialog(m.render()), "削除する"));
+    click(sendButtonIn(region(m.render(), "t1")));
+    assert.equal(m.reqs.filter((r) => r.url === "/api/admin/comments/t1/replies").length, 0, "返信の削除中にその質問へ回答を送った");
+    deleteReqs(m)[0].release(res({ error: "x" }, { status: 500, ok: false, url: DEL_URL("r2") }));
+    await settle();
+    click(button(dialog(m.render()), "キャンセル"));
+    const tree = m.render();
+    assert.equal(sendButtonIn(region(tree, "t1")).props.disabled, false, "処理が終わっても送れない");
+    click(sendButtonIn(region(tree, "t1")));
+    assert.equal(m.reqs.filter((r) => r.url === "/api/admin/comments/t1/replies").length, 1);
+  });
+});
+
 describe("AdminQuestions 削除：同じ名前の人の返信", () => {
   it("同じ名前の返信が複数あっても、削除ボタンの読み上げ名は本文の先頭で区別できる", async () => {
     const t = thread("t1", {
