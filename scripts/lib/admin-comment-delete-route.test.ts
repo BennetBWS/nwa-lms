@@ -134,9 +134,11 @@ const fakeComment = {
     const where = args.where as Record<string, unknown>;
     assert.deepEqual(Object.keys(where), ["parentId"], `deleteMany の where: ${inspect(where)}`);
     assert.equal(typeof where.parentId, "string", "parentId は文字列で指定する");
-    const before = comments.length;
+    const removed = comments.filter((c) => c.parentId === where.parentId).map((c) => c.id);
     comments = comments.filter((c) => c.parentId !== where.parentId);
-    return { count: before - comments.length };
+    // 実物の FK（ON DELETE SET NULL）を再現する（消した返信にさらに返信が付いていた場合）
+    for (const c of comments) if (c.parentId !== null && removed.includes(c.parentId)) c.parentId = null;
+    return { count: removed.length };
   },
   async delete(args: Record<string, unknown>) {
     record("comment.delete", args);
@@ -762,5 +764,261 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
     } finally {
       m.mock.restore();
     }
+  });
+});
+
+// ───────────── tester による追加（#47 P1） ─────────────
+
+const snapshot = (pred: (c: CommentRow) => boolean) =>
+  comments.filter(pred).map((c) => ({ ...c, createdAt: c.createdAt.toISOString() }));
+
+describe("DELETE /api/admin/comments/[id]：ほかのスレッドへの影響（追加）", () => {
+  it("質問を消しても、ほかのスレッドの行（parentId・本文・lessonId）は 1 か所も変わらない", async () => {
+    const other = (c: CommentRow) => !["q_stu", "r_stu", "r_ins", "r_other"].includes(c.id);
+    const before = snapshot(other);
+    assert.equal((await del("q_stu")).status, 200);
+    assert.deepEqual(snapshot(other), before, "q_gone・r_gone・q_alone は変わらない");
+  });
+
+  it("返信を消しても、同じスレッドのほかの返信とほかのスレッドは変わらない", async () => {
+    const other = (c: CommentRow) => c.id !== "r_ins";
+    const before = snapshot(other);
+    assert.equal((await del("r_ins")).status, 200);
+    assert.deepEqual(snapshot(other), before, "r_ins 以外は変わらない");
+  });
+
+  it("質問を消したあと、parentId が null の行は元からの質問だけ", async () => {
+    await del("q_stu");
+    assert.deepEqual(
+      comments.filter((c) => c.parentId === null).map((c) => c.id),
+      ["q_gone", "q_alone"],
+      "返信が質問として浮き上がらない"
+    );
+  });
+});
+
+describe("DELETE /api/admin/comments/[id]：返信の削除後のスレッド（追加）", () => {
+  for (const id of ["r_stu", "r_ins"]) {
+    it(`${id} を消した応答に、別レッスンの返信（本文・投稿者）は含まれず、replyCount にも数えない`, async () => {
+      const res = await del(id);
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      for (const s of ["別レッスンの返信", "講師シー", "lesson_2", "ダミーレッスン2", "r_other"]) {
+        assert.ok(!text.includes(s), `応答に「${s}」を含めない`);
+      }
+      const t = JSON.parse(text).thread;
+      assert.equal(t.replyCount, 1, "同じレッスンの返信 1 件だけを数える");
+      assert.equal(t.replies.length, 1, "replies も 1 件");
+    });
+  }
+
+  it("講師の回答を消すと、別レッスンにある別の講師の返信が残っていても answered: false", async () => {
+    const t = (await (await del("r_ins")).json()).thread;
+    assert.equal(t.answered, false, "別レッスンの講師の返信 r_other では回答済みにしない");
+    assert.equal(ids().includes("r_other"), true, "r_other は消さない");
+  });
+
+  it("無効化済みの受講生の返信が残るスレッドで別の返信を消しても、その受講生は匿名のまま", async () => {
+    comments.push({ id: "r_gone_stu", userId: "stu_gone", lessonId: "lesson_1", content: "無効化された受講生の追記", parentId: "q_stu", createdAt: at(120) });
+    const res = await del("r_stu");
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const t = JSON.parse(text).thread;
+    const gone = t.replies.find((r: { content: string }) => r.content === "無効化された受講生の追記");
+    assert.ok(gone, "無効化済みの受講生の返信は残る");
+    assert.deepEqual(gone.author, { name: null, isInstructor: false }, "名前を出さない");
+    assert.ok(!text.includes("受講生ゴーン"), "応答に無効化済みの受講生の名前を含めない");
+    assert.ok(!text.includes("gone@example.com"), "応答にメールを含めない");
+  });
+
+  it("無効化済みの受講生の質問で講師の回答を消すと answered: false・匿名のまま、名前・メールを出さない", async () => {
+    const text = await (await del("r_gone")).text();
+    const t = JSON.parse(text).thread;
+    assert.equal(t.answered, false);
+    assert.deepEqual(t.author, { name: null, isInstructor: false });
+    for (const s of ["受講生ゴーン", "gone@example.com", "stu_gone", "deactivatedAt"]) {
+      assert.ok(!text.includes(s), `応答に「${s}」を含めない`);
+    }
+  });
+
+  it("受講生の古い返信を消した講師から見て、残った自分の回答は mine: true・質問は mine: false", async () => {
+    const t = (await (await del("r_stu")).json()).thread;
+    assert.equal(t.mine, false);
+    assert.deepEqual(t.replies.map((r: { mine: boolean }) => r.mine), [true]);
+  });
+});
+
+describe("DELETE /api/admin/comments/[id]：入力の境界（追加）", () => {
+  it("body と query の id は使わない（パスの id だけを消す）。body を読まない", async () => {
+    const req = new Request("https://nwa-lms.example.com/api/admin/comments/r_stu?id=q_gone", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "q_gone", parentId: "q_gone" }),
+    });
+    const res = await DELETE(req, { params: Promise.resolve({ id: "r_stu" }) });
+    assert.equal(res.status, 200);
+    assert.equal(req.bodyUsed, false, "body を読まない");
+    assert.deepEqual(ids(), ["q_stu", "r_ins", "r_other", "q_gone", "r_gone", "q_alone"], "r_stu だけが消える");
+  });
+
+  for (const [label, id, status] of [
+    ["空白だけ", "   ", 404],
+    ["64 文字の全角", "あ".repeat(64), 404],
+    ["65 文字の全角", "あ".repeat(65), 400],
+    ["32 個の絵文字（UTF-16 で 64）", "\u{1F600}".repeat(32), 404],
+    ["33 個の絵文字（UTF-16 で 66）", "\u{1F600}".repeat(33), 400],
+    ["パーセントエンコードのまま（%71 は q）", "%71_stu", 404],
+    ["先頭にゼロ幅スペース", "​q_stu", 404],
+    ["末尾に改行", "q_stu\n", 404],
+  ] as Array<[string, string, number]>) {
+    it(`id が${label}なら ${status}（何も消さない）`, async () => {
+      const res = await del(id);
+      assert.equal(res.status, status, `id=${JSON.stringify(id)}`);
+      if (status === 400) {
+        assert.equal((await res.json()).reason, "invalid_id");
+        assert.equal(calls.length, 0, "DB を読まない");
+      } else {
+        assert.deepEqual(calls.map((c) => c.method), ["comment.findUnique"], "読むだけ");
+        assert.deepEqual(calls[0].args.where, { id }, "id を加工しない");
+      }
+      assert.equal(comments.length, 7, "コメントは減らない");
+    });
+  }
+
+  it("params がオブジェクト（{ id: { not: \"\" } }）でも 400 で、where に渡さない", async () => {
+    const res = await delWithParams({ id: { not: "" } });
+    assert.equal(res.status, 400);
+    assert.equal(calls.length, 0, "DB を読まない");
+  });
+
+  it("403 の受講生が他人の質問・返信を指定しても DB を読まない（存在の有無も漏らさない）", async () => {
+    session = STUDENT_SESSION;
+    const a = await del("q_gone");
+    const b = await del("q_missing");
+    assert.deepEqual([a.status, b.status], [403, 403]);
+    assert.deepEqual(await a.json(), await b.json(), "存在する id と存在しない id で応答が同じ");
+    assert.equal(calls.length, 0, "DB を読まない");
+  });
+});
+
+describe("DELETE /api/admin/comments/[id]：エラーとログ（追加）", () => {
+  it("最初の findUnique が P2025 を投げても 404 で、ログを出さない", async () => {
+    const m = mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
+      calls.push({ method: "comment.findUnique", args, inTx });
+      throw notFound();
+    });
+    const done = captureLogs();
+    try {
+      const res = await del("q_stu");
+      const out = done();
+      assert.equal(res.status, 404);
+      assert.deepEqual(out, { error: "", info: "", other: "" }, "ログを出さない");
+      assert.equal(calls.some((c) => c.method === "$transaction"), false, "トランザクションを始めない");
+    } finally {
+      m.mock.restore();
+    }
+  });
+
+  it("質問の deleteMany が P2003（PrismaClientKnownRequestError）なら 500。ログはルート名とエラー名だけで、code・本文を出さない", async () => {
+    const m = mock.method(fakeComment, "deleteMany", async (args: Record<string, unknown>) => {
+      calls.push({ method: "comment.deleteMany", args, inTx });
+      const err = new Error(`Foreign key constraint failed: ${DUMMY_EMAIL} 受講生の質問`);
+      err.name = "PrismaClientKnownRequestError";
+      Object.assign(err, { code: "P2003", meta: { field_name: "Comment_parentId_fkey" } });
+      throw err;
+    });
+    const err = mock.method(console, "error", () => {});
+    const info = mock.method(console, "info", () => {});
+    try {
+      const res = await del("q_stu");
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.equal(err.mock.callCount(), 1, "console.error は 1 回");
+      assert.deepEqual(err.mock.calls[0].arguments, ["DELETE /api/admin/comments/[id] error:", "PrismaClientKnownRequestError"]);
+      assert.equal(info.mock.callCount(), 0, "成功のログを出さない");
+      assert.equal(calls.some((c) => c.method === "comment.delete"), false, "質問の delete まで進まない");
+    } finally {
+      err.mock.restore();
+      info.mock.restore();
+      m.mock.restore();
+    }
+  });
+
+  it("P2034（書き込みの競合）は 404 にせず 500", async () => {
+    const m = mock.method(fakeComment, "delete", async (args: Record<string, unknown>) => {
+      calls.push({ method: "comment.delete", args, inTx });
+      const e = new Error("Transaction failed due to a write conflict");
+      e.name = "PrismaClientKnownRequestError";
+      Object.assign(e, { code: "P2034" });
+      throw e;
+    });
+    const done = captureLogs();
+    try {
+      const res = await del("r_stu");
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.equal(out.error, "DELETE /api/admin/comments/[id] error: PrismaClientKnownRequestError");
+      assert.equal(out.info, "", "成功のログを出さない");
+    } finally {
+      m.mock.restore();
+    }
+  });
+
+  for (const [label, value, name] of [
+    ["null", null, "object"],
+    ["undefined", undefined, "undefined"],
+    ["数値", 42, "number"],
+    ["code が P2003 のただのオブジェクト", { code: "P2003", message: `x ${DUMMY_EMAIL}` }, "object"],
+  ] as Array<[string, unknown, string]>) {
+    it(`Error でない値（${label}）が投げられても 500 で、ログは型名だけ`, async () => {
+      const m = mock.method(fakeBase, "$transaction", async () => {
+        throw value;
+      });
+      const done = captureLogs();
+      try {
+        const res = await del("q_stu");
+        const out = done();
+        assert.equal(res.status, 500);
+        assert.equal(out.error, `DELETE /api/admin/comments/[id] error: ${name}`);
+        assert.ok(!out.error.includes("example.com"), "ログにメールを出さない");
+      } finally {
+        m.mock.restore();
+      }
+    });
+  }
+
+  it("500 の応答本文は固定で、エラーの本文・code を含めない", async () => {
+    failWith = piiError();
+    const done = captureLogs();
+    const text = await (await del("r_stu")).text();
+    done();
+    assert.equal(text, JSON.stringify({ error: "Internal server error" }));
+  });
+});
+
+// 返信への返信（#32 より前の POST /api/comments は parentId を検証していなかったので、本番に存在しうる）。
+// 実物の FK は ON DELETE SET NULL なので、中間の返信を消すと孫の返信が parentId: null（質問）として残る。
+// 期待：質問を消したら、その下の返信は孫も含めて消える／返信を消しても、その下の返信が質問として浮き上がらない。
+// 現状の実装は直下の返信だけを deleteMany するので失敗する。本番コードの判断待ちのため todo（失敗してもスイートは落とさない）。
+describe("DELETE /api/admin/comments/[id]：返信への返信（孫）がある場合（追加・todo）", () => {
+  const addNested = () =>
+    comments.push({ id: "r_nested", userId: "stu_active", lessonId: "lesson_1", content: "返信への返信", parentId: "r_stu", createdAt: at(180) });
+
+  it("質問を消すと、孫の返信も消え、質問として残らない", { todo: "孫の返信が parentId: null の質問として残る（報告済み）" }, async () => {
+    addNested();
+    const res = await del("q_stu");
+    assert.equal(res.status, 200);
+    assert.equal(ids().includes("r_nested"), false, "孫の返信も消える");
+    assert.deepEqual(comments.filter((c) => c.parentId === null).map((c) => c.id), ["q_gone", "q_alone"], "質問として浮き上がらない");
+  });
+
+  it("子を持つ返信を消しても、その子が質問として残らない", { todo: "子の返信が parentId: null の質問として残る（報告済み）" }, async () => {
+    addNested();
+    const res = await del("r_stu");
+    assert.equal(res.status, 200);
+    assert.ok(
+      !comments.some((c) => c.id === "r_nested" && c.parentId === null),
+      "r_nested が質問（parentId: null）になっていない"
+    );
   });
 });
