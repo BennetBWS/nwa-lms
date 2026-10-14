@@ -71,17 +71,17 @@ describe("deleteQuote", () => {
   });
 
   it("絵文字（ZWJ でつないだもの・サロゲートペア）を途中で切らない", () => {
-    const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
     const s = "あ".repeat(DELETE_QUOTE_MAX_CHARS - 1) + family + "い";
     assert.equal(deleteQuote(s), `${"あ".repeat(DELETE_QUOTE_MAX_CHARS - 1)}${family}…`);
   });
 
   it("見えない文字（幅のない空白・向きの制御文字・BOM）を除く", () => {
-    assert.equal(deleteQuote("‮abc​def﻿"), "abcdef");
+    assert.equal(deleteQuote("\u202Eabc\u200Bdef\uFEFF"), "abcdef");
   });
 
   it("見える文字が残らない・文字列でないときは空文字（画面は引用を出さない）", () => {
-    for (const v of ["", "   ", "​‮", "ㅤ", null, undefined, 1]) {
+    for (const v of ["", "   ", "\u200B\u202E", "\u3164", null, undefined, 1]) {
       assert.equal(deleteQuote(v), "", String(v));
     }
   });
@@ -201,5 +201,128 @@ describe("行の片付け", () => {
     assert.equal(isDeleteBlocked({ sending: false, awaitingCheck: false }), false);
     assert.equal(isDeleteBlocked({ sending: true, awaitingCheck: false }), true);
     assert.equal(isDeleteBlocked({ sending: false, awaitingCheck: true }), true);
+  });
+});
+
+// ───────────── 追加（tester）：境界値・形の違う応答 ─────────────
+
+describe("追加：deleteConfirmMessage の件数", () => {
+  it("1 件・2 桁でも「返信 N 件」（半角数字の前後に空白）。返信の確認は件数に左右されない", () => {
+    assert.equal(deleteConfirmMessage({ ...Q, replyCount: 1 }), "この質問と返信 1 件を削除します。元に戻せません。");
+    assert.equal(deleteConfirmMessage({ ...Q, replyCount: 12 }), "この質問と返信 12 件を削除します。元に戻せません。");
+    for (const replyCount of [Number.POSITIVE_INFINITY, "3" as unknown as number, undefined as unknown as number]) {
+      assert.equal(deleteConfirmMessage({ ...Q, replyCount }), "この質問を削除します。元に戻せません。", String(replyCount));
+    }
+  });
+});
+
+describe("追加：deleteQuote の境界", () => {
+  it("ちょうど上限なら「…」を付けず、1 書記素でも超えたら付ける", () => {
+    const at = "x".repeat(DELETE_QUOTE_MAX_CHARS);
+    assert.equal(deleteQuote(at), at);
+    assert.equal(deleteQuote(`${at}y`), `${at}…`);
+  });
+
+  it("切った位置の直前の空白は残さない（「…」の前に空白を置かない）", () => {
+    const s = `${"あ".repeat(DELETE_QUOTE_MAX_CHARS - 1)} いいい`;
+    assert.equal(deleteQuote(s), `${"あ".repeat(DELETE_QUOTE_MAX_CHARS - 1)}…`);
+  });
+
+  it("CRLF・タブ・全角空白の続きも 1 つの空白にまとめる", () => {
+    assert.equal(deleteQuote("一行目\r\n\r\n\t二行目\u3000\u3000三"), "一行目 二行目 三");
+  });
+
+  it("国旗・肌の色・結合文字は 1 書記素として数え、途中で切らない", () => {
+    const flag = "\u{1F1EF}\u{1F1F5}";
+    const thumb = "\u{1F44D}\u{1F3FD}";
+    const ga = "か\u3099";
+    for (const g of [flag, thumb, ga]) {
+      const s = g.repeat(DELETE_QUOTE_MAX_CHARS + 1);
+      const q = deleteQuote(s);
+      assert.equal(q, `${g.repeat(DELETE_QUOTE_MAX_CHARS)}…`, `途中で切った：${JSON.stringify(q)}`);
+    }
+  });
+
+  it("向きの制御文字（RLO・LRI・PDI など）で引用の外側の表示を崩さない", () => {
+    const q = deleteQuote("\u202Babc\u2066def\u2069\u202C");
+    assert.equal(q, "abcdef");
+    assert.doesNotMatch(q, /[\u202A-\u202E\u2066-\u2069\u200E\u200F]/);
+  });
+});
+
+describe("追加：deleteErrorMessage・interpretDeleteResponse", () => {
+  it("想定外のステータス（429・501・418）はサーバーのエラー。リダイレクトはステータスによらずセッション切れ", () => {
+    for (const s of [418, 429, 501]) assert.match(deleteErrorMessage(s), /サーバーでエラー/, String(s));
+    for (const s of [200, 302, 404, 500]) assert.equal(deleteErrorMessage(s, true), COMMENT_SESSION_EXPIRED_MESSAGE, String(s));
+  });
+
+  it("2xx の空の応答（204 など、body が null）は成功としない", () => {
+    assert.deepEqual(interpretDeleteResponse({ ok: true, status: 204, redirected: false, body: null, target: Q }), {
+      kind: "error",
+      message: DELETE_UNKNOWN_RESULT_MESSAGE,
+    });
+  });
+
+  it("404 は本文によらず「すでに削除されている」（質問・返信とも）", () => {
+    for (const target of [Q, R]) {
+      for (const body of [null, { error: "Comment not found" }, "<html>"]) {
+        assert.deepEqual(interpretDeleteResponse({ ok: false, status: 404, redirected: false, body, target }), { kind: "gone" });
+      }
+    }
+  });
+
+  it("質問の deletedReplies が整数でない（1.5・NaN・Infinity）ときは件数を出さない", () => {
+    for (const n of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const o = interpretDeleteResponse({ ok: true, status: 200, redirected: false, body: { kind: "question", id: "q1", deletedReplies: n }, target: Q });
+      assert.deepEqual(o, { kind: "question_deleted", deletedReplies: null }, String(n));
+    }
+  });
+
+  it("返信：thread の content が文字列でない・thread が配列なら成功としない", () => {
+    const base = { id: "q1", content: "質問", replies: [] };
+    for (const thread of [{ ...base, content: null }, [base], "q1"]) {
+      assert.deepEqual(
+        interpretDeleteResponse({ ok: true, status: 200, redirected: false, body: { kind: "reply", id: "r1", thread }, target: R }),
+        { kind: "error", message: DELETE_UNKNOWN_RESULT_MESSAGE },
+        JSON.stringify(thread)
+      );
+    }
+  });
+});
+
+describe("追加：replyDeletedMessage・removeReplyFromRow", () => {
+  it("answered が true 以外（文字列 \"true\"・欠落）なら、回答済みだった質問は未回答に戻ったと知らせる", () => {
+    assert.equal(replyDeletedMessage(true, { answered: "true" }), REPLY_DELETED_NOW_UNANSWERED_MESSAGE);
+    assert.equal(replyDeletedMessage(true, {}), REPLY_DELETED_NOW_UNANSWERED_MESSAGE);
+    assert.equal(replyDeletedMessage(false, { answered: true }), REPLY_DELETED_MESSAGE);
+  });
+
+  it("講師の返信が残っていれば回答済みのまま。author が壊れた返信は講師として数えない", () => {
+    const rows = [
+      {
+        id: "q1",
+        replyCount: 3,
+        answered: true,
+        replies: [
+          { id: "r1", author: { isInstructor: true } },
+          { id: "r2", author: { isInstructor: true } },
+          { id: "r3", author: "講師" },
+        ],
+      },
+    ];
+    const a = removeReplyFromRow(rows, "q1", "r1") as Array<Record<string, unknown>>;
+    assert.equal(a[0].answered, true, "講師の返信が残っているのに未回答にした");
+    assert.equal(a[0].replyCount, 2);
+    const b = removeReplyFromRow(a, "q1", "r2") as Array<Record<string, unknown>>;
+    assert.equal(b[0].answered, false, "author が文字列の返信を講師として数えた");
+  });
+
+  it("replies が配列でない行・壊れた行は変えない（元の配列を返す）", () => {
+    const rows = [{ id: "q1", replies: null }, null, "q1"];
+    assert.equal(removeReplyFromRow(rows, "q1", "r1"), rows);
+  });
+
+  it("removeThreadRow：同じ id の行が重複していれば両方とも除く", () => {
+    assert.deepEqual(removeThreadRow([{ id: "q1" }, { id: "q2" }, { id: "q1" }], "q1"), [{ id: "q2" }]);
   });
 });
