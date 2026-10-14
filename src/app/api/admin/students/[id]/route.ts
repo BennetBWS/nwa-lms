@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY } from "@/lib/course-order";
 import {
   DETAIL_ASSIGNMENT_SELECT,
   DETAIL_QUIZ_ATTEMPT_SELECT,
@@ -37,7 +38,7 @@ export async function GET(
     // Per-course progress (completed rows of this student only)
     const courses = await prisma.course.findMany({
       select: detailCourseSelect(id),
-      orderBy: { order: "asc" },
+      orderBy: COURSE_ORDER_BY,
     });
 
     const quizAttempts = await prisma.quizAttempt.findMany({

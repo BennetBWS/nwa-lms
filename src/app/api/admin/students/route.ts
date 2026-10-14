@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY } from "@/lib/course-order";
 import { currentCourseOf } from "@/lib/student-current-course";
 import {
   parseStudentStatusFilter,
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
     const totalLessons = await prisma.lesson.count();
     const courses = await prisma.course.findMany({
       select: COURSE_LESSON_IDS_SELECT,
-      orderBy: { order: "asc" },
+      orderBy: COURSE_ORDER_BY,
     });
 
     const students = await prisma.user.findMany({

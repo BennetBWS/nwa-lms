@@ -319,7 +319,10 @@ export function createFakeDb(): FakeDb {
     course: {
       async findMany(args: { select?: Record<string, unknown>; orderBy?: unknown } | undefined) {
         rec("course.findMany", args);
-        return [...db.courses].sort((a, b) => a.order - b.order).map((c) => projectCourse(c, args?.select, db));
+        // [order, id]（#47 P3。route は COURSE_ORDER_BY で並べる）
+        return [...db.courses]
+          .sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+          .map((c) => projectCourse(c, args?.select, db));
       },
     },
     lesson: {

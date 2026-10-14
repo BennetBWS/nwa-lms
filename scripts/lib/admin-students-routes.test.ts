@@ -439,7 +439,7 @@ describe("GET /api/admin/students (list): currentCourse (#32)", () => {
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0].args[0], {
       select: { id: true, name: true, sections: { select: { lessons: { select: { id: true } } } } },
-      orderBy: { order: "asc" },
+      orderBy: [{ order: "asc" }, { id: "asc" }],
     });
     const users = db.calls.find((c) => c.method === "user.findMany");
     assert.ok(users, "user.findMany was not called");

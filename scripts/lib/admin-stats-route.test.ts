@@ -63,8 +63,8 @@ const fake = {
     async findMany(args: { select?: Select; orderBy?: unknown }) {
       calls.push({ method: "course.findMany", args });
       assertSelect(args.select, { id: true, name: true, color: true, sections: { select: { lessons: { select: { id: true } } } } });
-      assert.deepEqual(args.orderBy, { order: "asc" });
-      return [...courses].sort((a, b) => a.order - b.order).map(({ id, name, color, sections }) => ({ id, name, color, sections }));
+      assert.deepEqual(args.orderBy, [{ order: "asc" }, { id: "asc" }]);
+      return [...courses].sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(({ id, name, color, sections }) => ({ id, name, color, sections }));
     },
   },
   progress: {
