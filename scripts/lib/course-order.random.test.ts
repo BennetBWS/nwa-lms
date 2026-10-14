@@ -381,7 +381,22 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       const listLocks = list.map((c, i) => isCourseLocked(i > 0 ? countCourseLessons(list[i - 1]) : null, countCourseLessons(c)));
       assert.deepEqual(listLocks, expectedLocks, `${ctx}: コース一覧のロック表示が正解と違う`);
 
-      for (const c of ordered) {
+      // /api/courses の locked（#47 P4）も正解と一致する
+      assert.deepEqual(
+        (list as Array<{ locked?: unknown }>).map((c) => c.locked),
+        expectedLocks,
+        `${ctx}: /api/courses の locked が正解と違う`
+      );
+
+      for (let i = 0; i < ordered.length; i++) {
+        const c = ordered[i];
+        if (expectedLocks[i]) {
+          // ロック中のコースの詳細は 403 course_locked（#47 P4）
+          const res = await R.courseDetail(c.id);
+          assert.equal(res.status, 403, `${ctx}: ロック中の /api/courses/${c.id} が 403 でない`);
+          assert.deepEqual(await res.json(), { error: "Forbidden", reason: "course_locked" }, `${ctx}: 403 の本文が違う`);
+          continue;
+        }
         const detail = await json<ApiCourse>(R.courseDetail(c.id), `${ctx} /api/courses/${c.id}`);
         assert.deepEqual(tree([detail]), tree([c]), `${ctx}: /api/courses/[courseId] の並びが一覧と違う`);
       }
@@ -396,7 +411,12 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       assert.deepEqual(dash.nextLessons.map((l) => l.lessonId), oracleNextLessons(ordered, me), `${ctx}: 次のレッスン（Next Up）が正解と違う`);
 
       // Next Up の先頭は、そのコースを開いたときに最初に表示されるレッスン（LessonView の pickInitialLesson）と同じ
-      if (dash.nextLessons.length > 0) {
+      // ただし、レッスン 0 件のコースの次のコースは、未着手ならロックのまま（isCourseLocked の規則）で、Next Up が指すことがある。
+      // そのコースの詳細は 403 course_locked（#47 P4）になるので、最初のレッスンは比べない
+      const firstLocked = dash.nextLessons.length > 0 && expectedLocks[expectedIds.indexOf(dash.nextLessons[0].courseId)];
+      if (firstLocked) {
+        assert.equal((await R.courseDetail(dash.nextLessons[0].courseId)).status, 403, `${ctx}: Next Up のロック中のコースが 403 でない`);
+      } else if (dash.nextLessons.length > 0) {
         const first = dash.nextLessons[0];
         const detail = await json<ApiCourse>(R.courseDetail(first.courseId), `${ctx} /api/courses/${first.courseId}`);
         const initial = pickInitialLesson<ApiLesson>(detail.sections, (l) => l.completed === true);
