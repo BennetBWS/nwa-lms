@@ -1,6 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BADGE_MAX, MARK_READ_MAX_IDS, formatBadgeCount, parseMarkReadBody } from "./notification-read";
+import {
+  BADGE_MAX,
+  MARK_READ_MAX_IDS,
+  formatBadgeCount,
+  parseMarkReadBody,
+  readMarkReadResponse,
+  readUnreadCountResponse,
+  toUnreadCount,
+  unreadBadgeLabel,
+  unreadIdsToMark,
+} from "./notification-read";
 
 // #62 未読件数バッジと既読化 API の純粋関数。DB・ネットワーク・DOM なし。データはすべてダミー。
 
@@ -191,5 +201,119 @@ describe("parseMarkReadBody：上限を超えた時点で止める", () => {
     });
     assert.deepEqual(parseMarkReadBody({ ids: arr }), { ok: false, reason: "invalid_ids" });
     assert.equal(touched, false, "上限を超えたあとも要素を読んでいる");
+  });
+});
+
+describe("toUnreadCount", () => {
+  it("0 以上の安全な整数だけを返す", () => {
+    for (const v of [0, 1, 9, 10, 51, Number.MAX_SAFE_INTEGER]) assert.equal(toUnreadCount(v), v, String(v));
+  });
+
+  it("負数・小数・NaN・Infinity・安全でない整数・数値でないものは null", () => {
+    for (const v of [-1, 0.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "3", null, undefined, true, {}, [], new Number(3), BigInt(3)]) {
+      assert.equal(toUnreadCount(v), null, String(v));
+    }
+  });
+});
+
+describe("readUnreadCountResponse", () => {
+  it("{ count } の件数を返す（0 も件数として返す）", () => {
+    assert.equal(readUnreadCountResponse({ count: 0 }), 0);
+    assert.equal(readUnreadCountResponse({ count: 12 }), 12);
+  });
+
+  it("形が違う応答は null（エラー応答・配列・数値だけ・不正な count）", () => {
+    for (const body of [null, undefined, 3, "3", [], [3], { error: "Unauthorized" }, { count: "3" }, { count: -1 }, { count: 1.5 }, { unreadCount: 3 }]) {
+      assert.equal(readUnreadCountResponse(body), null, JSON.stringify(body) ?? String(body));
+    }
+  });
+});
+
+describe("readMarkReadResponse", () => {
+  it("{ updated, unreadCount } の unreadCount を返す", () => {
+    assert.equal(readMarkReadResponse({ updated: 2, unreadCount: 0 }), 0);
+    assert.equal(readMarkReadResponse({ updated: 50, unreadCount: 7 }), 7);
+  });
+
+  it("unreadCount がない・不正なら null（updated や count は使わない）", () => {
+    for (const body of [null, undefined, [], { updated: 2 }, { count: 0 }, { error: "Invalid request", reason: "invalid_ids" }, { unreadCount: "0" }, { unreadCount: -1 }, { unreadCount: NaN }]) {
+      assert.equal(readMarkReadResponse(body), null, JSON.stringify(body) ?? String(body));
+    }
+  });
+});
+
+describe("unreadIdsToMark", () => {
+  it("unread が true の行の id だけを順に集める", () => {
+    const items = [
+      { id: "a", unread: true },
+      { id: "b", unread: false },
+      { id: "c", unread: true },
+    ];
+    assert.deepEqual(unreadIdsToMark(items), ["a", "c"]);
+  });
+
+  it("未読がなければ空配列（API を呼ばない判定に使う）", () => {
+    assert.deepEqual(unreadIdsToMark([{ id: "a", unread: false }]), []);
+    assert.deepEqual(unreadIdsToMark([]), []);
+  });
+
+  it("配列でなければ空配列", () => {
+    for (const v of [null, undefined, "a", 1, { id: "a", unread: true }]) {
+      assert.deepEqual(unreadIdsToMark(v as never), [], String(v));
+    }
+  });
+
+  it("unread が true でない（真と評価される値を含む）・要素がオブジェクトでなければ飛ばす", () => {
+    const items = [
+      { id: "a", unread: 1 },
+      { id: "b", unread: "true" },
+      { id: "c" },
+      null,
+      "d",
+      ["e"],
+      { id: "f", unread: true },
+    ];
+    assert.deepEqual(unreadIdsToMark(items as never), ["f"]);
+  });
+
+  it("空文字・65 文字・文字列でない id は飛ばし、64 文字は使う", () => {
+    const long64 = "x".repeat(64);
+    const items = [
+      { id: "", unread: true },
+      { id: "y".repeat(65), unread: true },
+      { id: 1, unread: true },
+      { id: null, unread: true },
+      { id: long64, unread: true },
+    ];
+    assert.deepEqual(unreadIdsToMark(items), [long64]);
+  });
+
+  it("重複は最初の 1 つだけ", () => {
+    const items = [
+      { id: "a", unread: true },
+      { id: "a", unread: true },
+      { id: "b", unread: true },
+    ];
+    assert.deepEqual(unreadIdsToMark(items), ["a", "b"]);
+  });
+
+  it(`最大 ${MARK_READ_MAX_IDS} 件（API の上限）で打ち切り、結果は parseMarkReadBody を通る`, () => {
+    const items = ids(MARK_READ_MAX_IDS + 5).map((id) => ({ id, unread: true }));
+    const got = unreadIdsToMark(items);
+    assert.equal(got.length, MARK_READ_MAX_IDS);
+    assert.deepEqual(got, ids(MARK_READ_MAX_IDS));
+    assert.deepEqual(parseMarkReadBody({ ids: got }), { ok: true, value: { ids: got } });
+  });
+});
+
+describe("unreadBadgeLabel", () => {
+  it("バッジを出すときは実際の件数を読む（9+ でも件数そのまま）", () => {
+    assert.equal(unreadBadgeLabel(1), "未読 1 件");
+    assert.equal(unreadBadgeLabel(BADGE_MAX), `未読 ${BADGE_MAX} 件`);
+    assert.equal(unreadBadgeLabel(12), "未読 12 件");
+  });
+
+  it("バッジを出さないとき（0・負数・不正）は null", () => {
+    for (const v of [0, -1, 1.5, NaN, null, undefined, "3"]) assert.equal(unreadBadgeLabel(v), null, String(v));
   });
 });

@@ -58,11 +58,16 @@ describe("page.tsx：Sidebar", () => {
     assert.match(sidebar, /<AvatarFallback[^>]*>\{initial \?\? <User\b[^>]*\/>\}<\/AvatarFallback>/);
   });
 
-  it("通知のバッジ（ダミーの 2 件）を削除している", () => {
+  it("通知のバッジは固定の数字ではなく formatBadgeCount(unreadCount) の結果（#62）", () => {
     const line = sidebar.split("\n").find((l) => l.includes('id: "notifications"'));
-    assert.ok(line);
-    assert.doesNotMatch(line, /badge/);
-    assert.doesNotMatch(sidebar, /badge:\s*\d/);
+    assert.ok(line, "通知の行が見つからない");
+    assert.match(line, /\bbadge: formatBadgeCount\(unreadCount\)/);
+    assert.match(line, /\bbadgeLabel: unreadBadgeLabel\(unreadCount\)/);
+    // ダミーの固定値（#39 で消した badge: 2 など）を戻していない
+    assert.doesNotMatch(sidebar, /badge:\s*["'`]?\d/);
+    // バッジを持つ項目は通知だけ
+    const withBadge = sidebar.split("\n").filter((l) => /\bbadge:/.test(l));
+    assert.equal(withBadge.length, 1, "通知以外の項目に badge がある");
   });
 
   it("バッジは値があり 0 でないときだけ描画する", () => {

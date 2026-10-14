@@ -58,3 +58,49 @@ export function formatBadgeCount(count: unknown): string | null {
   if (typeof count !== "number" || !Number.isInteger(count) || count <= 0) return null;
   return count > BADGE_MAX ? `${BADGE_MAX}+` : String(count);
 }
+
+// ── 画面（src/app/page.tsx）で使う純粋関数（#62 PR-2） ──
+
+/** 未読件数として使える値（0 以上の安全な整数）なら返し、そうでなければ null */
+export function toUnreadCount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+  return value;
+}
+
+/** GET /api/notifications/unread-count の応答 `{ count }` から件数を読む。形が違えば null（前の値を使い続ける） */
+export function readUnreadCountResponse(body: unknown): number | null {
+  if (!isPlainObject(body)) return null;
+  return toUnreadCount(body.count);
+}
+
+/** POST /api/notifications/read の応答 `{ updated, unreadCount }` から更新後の未読件数を読む。形が違えば null */
+export function readMarkReadResponse(body: unknown): number | null {
+  if (!isPlainObject(body)) return null;
+  return toUnreadCount(body.unreadCount);
+}
+
+/**
+ * 通知ページで表示した行（toNewsItems の結果）から、既読にする id を集める。
+ * - unread が true の行だけ。空文字・文字列でない id は除く
+ * - 重複は最初に出た順で 1 つにまとめ、最大 MARK_READ_MAX_IDS 件（API の上限と同じ）
+ */
+export function unreadIdsToMark(items: ReadonlyArray<{ id: unknown; unread: unknown }> | null | undefined): string[] {
+  if (!Array.isArray(items)) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (ids.length >= MARK_READ_MAX_IDS) break;
+    if (!isPlainObject(item) || item.unread !== true) continue;
+    const id = item.id;
+    if (!isValidId(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+/** バッジの読み上げ用ラベル。バッジを出さないとき（formatBadgeCount が null）は null。表記が「9+」でも実際の件数を読む */
+export function unreadBadgeLabel(count: unknown): string | null {
+  if (formatBadgeCount(count) === null) return null;
+  return `未読 ${count} 件`;
+}
