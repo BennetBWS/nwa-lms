@@ -124,7 +124,16 @@ const fakePrisma = {
   quiz: {
     async findMany(args: Row) {
       record("quiz.findMany", args);
-      return [];
+      // 確認テストの一覧にどのコースも出るように、各コースに受験できる修了テストを 1 件ずつ置く（ダミー）
+      return courses.map((c) => ({
+        id: `q_${c.id}`,
+        title: "修了テスト",
+        type: "FINAL",
+        courseId: c.id,
+        lessonId: null,
+        lesson: null,
+        questions: [{ options: ["ダミーA", "ダミーB"], correctIndex: 0 }],
+      }));
     },
   },
   quizAttempt: {
@@ -338,19 +347,24 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
     const and = (commentCall.args.where as { AND: Array<{ OR?: Array<Record<string, unknown>> }> }).AND;
     const lockFilter = and.find((w) => Array.isArray(w.OR));
     assert.ok(lockFilter, "ロックの絞り込み（OR）がない");
-    const unlocked = (lockFilter.OR[1] as { lesson: { section: { courseId: { in: string[] } } } }).lesson.section.courseId.in;
+    const courseFilter = lockFilter.OR.find(
+      (w) => Array.isArray((w as { lesson?: { section?: { courseId?: { in?: unknown } } } }).lesson?.section?.courseId?.in)
+    ) as { lesson: { section: { courseId: { in: string[] } } } } | undefined;
+    assert.ok(courseFilter, "ロックの絞り込み（OR）に lesson.section.courseId.in がない");
+    const unlocked = courseFilter.lesson.section.courseId.in;
     assert.deepEqual(
       unlocked,
       expected.filter((e) => !e.locked).map((e) => e.id),
       "unlockedCourseIds が画面のロック表示と一致しない"
     );
 
-    // サーバー：確認テストの一覧のロック（buildQuizCourses。クイズがないのでコースは出ないことがある）
+    // サーバー：確認テストの一覧のロック（buildQuizCourses。偽 prisma は各コースに修了テストを 1 件置く）
     const quizBody = (await (await ROUTES[7].call()).json()) as { courses: Array<{ id: string; locked: boolean }> };
-    for (const c of quizBody.courses) {
-      const e = expected.find((x) => x.id === c.id);
-      assert.ok(e, `確認テストの一覧に知らないコース ${c.id}`);
-      assert.equal(c.locked, e.locked, `確認テストの一覧の ${c.id} のロックが画面と一致しない`);
-    }
+    assert.ok(quizBody.courses.length > 0, "確認テストの一覧にコースが出ていない（ロックの照合が空振りする）");
+    assert.deepEqual(
+      quizBody.courses.map((c) => ({ id: c.id, locked: c.locked })),
+      expected,
+      "確認テストの一覧の並び・ロックが画面と一致しない"
+    );
   });
 });
