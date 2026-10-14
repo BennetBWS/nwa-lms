@@ -2518,8 +2518,9 @@ const Notifications = ({ onUnreadChange }) => {
   // #62 Mark the unread rows just shown (up to 50) as read. The bold text and dots stay
   // until the page is left (notifs is not changed); only the sidebar badge goes down,
   // through onUnreadChange with the unreadCount of the response. A failure shows nothing
-  // and keeps the badge; the next visit tries again. One request at a time (StrictMode
-  // runs the effect twice; the API is idempotent anyway). An expired session is handled
+  // and keeps the badge; the next visit tries again. One request at a time (e.g. a
+  // re-render with the same list while a request is pending; StrictMode's double run is
+  // stopped earlier by the list's own in-flight guard; the API is idempotent anyway). An expired session is handled
   // by authFetch (sign out and go to /login): keep the flag so nothing is sent again.
   const markReadInFlight = useRef(false);
   const markShownAsRead = (rows) => {

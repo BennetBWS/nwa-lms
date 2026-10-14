@@ -550,7 +550,7 @@ describe("個人情報：既読化には id だけを送り、ログに出さな
     const f = fakeFetch();
     const p = pageHarness(f, () => {});
     p.mount(false);
-    const secretTitle = "ダミー件名　秘密";
+    const secretTitle = "ダミー件名\u3000秘密";
     const secretMessage = "ダミー本文 dummy@example.com";
     f.of(LIST)[0].release(res(LIST, [{ id: "n1", title: secretTitle, message: secretMessage, read: false, createdAt: "2026-10-01T00:00:00.000Z" }]));
     await settle();
