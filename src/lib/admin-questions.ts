@@ -352,6 +352,41 @@ export type DeleteTarget =
   | { kind: "question"; id: string; threadId: string; replyCount: number }
   | { kind: "reply"; id: string; threadId: string };
 
+/** 確認ダイアログが持つ対象（種類と id だけ）。件数・回答済み・引用は、描画のたびと送信時に今の一覧から求める（resolveDeleteTarget） */
+export type DeleteDialogRef = { kind: DeleteTarget["kind"]; id: string; threadId: string };
+
+/** 今の一覧から求めた対象。wasAnswered は削除する前の、質問の回答済みの状態 */
+export type ResolvedDeleteTarget = DeleteTarget & { wasAnswered: boolean; quote: string };
+
+/** 一覧の行（question-threads の toQuestionThreadItems の 1 件）のうち、削除の対象を求めるのに使う項目 */
+type DeleteTargetRow = {
+  id: string;
+  content: string;
+  replyCount: number;
+  answered: boolean;
+  replies: ReadonlyArray<{ id: string; content: string }>;
+};
+
+/**
+ * 確認ダイアログの対象を今の一覧の行から求める。ダイアログを開いた後に回答が保存されて返信の件数・回答済みが変わっても、
+ * 確認の文言と「未回答に戻ったか」の判定は今の値を使う。
+ * 質問の行（threadId）、または返信のときはその行の中の返信（id）が見つからなければ null（別の操作で消えた等）
+ */
+export function resolveDeleteTarget(items: ReadonlyArray<DeleteTargetRow>, ref: DeleteDialogRef): ResolvedDeleteTarget | null {
+  const row = items.find((x) => x.id === ref.threadId);
+  if (!row) return null;
+  if (ref.kind === "question") {
+    if (ref.id !== row.id) return null;
+    return { kind: "question", id: row.id, threadId: row.id, replyCount: row.replyCount, wasAnswered: row.answered, quote: deleteQuote(row.content) };
+  }
+  const r = row.replies.find((x) => x.id === ref.id);
+  if (!r) return null;
+  return { kind: "reply", id: r.id, threadId: row.id, wasAnswered: row.answered, quote: deleteQuote(r.content) };
+}
+
+/** 確認ダイアログの対象が今の一覧に見つからないときの文言（「削除する」は押せない） */
+export const DELETE_TARGET_MISSING_MESSAGE = "削除する対象が一覧に見つかりません。閉じて一覧を再読み込みしてください。";
+
 /** 確認ダイアログの見出し */
 export function deleteDialogTitle(kind: DeleteTarget["kind"]): string {
   return kind === "question" ? "質問を削除" : "返信を削除";

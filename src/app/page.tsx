@@ -76,6 +76,7 @@ import {
   REPLY_SENT_MESSAGE,
   COMMENT_ALREADY_DELETED_MESSAGE,
   DELETE_BLOCKED_HINT,
+  DELETE_TARGET_MISSING_MESSAGE,
   adminCommentDeleteUrl,
   adminReplyUrl,
   adminThreadListUrl,
@@ -84,7 +85,6 @@ import {
   deleteConfirmMessage,
   deleteDialogTitle,
   deleteErrorMessage,
-  deleteQuote,
   expandResolvedIds,
   interpretDeleteResponse,
   interpretReplyResponse,
@@ -99,6 +99,7 @@ import {
   removeThreadRow,
   replaceThreadRow,
   replyDeletedMessage,
+  resolveDeleteTarget,
   resolveUncertainReplies,
   savedDraftOutcome,
   savedReplyStatusMessage,
@@ -2907,7 +2908,8 @@ const AdminQuestions = () => {
   const focusAfterResolveRef = useRef(null);
 
   // 質問・返信の削除（#47）。確認ダイアログの対象：
-  // { kind: "question" | "reply", id, threadId（根の質問の id）, replyCount（質問のとき）, wasAnswered, quote（本文の先頭の引用） } | null
+  // { kind: "question" | "reply", id, threadId（根の質問の id） } | null。返信の件数・回答済み・引用は持たず、
+  // 描画のたびと送信時に今の threadRows から求める（resolveDeleteTarget。開いた後に回答が保存されても古い値を使わない）
   const [deleteDialog, setDeleteDialog] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -3101,7 +3103,7 @@ const AdminQuestions = () => {
 
   // ── 質問・返信の削除（#47。DELETE /api/admin/comments/[id]、物理削除で元に戻せない） ──
 
-  // 削除の確認ダイアログを開く。target は deleteDialog の形、trigger は押したボタン（閉じたときのフォーカスの戻り先）
+  // 削除の確認ダイアログを開く。target は deleteDialog の形（種類と id）、trigger は押したボタン（閉じたときのフォーカスの戻り先）
   // 削除の処理中は開かない（前の対象の結果が、後から開いた対象のダイアログに出ないように）
   const openDeleteDialog = (target, trigger = null) => {
     if (sessionExpired.current || deleting || deletingRef.current.size > 0) return;
@@ -3159,8 +3161,14 @@ const AdminQuestions = () => {
   // 成功：質問なら行を除き、返信なら応答の thread（根の質問）でその行を置き換える（未回答に戻ることもある）。
   // 404：すでに削除されているので、質問なら行を、返信ならその返信を除く。それ以外の失敗：ダイアログに文言を出し、行は残す
   const handleDelete = async () => {
-    const target = deleteDialog;
-    if (!target || sessionExpired.current || deletingRef.current.has(target.id)) return;
+    if (!deleteDialog) return;
+    // 送信時の今の一覧から対象を求める（件数・回答済みは開いた時点のものを使わない）。見つからなければ送らない
+    const target = resolveDeleteTarget(toQuestionThreadItems(threadRows, new Date()), deleteDialog);
+    if (!target) {
+      setDeleteError(DELETE_TARGET_MISSING_MESSAGE);
+      return;
+    }
+    if (sessionExpired.current || deletingRef.current.has(target.id)) return;
     // 回答の送信中・結果不明の間は消さない（ボタンも止めている。開いた後に状態が変わった場合に備える）
     if (isDeleteBlocked({ sending: sendingRef.current.has(target.threadId), awaitingCheck: target.threadId in uncertainRef.current })) {
       setDeleteError(DELETE_BLOCKED_HINT);
@@ -3206,6 +3214,8 @@ const AdminQuestions = () => {
 
   const now = new Date();
   const items = toQuestionThreadItems(threadRows, now);
+  // 確認ダイアログの対象（今の一覧から求める）。一覧に見つからなければ null（文言を出し、「削除する」を押せなくする）
+  const deleteTarget = deleteDialog ? resolveDeleteTarget(items, deleteDialog) : null;
 
   let body;
   if (loading) {
@@ -3281,7 +3291,7 @@ const AdminQuestions = () => {
                   <div id={regionId} role="region" aria-labelledby={buttonId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12, paddingTop: 14 }}>
                       <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
-                      <Button size="sm" variant="ghost" aria-label="この質問を削除" aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "question", id: x.id, threadId: x.id, replyCount: x.replyCount, wasAnswered: x.answered, quote: deleteQuote(x.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                      <Button size="sm" variant="ghost" aria-label="この質問を削除" aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "question", id: x.id, threadId: x.id }, e.currentTarget)} style={deleteButtonStyle}>
                         削除
                       </Button>
                     </div>
@@ -3306,7 +3316,7 @@ const AdminQuestions = () => {
                             </div>
                             <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
                           </div>
-                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id, wasAnswered: x.answered, quote: deleteQuote(r.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id }, e.currentTarget)} style={deleteButtonStyle}>
                             削除
                           </Button>
                         </div>
@@ -3402,15 +3412,15 @@ const AdminQuestions = () => {
                 {deleteDialogTitle(deleteDialog.kind)}
               </h3>
               <p id="nwa-delete-dialog-message" style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 12px", whiteSpace: "pre-wrap" }}>
-                {deleteConfirmMessage(deleteDialog)}
+                {deleteTarget ? deleteConfirmMessage(deleteTarget) : DELETE_TARGET_MISSING_MESSAGE}
               </p>
-              {deleteDialog.quote && (
-                <blockquote style={{ margin: "0 0 20px", padding: "8px 12px", borderLeft: `3px solid ${T.border}`, fontSize: 13, lineHeight: 1.6, color: T.textSecondary, overflowWrap: "anywhere" }}>「{deleteDialog.quote}」</blockquote>
+              {deleteTarget && deleteTarget.quote && (
+                <blockquote style={{ margin: "0 0 20px", padding: "8px 12px", borderLeft: `3px solid ${T.border}`, fontSize: 13, lineHeight: 1.6, color: T.textSecondary, overflowWrap: "anywhere" }}>「{deleteTarget.quote}」</blockquote>
               )}
-              {deleteError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{deleteError}</div>}
+              {deleteError && deleteError !== DELETE_TARGET_MISSING_MESSAGE && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{deleteError}</div>}
               <div style={{ display: "flex", gap: 8 }}>
                 <Button variant="outline" autoFocus onClick={closeDeleteDialog} disabled={deleting} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
-                <Button onClick={handleDelete} disabled={deleting} style={{ flex: 1, background: T.danger, borderRadius: 10 }}>
+                <Button onClick={handleDelete} disabled={deleting || !deleteTarget} style={{ flex: 1, background: T.danger, borderRadius: 10 }}>
                   {deleting ? "削除中..." : "削除する"}
                 </Button>
               </div>

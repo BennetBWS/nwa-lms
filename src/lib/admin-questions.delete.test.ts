@@ -17,6 +17,7 @@ import {
   removeReplyFromRow,
   removeThreadRow,
   replyDeletedMessage,
+  resolveDeleteTarget,
   withoutThreadId,
   type DeleteTarget,
 } from "./admin-questions";
@@ -324,5 +325,48 @@ describe("追加：replyDeletedMessage・removeReplyFromRow", () => {
 
   it("removeThreadRow：同じ id の行が重複していれば両方とも除く", () => {
     assert.deepEqual(removeThreadRow([{ id: "q1" }, { id: "q2" }, { id: "q1" }], "q1"), [{ id: "q2" }]);
+  });
+});
+
+describe("resolveDeleteTarget（確認ダイアログの対象を今の一覧から求める）", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "q1",
+    content: "質問の本文",
+    replyCount: 1,
+    answered: true,
+    replies: [{ id: "r1", content: "\u202E回答\u200Bです" }],
+    ...over,
+  });
+
+  it("質問：今の行の返信の件数・回答済み・引用を使う", () => {
+    assert.deepEqual(resolveDeleteTarget([row()], { kind: "question", id: "q1", threadId: "q1" }), {
+      kind: "question",
+      id: "q1",
+      threadId: "q1",
+      replyCount: 1,
+      wasAnswered: true,
+      quote: "質問の本文",
+    });
+    const later = resolveDeleteTarget([row({ replyCount: 3, answered: false })], { kind: "question", id: "q1", threadId: "q1" });
+    assert.equal(later?.kind === "question" ? later.replyCount : null, 3, "件数が今の行の値でない");
+    assert.equal(later?.wasAnswered, false, "回答済みが今の行の値でない");
+  });
+
+  it("返信：行の中の返信を探し、引用は見えない文字を除く。wasAnswered は質問の回答済み", () => {
+    assert.deepEqual(resolveDeleteTarget([row()], { kind: "reply", id: "r1", threadId: "q1" }), {
+      kind: "reply",
+      id: "r1",
+      threadId: "q1",
+      wasAnswered: true,
+      quote: "回答です",
+    });
+  });
+
+  it("行・返信が見つからない、または質問の id と threadId が食い違うときは null", () => {
+    assert.equal(resolveDeleteTarget([row()], { kind: "question", id: "q2", threadId: "q2" }), null);
+    assert.equal(resolveDeleteTarget([row()], { kind: "reply", id: "r9", threadId: "q1" }), null);
+    assert.equal(resolveDeleteTarget([row()], { kind: "reply", id: "r1", threadId: "q2" }), null);
+    assert.equal(resolveDeleteTarget([row()], { kind: "question", id: "r1", threadId: "q1" }), null);
+    assert.equal(resolveDeleteTarget([], { kind: "question", id: "q1", threadId: "q1" }), null);
   });
 });

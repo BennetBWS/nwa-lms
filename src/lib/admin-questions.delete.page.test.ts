@@ -993,6 +993,43 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
   });
 });
 
+describe("AdminQuestions 削除：開いた後に対象の行が変わったとき", () => {
+  it("開いた後に回答が保存されて回答済みになると、送信時の今の一覧で「未回答に戻ったか」を判定する", async () => {
+    // opened() は t1 を開く。未回答の t1（受講生の返信だけ）
+    const m = await opened({ threads: [thread("t1", { replies: [reply("r5", "受講生の補足", false, "受講生エー")], replyCount: 1 })], nextCursor: null });
+    click(deleteButtonsIn(region(m.render(), "t1"))[1], m.target("r5"));
+    change(textareaOf(m.render(), "t1"), "講師の回答");
+    click(button(region(m.render(), "t1"), "回答を送信"));
+    const answered = thread("t1", { replies: [reply("r5", "受講生の補足", false, "受講生エー"), reply("r6", "講師の回答", true, "講師ビー")], replyCount: 2, answered: true });
+    m.reqs.find((r) => r.url === "/api/admin/comments/t1/replies")!.release(res({ thread: answered }, { url: `${DEL_URL("t1")}/replies` }));
+    await settle();
+    click(button(dialog(m.render()), "削除する"));
+    // 講師の返信も消えて未回答に戻った（別の講師が同時に消した等）応答
+    const after = thread("t1", { replies: [], replyCount: 0, answered: false });
+    deleteReqs(m)[0].release(res({ kind: "reply", id: "r5", thread: after }, { url: DEL_URL("r5") }));
+    await settle();
+    assert.ok(statusTexts(m.render()).includes(adminQuestions.REPLY_DELETED_NOW_UNANSWERED_MESSAGE), "開いた時点の未回答を使って判定した");
+  });
+
+  it("開いた後に対象の返信が一覧から消えたら、見つからないと出して「削除する」を押せなくし、送らない", async () => {
+    const m = await opened();
+    click(deleteButtonsIn(region(m.render(), "t1"))[2], m.target("r2"));
+    change(textareaOf(m.render(), "t1"), "講師の追加回答");
+    click(button(region(m.render(), "t1"), "回答を送信"));
+    const without = thread("t1", { replies: [T1_REPLIES[0], reply("r9", "講師の追加回答", true, "講師ビー")], replyCount: 2, answered: true });
+    m.reqs.find((r) => r.url === "/api/admin/comments/t1/replies")!.release(res({ thread: without }, { url: `${DEL_URL("t1")}/replies` }));
+    await settle();
+    const d = dialog(m.render());
+    assert.ok(text(d).includes(adminQuestions.DELETE_TARGET_MISSING_MESSAGE), `見つからない文言がない：${text(d)}`);
+    assert.equal(findAll(d, (e) => e.type === "blockquote").length, 0, "消えた対象の引用を出した");
+    const confirm = button(d, "削除する");
+    assert.equal(confirm.props.disabled, true, "見つからないのに押せる");
+    click(confirm);
+    assert.equal(deleteReqs(m).length, 0, "見つからない対象を送った");
+    assert.equal(button(dialog(m.render()), "キャンセル").props.disabled, false, "閉じられない");
+  });
+});
+
 describe("AdminQuestions 削除：ダイアログが開いている間・処理中の背後のボタン", () => {
   it("確認ダイアログが開いている間は、背後のすべての削除ボタンが押せない。閉じたら押せる", async () => {
     const m = await opened();
@@ -1022,7 +1059,7 @@ describe("AdminQuestions 削除：ダイアログが開いている間・処理�
   });
 });
 
-describe("AdminQuestions 削除（追加）：既知の問題（todo。直れば通る）", () => {
+describe("AdminQuestions 削除（追加）：以前の既知の問題（処理中の差し替え・開いた後の件数）", () => {
   it(
     "削除の処理中に別の行の削除ボタン（キーボードでダイアログの外へ移れる）を押しても、対象と失敗の文言が入れ替わらない",
     async () => {
@@ -1039,7 +1076,6 @@ describe("AdminQuestions 削除（追加）：既知の問題（todo。直れば
 
   it(
     "ダイアログを開いた後にその質問へ回答が保存されたら、確認の文言の返信の件数も変わる（古い件数のまま削除させない）",
-    { todo: "deleteDialog は開いた時点の replyCount を持ち続ける。返信 0 件と表示したまま返信ごと消える（報告済み）" },
     async () => {
       const m = await opened();
       click(threadButton(m.render(), "t2"));
