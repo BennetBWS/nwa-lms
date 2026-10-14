@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 // #47 P3 並び順 [order, id] の取りこぼしを、ソースを読んで確かめる（DB・ネットワークなし）。
-// course-order.test.ts のソースの確認を補う：
+// ソースを読む確認はこのファイルにまとめる（course-order.test.ts は実際にルートを呼んで確かめる）：
 // - orderBy の値は共通の定数か、[order, id] のリテラルだけ（配列で order だけ、キーを引用符で囲む、変数に入れる、も検出する）
 // - prisma 以外の変数（tx / db）で Course / Section / Lesson を読む箇所や、src/lib で読む箇所も一覧に入れる
 // - 画面・純関数で order だけを比べる並べ替え（a.order - b.order で同点を決めない）がない
@@ -159,11 +159,26 @@ describe("Course / Section / Lesson を読む箇所の一覧（prisma 以外の�
   /** 並び順を確かめなくてよい理由がある箇所 */
   const ORDER_NOT_NEEDED: Record<string, string> = {
     "src/app/api/admin/courses/[id]/route.ts": "コースの削除のために tx で section / lesson の id を集めるだけ。並び順を使わない",
-    // B-1（feat/46-comment-post-guard、PR #64）で追加。[order, id] のリテラルで並べる（上の orderBy の確認の対象）。
-    // この P3 のブランチにはまだないので、存在しなくてもよい
-    "src/lib/lesson-access.ts": "B-1 の投稿時のロック判定。orderBy は [order, id] のリテラル",
   };
+
+  /**
+   * ルートとして呼ばずに、ソースの orderBy で並び順を確かめる箇所（src/lib など）。
+   * ファイル内の orderBy が 1 件以上あり、すべてが共通の定数か [order, id] のリテラルであることを求める。
+   */
+  const ORDER_BY_CHECKED_IN_SOURCE: Record<string, string> = {
+    "src/lib/lesson-access.ts": "投稿時のロック判定（#46 B-1、PR #64）。コースを並べてロックを計算する",
+  };
+  /** 別のブランチで追加されるファイル。存在しない間は確認を飛ばし、存在すれば上の確認をすべて行う */
   const MAY_NOT_EXIST = new Set(["src/lib/lesson-access.ts"]);
+
+  /** ファイル内の orderBy が、共通の定数か [order, id] のリテラルだけかを確かめる。問題の一覧を返す */
+  function strictOrderByProblems(file: string, src: string): string[] {
+    const uses = orderByUses(file, src);
+    if (uses.length === 0) return [`${file} に orderBy がない`];
+    return uses
+      .filter((u) => !SHARED_CONSTANTS.has(normalize(u.value)) && !ORDER_ID_LITERALS.has(normalize(u.value)))
+      .map((u) => `${u.file}:${u.line} ${u.value.replace(/\s+/g, " ")}（共通の定数でも [order, id] のリテラルでもない）`);
+  }
 
   const READ_RE = /\b([A-Za-z_$][\w$]*)\s*\.\s*(course|section|lesson)\s*\.\s*(findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow)\b/g;
 
@@ -183,20 +198,41 @@ describe("Course / Section / Lesson を読む箇所の一覧（prisma 以外の�
   });
 
   it("読む箇所は、ルートのテスト（ROUTES）か、並び順が要らない理由のある一覧のどちらかに入っている", () => {
-    const known = new Set([...testedRoutes(), ...Object.keys(ORDER_NOT_NEEDED)]);
+    const known = new Set([...testedRoutes(), ...Object.keys(ORDER_NOT_NEEDED), ...Object.keys(ORDER_BY_CHECKED_IN_SOURCE)]);
     const unknown = Array.from(readers().entries()).filter(([f]) => !known.has(f)).map(([f, hits]) => `${f}（${hits.join(", ")}）`);
     assert.deepEqual(
       unknown,
       [],
-      "Course / Section / Lesson を読む新しい箇所がある。course-order.test.ts の ROUTES に加えて並び順を確かめるか、並び順が要らない理由を ORDER_NOT_NEEDED に書く"
+      "Course / Section / Lesson を読む新しい箇所がある。course-order.test.ts の ROUTES に加えて並び順を確かめるか、ORDER_BY_CHECKED_IN_SOURCE（ソースの orderBy で確かめる）か ORDER_NOT_NEEDED（並び順が要らない理由）に書く"
     );
   });
 
   it("一覧に書いたファイルが実在する（古い一覧で検出を素通りさせない）", () => {
-    for (const f of [...testedRoutes(), ...Object.keys(ORDER_NOT_NEEDED)]) {
+    for (const f of [...testedRoutes(), ...Object.keys(ORDER_NOT_NEEDED), ...Object.keys(ORDER_BY_CHECKED_IN_SOURCE)]) {
       if (MAY_NOT_EXIST.has(f)) continue;
       assert.ok(existsSync(join(ROOT, f)), `${f} が存在しない`);
     }
+  });
+
+  it("ソースで確かめる箇所は、orderBy がすべて共通の定数か [order, id] のリテラル（存在する場合）", () => {
+    const problems: string[] = [];
+    for (const f of Object.keys(ORDER_BY_CHECKED_IN_SOURCE)) {
+      const path = join(ROOT, f);
+      if (!existsSync(path)) {
+        assert.ok(MAY_NOT_EXIST.has(f), `${f} が存在しない`);
+        continue;
+      }
+      problems.push(...strictOrderByProblems(f, readSrc(path)));
+    }
+    assert.deepEqual(problems, [], "ソースで確かめる箇所の orderBy が [order, id] でない");
+  });
+
+  it("ソースで確かめる検出器は、orderBy がないファイル・order 以外の並び・知らない識別子を拾う", () => {
+    assert.deepEqual(strictOrderByProblems("ok.ts", 'x({ orderBy: COURSE_ORDER_BY }); y({ orderBy: [{ order: "asc" }, { id: "asc" }] })'), [], "正しい書き方を誤って拾う");
+    assert.equal(strictOrderByProblems("none.ts", "prisma.course.findMany({})").length, 1, "orderBy がないファイルを拾わない");
+    assert.equal(strictOrderByProblems("t.ts", 'x({ orderBy: { createdAt: "asc" } })').length, 1, "order 以外の並びを拾わない");
+    assert.equal(strictOrderByProblems("t.ts", "x({ orderBy: ORDER_ONLY })").length, 1, "知らない識別子を拾わない");
+    assert.equal(strictOrderByProblems("t.ts", 'x({ orderBy: { order: "asc" } })').length, 1, "order だけの並びを拾わない");
   });
 });
 
