@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { lessonAccessFor, type LessonAccessDb } from "./lesson-access";
+import { courseAccessFor, lessonAccessFor, unlockedCourseIdsFor, type LessonAccessDb } from "./lesson-access";
 import { isCourseLocked, type LessonCounts } from "./course-lock";
 
 // #46 lessonAccessFor が course-lock.ts の isCourseLocked（画面のロック表示）と同じ判定になることを、
@@ -46,6 +46,21 @@ function makeDb(courses: Course[], progress: Progress[]): LessonAccessDb {
   return fake as unknown as LessonAccessDb;
 }
 
+/** 期待値（コースごと）：order → id の順に並べ、直前のコースの件数と isCourseLocked で判定する（#47 P4） */
+function expectedCourseLocked(courses: Course[], progress: Progress[]): Array<[string, boolean]> {
+  const done = new Set(progress.filter((p) => p.userId === STUDENT && p.completed).map((p) => p.lessonId));
+  const sorted = [...courses].sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const out: Array<[string, boolean]> = [];
+  let prev: LessonCounts | null = null;
+  for (const c of sorted) {
+    const lessons = c.sections.flat();
+    const counts = { totalLessons: lessons.length, completedLessons: lessons.filter((l) => done.has(l)).length };
+    out.push([c.id, isCourseLocked(prev, counts)]);
+    prev = counts;
+  }
+  return out;
+}
+
 /** 期待値：order → id の順に並べ、直前のコースの件数と isCourseLocked で判定する */
 function expectedLocked(courses: Course[], progress: Progress[]): Map<string, boolean> {
   const done = new Set(progress.filter((p) => p.userId === STUDENT && p.completed).map((p) => p.lessonId));
@@ -68,6 +83,8 @@ describe("lessonAccessFor と isCourseLocked の照合（乱数）", () => {
     const pick = (n: number) => Math.floor(rand() * n);
     let checked = 0;
     let lockedSeen = 0;
+    let coursesChecked = 0;
+    let coursesLockedSeen = 0;
     for (let trial = 0; trial < 300; trial++) {
       const nCourses = 1 + pick(5);
       const courses: Course[] = [];
@@ -99,8 +116,24 @@ describe("lessonAccessFor と isCourseLocked の照合（乱数）", () => {
         if (want === "locked") lockedSeen++;
       }
       assert.equal(await lessonAccessFor(db, STUDENT, `t${trial}_missing`), "not_found");
+
+      // #47 P4 courseAccessFor・unlockedCourseIdsFor も同じ判定（レッスン 0 件のコースも含めて照合する）
+      const perCourse = expectedCourseLocked(courses, progress);
+      for (const [id, locked] of perCourse) {
+        assert.equal(await courseAccessFor(db, STUDENT, id), locked ? "locked" : "ok", `trial ${trial} course ${id}: ${JSON.stringify({ courses, progress })}`);
+        coursesChecked++;
+        if (locked) coursesLockedSeen++;
+      }
+      assert.deepEqual(
+        await unlockedCourseIdsFor(db, STUDENT),
+        perCourse.filter(([, locked]) => !locked).map(([id]) => id),
+        `trial ${trial}: unlockedCourseIdsFor が一致しない`
+      );
+      assert.equal(await courseAccessFor(db, STUDENT, `t${trial}_course_missing`), "not_found");
     }
     assert.ok(checked > 300, `照合したレッスンが少ない: ${checked}`);
     assert.ok(lockedSeen > 0 && lockedSeen < checked, `locked と ok の両方を照合できていない: ${lockedSeen}/${checked}`);
+    assert.ok(coursesChecked > 300, `照合したコースが少ない: ${coursesChecked}`);
+    assert.ok(coursesLockedSeen > 0 && coursesLockedSeen < coursesChecked, `コースの locked と ok の両方を照合できていない: ${coursesLockedSeen}/${coursesChecked}`);
   });
 });

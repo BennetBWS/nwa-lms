@@ -249,7 +249,9 @@ describe("GET：他のレッスン・他の人の情報が混ざらない", () =
     const text = await res.text();
     assert.doesNotMatch(text, /bad_r|別レッスンとして投稿された返信/);
     assert.deepEqual(JSON.parse(text)[0].replies.map((r: { id: string }) => r.id), ["ok_r"]);
-    const select = calls[0].args.select as { replies: { where: unknown } };
+    const read = calls.find((c) => c.method === "comment.findMany");
+    assert.ok(read, "comment.findMany が呼ばれていない");
+    const select = read.args.select as { replies: { where: unknown } };
     assert.deepEqual(select.replies.where, { lessonId: LESSON });
   });
 });
@@ -257,11 +259,20 @@ describe("GET：他のレッスン・他の人の情報が混ざらない", () =
 describe("GET：入力・ログ", () => {
   it("lessonId は Prisma の where にそのまま渡す（パス区切りや SQL らしい文字列も 64 文字以内なら 200 で空）", async () => {
     for (const id of ["../lesson_1", "' OR 1=1 --", "lesson_1%00"]) {
+      // 受講生：ロックの判定でレッスンを読み（#47 P4）、ないので質問は読まずに空
+      session = STUDENT_SESSION;
       calls = [];
-      const res = await get(id);
+      let res = await get(id);
       assert.equal(res.status, 200, id);
       assert.deepEqual(await res.json(), []);
-      assert.deepEqual(calls[0].args.where, { lessonId: id, parentId: null });
+      assert.deepEqual(calls.map((c) => [c.method, c.args.where]), [["lesson.findUnique", { id }]], `受講生 ${id}`);
+      // 講師：ロックを見ないので、質問の where にそのまま渡す
+      session = INSTRUCTOR_SESSION;
+      calls = [];
+      res = await get(id);
+      assert.equal(res.status, 200, id);
+      assert.deepEqual(await res.json(), []);
+      assert.deepEqual(calls.map((c) => [c.method, c.args.where]), [["comment.findMany", { lessonId: id, parentId: null }]], `講師 ${id}`);
     }
   });
 

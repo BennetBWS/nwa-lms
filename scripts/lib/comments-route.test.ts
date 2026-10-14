@@ -206,6 +206,13 @@ function piiError() {
 
 // ───────────── GET ─────────────
 
+/** GET が質問を読んだ呼び出し（受講生はその前にロックの判定でレッスン・コース・進捗を読む。#47 P4） */
+function commentRead(): Call {
+  const c = calls.find((x) => x.method === "comment.findMany");
+  assert.ok(c, "comment.findMany が呼ばれていない");
+  return c;
+}
+
 describe("GET /api/comments/[lessonId]：認証・入力", () => {
   it("セッションがなければ 401 で、DB を読まない", async () => {
     session = null;
@@ -234,23 +241,75 @@ describe("GET /api/comments/[lessonId]：認証・入力", () => {
   });
 });
 
+describe("GET /api/comments/[lessonId]：コースのロック（#47 P4）", () => {
+  it("受講生のロック中のコースのレッスンは 403 course_locked で、質問を読まない", async () => {
+    const res = await get(LOCKED_LESSON);
+    assert.equal(res.status, 403, `status ${res.status}`);
+    assert.deepEqual(await res.json(), { error: "Forbidden", reason: "course_locked" });
+    assert.ok(!calls.some((c) => c.method === "comment.findMany"), "ロック中なのに質問を読んでいる");
+  });
+
+  it("ロールのないセッションも受講生と同じく 403", async () => {
+    session = { user: { id: STUDENT } };
+    assert.equal((await get(LOCKED_LESSON)).status, 403);
+  });
+
+  it("前のコースを全部終えれば 200", async () => {
+    progress = [
+      { userId: STUDENT, lessonId: LESSON, completed: true },
+      { userId: STUDENT, lessonId: OTHER_LESSON, completed: true },
+    ];
+    const res = await get(LOCKED_LESSON);
+    assert.equal(res.status, 200, `status ${res.status}`);
+    assert.deepEqual(await res.json(), []);
+  });
+
+  it("他の受講生の進捗や completed: false では解放されない", async () => {
+    progress = [
+      { userId: "stu_other", lessonId: LESSON, completed: true },
+      { userId: "stu_other", lessonId: OTHER_LESSON, completed: true },
+      { userId: STUDENT, lessonId: LESSON, completed: true },
+      { userId: STUDENT, lessonId: OTHER_LESSON, completed: false },
+    ];
+    assert.equal((await get(LOCKED_LESSON)).status, 403);
+  });
+
+  it("講師はロックを見ない（ロック中のコースでも 200 で、ロックの判定を読まない）", async () => {
+    session = INSTRUCTOR_SESSION;
+    comments.push({ id: "lk1", userId: STUDENT, lessonId: LOCKED_LESSON, content: "ロック中のレッスンの質問", parentId: null, createdAt: at(5) });
+    const res = await get(LOCKED_LESSON);
+    assert.equal(res.status, 200, `status ${res.status}`);
+    assert.deepEqual((await res.json()).map((c: { id: string }) => c.id), ["lk1"]);
+    assert.deepEqual(calls.map((c) => c.method), ["comment.findMany"]);
+  });
+
+  it("受講生でレッスンがなければ、これまでどおり 200 の空配列（質問を読まない）", async () => {
+    const res = await get("lesson_missing");
+    assert.equal(res.status, 200, `status ${res.status}`);
+    assert.deepEqual(await res.json(), []);
+    assert.deepEqual(calls.map((c) => c.method), ["lesson.findUnique"]);
+  });
+});
+
 describe("GET /api/comments/[lessonId]：応答", () => {
   it("select は必要な項目だけ（user は name・role・deactivatedAt）", async () => {
     await get();
+    const cm = commentRead();
     const userSelect = { select: { name: true, role: true, deactivatedAt: true } };
     const base = { id: true, content: true, createdAt: true, userId: true, user: userSelect };
-    assert.deepEqual(calls[0].args.select, {
+    assert.deepEqual(cm.args.select, {
       ...base,
       replies: { where: { lessonId: LESSON }, select: base, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
     });
-    assert.deepEqual(calls[0].args.where, { lessonId: LESSON, parentId: null });
-    assert.equal("include" in calls[0].args, false);
+    assert.deepEqual(cm.args.where, { lessonId: LESSON, parentId: null });
+    assert.equal("include" in cm.args, false);
   });
 
   it("親は新しい順（同時刻は id の降順）で take 100、返信は古い順（同時刻は id の昇順）", async () => {
     const body = await (await get()).json();
-    assert.deepEqual(calls[0].args.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
-    assert.equal(calls[0].args.take, 100);
+    const cm = commentRead();
+    assert.deepEqual(cm.args.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
+    assert.equal(cm.args.take, 100);
     assert.deepEqual(body.map((c: { id: string }) => c.id), ["c4", "c3", "c2", "c1"]);
     const c1 = body.find((c: { id: string }) => c.id === "c1");
     assert.deepEqual(c1.replies.map((r: { id: string }) => r.id), ["r2", "r1", "r3", "r4"]);

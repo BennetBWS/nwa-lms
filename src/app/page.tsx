@@ -56,6 +56,15 @@ import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
 import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { formatBadgeCount, readMarkReadResponse, readUnreadCountResponse, toUnreadCount, unreadBadgeLabel, unreadIdsToMark } from "@/lib/notification-read";
+import {
+  COMPLETE_FORBIDDEN_MESSAGE,
+  COMPLETE_LOCKED_MESSAGE,
+  COURSE_LOCKED_DESCRIPTION,
+  COURSE_LOCKED_TITLE,
+  completeRejection,
+  isCourseLockedError,
+  toRequestError,
+} from "@/lib/course-locked";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
 import { pickInitialLesson } from "@/lib/initial-lesson";
 import { toAdminDashboardView } from "@/lib/admin-stats";
@@ -290,14 +299,16 @@ const authFetch = makeAuthFetch({ fetch: browserFetch, onExpired: handleSessionE
 // SWR fetcher — module-level so the global cache is shared across all components.
 // An expired session (401, or a redirect to /login) is handled by authFetch (sign out
 // and go to /login; the page shows the loading screen meanwhile), so it is not shown
-// as a network error. Any other non-OK response throws.
+// as a network error. Any other non-OK response throws (toRequestError: the body is read
+// only to tell a 403 { reason: "course_locked" } (#47) apart; it is not put in the message).
 const swrFetcher = async (url) => {
   const res = await authFetch(url);
   if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") {
     throw new Error("Not authenticated");
   }
   if (!res.ok) {
-    throw new Error(`Request failed (${res.status})`);
+    const body = await res.json().catch(() => null);
+    throw toRequestError(res.status, body);
   }
   return res.json();
 };
@@ -1065,10 +1076,18 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     setCompletedIds(prev => new Set([...prev, lessonId]));
     setCompleting(true);
     try {
-      await authFetch("/api/progress", {
+      const res = await authFetch("/api/progress", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lessonId }),
       });
+      // 403 (the course is locked, #47): undo the optimistic update and stay on this lesson
+      const rejection = completeRejection(res.status, res.status === 403 ? await res.json().catch(() => null) : null);
+      if (rejection) {
+        setCompletedIds(prev => { const next = new Set(prev); next.delete(lessonId); return next; });
+        showToast(rejection === "course_locked" ? COMPLETE_LOCKED_MESSAGE : COMPLETE_FORBIDDEN_MESSAGE);
+        revalidateCourse();
+        return;
+      }
       // Auto-navigate to next lesson
       const idx = allLessons.findIndex(l => l.id === lessonId);
       const next = allLessons[idx + 1];
@@ -1102,6 +1121,17 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     width: w, height: h, borderRadius: 8, background: T.borderSubtle,
     animation: "skeletonPulse 1.6s ease-in-out infinite", ...extra,
   });
+
+  // The course is locked for this student (403 { reason: "course_locked" }, #47): not a network error,
+  // so no retry; only the way back to the course list.
+  if (isCourseLockedError(courseError)) return (
+    <div role="alert" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, color: T.textSecondary, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+      <Lock size={22} style={{ color: T.textMuted }} aria-hidden="true" />
+      <div style={{ fontSize: 15, fontWeight: 600, color: T.dark }}>{COURSE_LOCKED_TITLE}</div>
+      <div style={{ fontSize: 13, color: T.textMuted }}>{COURSE_LOCKED_DESCRIPTION}</div>
+      <Button size="sm" onClick={() => setCurrentPage("courses")} style={{ background: T.accent, color: "#fff", borderRadius: 10, fontWeight: 600 }}>コース一覧へ</Button>
+    </div>
+  );
 
   // Surface fetch failures instead of showing the skeleton forever. An expired session
   // is already handled by authFetch (sign out, loading screen, /login); this covers other errors
