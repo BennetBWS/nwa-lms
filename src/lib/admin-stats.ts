@@ -60,7 +60,7 @@ export type StatsQuestionRow = {
 export type AdminStatsRows = {
   /** role = STUDENT の全員（無効化済みも含む） */
   students: ReadonlyArray<StatsStudentRow>;
-  /** 並び順（order の昇順）に並べたコース */
+  /** 並び順（[order, id]。src/lib/course-order.ts）に並べたコース */
   courses: ReadonlyArray<StatsCourseRow>;
   /** completed = true の行（受講生以外の行が混ざっていてもよい。受講生の行だけを使う） */
   progress: ReadonlyArray<StatsProgressRow>;
