@@ -80,3 +80,36 @@ export async function collectDescendantIds(
     frontier = next;
   }
 }
+
+/** parentId をたどる途中で、同じ行に戻った（循環・自己参照）。route では 500 になり、削除はロールバックされる */
+export class ReplyTreeCycleError extends Error {
+  constructor() {
+    super("Reply tree has a parentId cycle");
+    this.name = "ReplyTreeCycleError";
+  }
+}
+
+/**
+ * startId から parentId を上にたどり、根の質問（parentId が null の行）の id を返す。startId が質問ならそのまま返す。
+ * readParent は「id の行の parentId」を返す関数（route では同じトランザクションの findUnique）。行がなければ null を返す。
+ * - 途中の行が見つからなければ null（同時に削除された等）
+ * - 読む回数は maxDepth 回まで。超えたら ReplyTreeTooDeepError
+ * - 同じ id に戻ったら ReplyTreeCycleError
+ */
+export async function findRootQuestionId(
+  startId: string,
+  readParent: (id: string) => Promise<{ parentId: string | null } | null>,
+  maxDepth: number = MAX_REPLY_DEPTH
+): Promise<string | null> {
+  const seen = new Set<string>();
+  let current = startId;
+  for (let reads = 1; ; reads++) {
+    if (seen.has(current)) throw new ReplyTreeCycleError();
+    seen.add(current);
+    const row = await readParent(current);
+    if (!row) return null;
+    if (row.parentId === null) return current;
+    if (reads >= maxDepth) throw new ReplyTreeTooDeepError();
+    current = row.parentId;
+  }
+}

@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import {
   DELETE_LOG_MESSAGE,
   MAX_REPLY_DEPTH,
+  ReplyTreeCycleError,
   ReplyTreeTooDeepError,
   collectDescendantIds,
+  findRootQuestionId,
   deletedCommentKind,
   questionDeletedResponse,
   replyDeletedResponse,
@@ -136,5 +138,65 @@ describe("collectDescendantIds", () => {
   it("findChildIds の例外はそのまま伝える", async () => {
     const boom = new Error("boom");
     await assert.rejects(collectDescendantIds("q", async () => { throw boom; }), (e: unknown) => e === boom);
+  });
+});
+
+describe("findRootQuestionId", () => {
+  function reader(parentOf: Record<string, string | null>) {
+    const asked: string[] = [];
+    const read = async (id: string) => {
+      asked.push(id);
+      return id in parentOf ? { parentId: parentOf[id] } : null;
+    };
+    return { read, asked };
+  }
+
+  it("質問から始めればその id を返し、1 回だけ読む", async () => {
+    const r = reader({ q: null });
+    assert.equal(await findRootQuestionId("q", r.read), "q");
+    assert.deepEqual(r.asked, ["q"]);
+  });
+
+  it("返信への返信から、根の質問までたどる", async () => {
+    const r = reader({ q: null, a: "q", a1: "a", a2: "a1" });
+    assert.equal(await findRootQuestionId("a2", r.read), "q");
+    assert.deepEqual(r.asked, ["a2", "a1", "a", "q"]);
+  });
+
+  it("途中の行がなければ null", async () => {
+    assert.equal(await findRootQuestionId("a1", reader({ a1: "a" }).read), null);
+  });
+
+  it("読む回数が上限ちょうどなら根を返し、上限を超えると ReplyTreeTooDeepError", async () => {
+    const chain: Record<string, string | null> = { r0: null };
+    for (let i = 1; i <= 3; i++) chain[`r${i}`] = `r${i - 1}`;
+    assert.equal(await findRootQuestionId("r2", reader(chain).read, 3), "r0", "r2→r1→r0 の 3 回");
+    await assert.rejects(findRootQuestionId("r3", reader(chain).read, 3), ReplyTreeTooDeepError);
+  });
+
+  it("既定の上限は MAX_REPLY_DEPTH 回", async () => {
+    const chain: Record<string, string | null> = { r0: null };
+    for (let i = 1; i <= 10; i++) chain[`r${i}`] = `r${i - 1}`;
+    assert.equal(await findRootQuestionId("r9", reader(chain).read), "r0");
+    await assert.rejects(findRootQuestionId("r10", reader(chain).read), ReplyTreeTooDeepError);
+  });
+
+  it("parentId が循環していたら ReplyTreeCycleError（読む回数は有限）", async () => {
+    const r = reader({ a: "b", b: "c", c: "a" });
+    await assert.rejects(findRootQuestionId("a", r.read), (e: unknown) => {
+      assert.ok(e instanceof ReplyTreeCycleError, "ReplyTreeCycleError を投げる");
+      assert.equal((e as Error).name, "ReplyTreeCycleError");
+      return true;
+    });
+    assert.deepEqual(r.asked, ["a", "b", "c"]);
+  });
+
+  it("自己参照も ReplyTreeCycleError", async () => {
+    await assert.rejects(findRootQuestionId("s", reader({ s: "s" }).read), ReplyTreeCycleError);
+  });
+
+  it("readParent の例外はそのまま伝える", async () => {
+    const boom = new Error("boom");
+    await assert.rejects(findRootQuestionId("q", async () => { throw boom; }), (e: unknown) => e === boom);
   });
 });
