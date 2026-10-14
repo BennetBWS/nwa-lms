@@ -87,6 +87,10 @@ export async function DELETE(
     }
 
     const parentId = target.parentId;
+    if (parentId === null) {
+      // deletedCommentKind が "reply" なら parentId は null ではない。判定が変わったときに質問を返信として消さないためのガード
+      throw new Error("Reply without parentId");
+    }
     const viewerId = session.user.id;
     const thread = await prisma.$transaction(async (tx) => {
       // 返信への返信（#32 より前のデータ）があれば、先に消す
