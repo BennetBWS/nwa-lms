@@ -13,6 +13,7 @@
 
 import { avatarInitial, displayName } from "./user-display";
 import { relativeTimeJa } from "./student-dashboard";
+import type { CourseLockedReason } from "./lesson-access";
 
 /** 本文の最大文字数（コードポイント単位） */
 export const COMMENT_MAX_LENGTH = 2000;
@@ -63,7 +64,7 @@ export type CreateCommentReason =
 export type CommentPostRejectReason =
   | "forbidden_role"
   | "reply_not_allowed"
-  | "course_locked"
+  | CourseLockedReason
   | "rate_limited"
   | "duplicate";
 

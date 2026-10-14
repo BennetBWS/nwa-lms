@@ -166,10 +166,13 @@ describe("Course / Section / Lesson を読む箇所の一覧（prisma 以外の�
    * ファイル内の orderBy が 1 件以上あり、すべてが共通の定数か [order, id] のリテラルであることを求める。
    */
   const ORDER_BY_CHECKED_IN_SOURCE: Record<string, string> = {
-    "src/lib/lesson-access.ts": "投稿時のロック判定（#46 B-1、PR #64）。コースを並べてロックを計算する",
+    "src/lib/lesson-access.ts": "API のロック判定（#46 B-1、#47 P4）。コースを並べてロックを計算する",
   };
-  /** 別のブランチで追加されるファイル。存在しない間は確認を飛ばし、存在すれば上の確認をすべて行う */
-  const MAY_NOT_EXIST = new Set(["src/lib/lesson-access.ts"]);
+  /**
+   * 別のブランチで追加されるファイル。存在しない間は確認を飛ばし、存在すれば上の確認をすべて行う。
+   * 今は空（lesson-access.ts は B-1（PR #64）が入ったので外した。#47 P4）
+   */
+  const MAY_NOT_EXIST = new Set<string>();
 
   /** ファイル内の orderBy が、共通の定数か [order, id] のリテラルだけかを確かめる。問題の一覧を返す */
   function strictOrderByProblems(file: string, src: string): string[] {
