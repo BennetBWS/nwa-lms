@@ -49,3 +49,4 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - `src/lib/supabase.ts` は現在未使用
 - AI チャット（`src/components/Chat*.tsx`、`src/lib/chat-mock.ts`）は見本の回答を返すモックで、リリースでは非表示（#32）。画面から import しない
 - 受講生の無効化は論理削除（#7）。`PUT /api/admin/students/[id]/deactivate` は `User.deactivatedAt` を設定し、`sessionVersion` を +1、未使用のパスワードリセットトークンを失効させる（データは削除しない）。`PUT /api/admin/students/[id]/reactivate` は `deactivatedAt` を null に戻す。無効化済みの受講生はログインとパスワードリセットができず、既存のログイン（JWT セッション）も API では即座に失効する（#11）。受講生一覧 API は既定で有効な受講生だけを返す（`?status=deactivated|all` で切り替え）
+- 質問・返信の削除は講師専用の `DELETE /api/admin/comments/[id]`（#47。INSTRUCTOR 以外は DB を読む前に 403）。物理削除で、元に戻せない。質問を消すと、その返信も同じトランザクションで `deleteMany({ where: { parentId } })` で消す（lessonId では絞らない）。`Comment.parent` の FK は ON DELETE SET NULL なので、返信を明示的に消さないと質問として残る。返信を消すと削除後のスレッドを返す。確認と削除の間に別の講師が消した場合（P2025）は 404。既に送った回答の通知は残す。ログは固定文（`[admin] question deleted` / `[admin] reply deleted`）だけで、id・本文・名前は出さない。受講生が自分の投稿を消す API はない
