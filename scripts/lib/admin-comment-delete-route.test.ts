@@ -1157,3 +1157,85 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
     assert.equal(calls.some((c) => c.method === "comment.deleteMany"), false, "子孫はない");
   });
 });
+
+describe("DELETE /api/admin/comments/[id]：返信への返信を消したときの応答のスレッド", () => {
+  const addNested = () =>
+    comments.push({ id: "r_nested", userId: "stu_active", lessonId: "lesson_1", content: "返信への返信", parentId: "r_stu", createdAt: at(180) });
+
+  it("返信への返信（r_nested）自体を消すと、thread は根の質問（q_stu）で返す", async () => {
+    addNested();
+    const res = await del("r_nested");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.kind, "reply");
+    assert.equal(body.id, "r_nested");
+    assert.equal(body.thread.id, "q_stu", "中間の返信 r_stu ではなく根の質問");
+    assert.equal(body.thread.content, "受講生の質問");
+    assert.deepEqual(body.thread.replies.map((r: { id: string }) => r.id), ["r_stu", "r_ins"], "根の質問の直下の返信（同じレッスン）");
+    assert.deepEqual(ids(), ["q_stu", "r_stu", "r_ins", "r_other", "q_gone", "r_gone", "q_alone"], "r_nested だけが消える");
+  });
+
+  it("根までのたどりと読み直しは、削除と同じトランザクションの中で、parentId だけを読んでたどる", async () => {
+    addNested();
+    await del("r_nested");
+    const finds = calls.filter((c) => c.method === "comment.findUnique");
+    assert.deepEqual(
+      finds.map((c) => [c.args.where, c.inTx]),
+      [
+        [{ id: "r_nested" }, false],
+        [{ id: "r_stu" }, true],
+        [{ id: "q_stu" }, true],
+        [{ id: "q_stu" }, true],
+      ]
+    );
+    assert.deepEqual(finds[1].args.select, { parentId: true });
+    assert.deepEqual(finds[2].args.select, { parentId: true });
+    const order = calls.map((c) => c.method);
+    assert.ok(order.indexOf("comment.delete") < order.lastIndexOf("comment.findUnique"), "削除してから読み直す");
+  });
+
+  /** parentId から順に、depth 段の返信の鎖を作る */
+  function addChain(parentId: string, depth: number) {
+    let parent = parentId;
+    for (let i = 1; i <= depth; i++) {
+      comments.push({ id: `up_${i}`, userId: "stu_active", lessonId: "lesson_2", content: `深さ ${i}`, parentId: parent, createdAt: at(100 - i) });
+      parent = `up_${i}`;
+    }
+  }
+
+  it("10 段目の返信を消すと、根の質問まで 10 回読んでたどり、thread は根の質問", async () => {
+    addChain("q_alone", 11);
+    const res = await del("up_10");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.thread.id, "q_alone");
+    assert.deepEqual(body.thread.replies.map((r: { id: string }) => r.id), ["up_1"]);
+    assert.equal(ids().some((id) => id === "up_10" || id === "up_11"), false, "対象と子孫が消える");
+  });
+
+  it("11 段目の返信を消すと、根までが上限を超えるので 500（ログはエラー名だけ）", async () => {
+    addChain("q_alone", 11);
+    const done = captureLogs();
+    const res = await del("up_11");
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "Internal server error" });
+    assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
+    assert.equal(out.info, "", "成功のログを出さない");
+  });
+
+  it("親より上で parentId が循環していたら止まり、500（ReplyTreeCycleError）", async () => {
+    comments.push(
+      { id: "loop_a", userId: "stu_active", lessonId: "lesson_1", content: "循環 A", parentId: "loop_b", createdAt: at(40) },
+      { id: "loop_b", userId: "stu_active", lessonId: "lesson_1", content: "循環 B", parentId: "loop_a", createdAt: at(39) },
+      { id: "loop_leaf", userId: "stu_active", lessonId: "lesson_1", content: "循環の下の返信", parentId: "loop_a", createdAt: at(38) }
+    );
+    const done = captureLogs();
+    const res = await del("loop_leaf");
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeCycleError");
+    assert.ok(calls.filter((c) => c.method === "comment.findUnique").length <= 4, "読む回数は有限");
+    assert.ok(!out.error.includes("loop_"), "ログに id を出さない");
+  });
+});
