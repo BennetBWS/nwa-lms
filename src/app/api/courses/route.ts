@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
+import { hideLockedLessonContent } from "@/lib/lesson-access";
+import { unlockedCourseIds } from "@/lib/question-threads";
 
+// コース一覧。受講生（講師以外）には、ロック中のコースも一覧には返すが、
+// そのレッスンから videoUrl・content・pdfUrl を除き、コースに locked: true を付ける（#47 P4、Tec 決定 D-a）。
+// 画面のロック計算（course-lock の isCourseLocked）に要る id・title・type・completed は残す。講師は常に locked: false。
+// ロックはここで読んだコース（COURSE_ORDER_BY の順）と自分の完了から計算する（lesson-access と同じ規則）
 export async function GET() {
   try {
     const session = await auth();
@@ -32,7 +38,10 @@ export async function GET() {
       progressRecords.map((p) => p.lessonId)
     );
 
+    const unlocked = session.user.role === "INSTRUCTOR" ? null : new Set(unlockedCourseIds(courses, completedLessonIds));
+
     const coursesWithProgress = courses.map((course) => {
+      const locked = unlocked !== null && !unlocked.has(course.id);
       let totalLessons = 0;
       let completedLessons = 0;
 
@@ -41,7 +50,8 @@ export async function GET() {
           totalLessons++;
           const completed = completedLessonIds.has(lesson.id);
           if (completed) completedLessons++;
-          return { ...lesson, completed };
+          const row = { ...lesson, completed };
+          return locked ? hideLockedLessonContent(row) : row;
         });
         return { ...section, lessons };
       });
@@ -51,7 +61,7 @@ export async function GET() {
           ? Math.round((completedLessons / totalLessons) * 100)
           : 0;
 
-      return { ...course, sections, progress };
+      return { ...course, sections, progress, locked };
     });
 
     return NextResponse.json(coursesWithProgress, {

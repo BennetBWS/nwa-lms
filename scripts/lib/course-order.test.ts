@@ -161,6 +161,13 @@ type RouteCase = {
 
 let ROUTES: RouteCase[];
 
+/** ロックの判定だけに使う読み方（lesson-access の loadCourseLocks。レッスンの id を数えるだけで、並びは COURSE_ORDER_BY だけが効く） */
+const LOCK_SELECT = { id: true, sections: { select: { lessons: { select: { id: true } } } } };
+function isLockOnlyRead(args: Row): boolean {
+  return args.include === undefined && JSON.stringify(args.select) === JSON.stringify(LOCK_SELECT);
+}
+let courseDetail: typeof import("../../src/app/api/courses/[courseId]/route");
+
 function idParams<K extends string>(key: K, id: string) {
   return { params: Promise.resolve({ [key]: id } as Record<K, string>) };
 }
@@ -169,7 +176,7 @@ before(async () => {
   (globalThis as unknown as { prisma: unknown }).prisma = fakePrisma;
   installFakeAuth(() => session);
   const courseList = await import("../../src/app/api/courses/route");
-  const courseDetail = await import("../../src/app/api/courses/[courseId]/route");
+  courseDetail = await import("../../src/app/api/courses/[courseId]/route");
   const dashboard = await import("../../src/app/api/dashboard/route");
   const adminStats = await import("../../src/app/api/admin/stats/route");
   const adminStudents = await import("../../src/app/api/admin/students/route");
@@ -279,22 +286,29 @@ describe("各ルートが共通の定数で並べる", () => {
       assert.equal(res.status, 200, `${r.file} が 200 を返さない（status ${res.status}）`);
       const courseCalls = calls.filter((c) => c.method === "course.findMany" || c.method === "course.findUnique");
       assert.ok(courseCalls.length > 0, `${r.file} がコースを読んでいない`);
+      // 入れ子の並びが要るのは、画面に出すコースを読む呼び出し。
+      // ロックの判定（lesson-access の courseAccessFor。#47 P4）はレッスンの id を数えるだけ（LOCK_SELECT）なので、入れ子の orderBy を求めない
+      const contentCalls = courseCalls.filter((c) => !isLockOnlyRead(c.args));
       for (const c of courseCalls) {
         if (c.method === "course.findMany") {
           assert.equal(c.args.orderBy, COURSE_ORDER_BY, `${r.file} の course.findMany が COURSE_ORDER_BY を使っていない`);
         }
         const sectionSpec = nestedSpec(c.args, "sections");
         const lessonSpec = nestedSpec(sectionSpec, "lessons");
-        if (r.nested.includes("sections")) {
+        const needsNested = contentCalls.includes(c);
+        if (needsNested && r.nested.includes("sections")) {
           assert.equal(sectionSpec?.orderBy, SECTION_ORDER_BY, `${r.file} の sections が SECTION_ORDER_BY を使っていない`);
         } else if (sectionSpec?.orderBy !== undefined) {
           assert.equal(sectionSpec.orderBy, SECTION_ORDER_BY, `${r.file} の sections の orderBy が SECTION_ORDER_BY でない`);
         }
-        if (r.nested.includes("lessons")) {
+        if (needsNested && r.nested.includes("lessons")) {
           assert.equal(lessonSpec?.orderBy, LESSON_ORDER_BY, `${r.file} の lessons が LESSON_ORDER_BY を使っていない`);
         } else if (lessonSpec?.orderBy !== undefined) {
           assert.equal(lessonSpec.orderBy, LESSON_ORDER_BY, `${r.file} の lessons の orderBy が LESSON_ORDER_BY でない`);
         }
+      }
+      if (r.nested.length > 0) {
+        assert.ok(contentCalls.length > 0, `${r.file} がロックの判定以外でコースを読んでいない（入れ子の並びを確かめられない）`);
       }
     }
   });
@@ -338,6 +352,19 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
     ];
     assert.deepEqual(screenList, expected);
     assert.deepEqual(screenDash, expected);
+
+    // サーバー：/api/courses の locked（#47 P4）も画面のロック表示と一致する
+    assert.deepEqual(
+      (list as Array<{ id: string; locked?: unknown }>).map((c) => ({ id: c.id, locked: c.locked })),
+      expected,
+      "/api/courses の locked が画面のロック表示と一致しない"
+    );
+
+    // サーバー：/api/courses/[courseId]（#47 P4）は、画面がロック表示するコースだけ 403
+    for (const e of expected) {
+      const res = await courseDetail.GET(new Request(`http://localhost/api/courses/${e.id}`), idParams("courseId", e.id));
+      assert.equal(res.status, e.locked ? 403 : 200, `/api/courses/${e.id} の status が画面のロック表示と一致しない`);
+    }
 
     // サーバー：質問一覧で受講生に見せるコース（unlockedCourseIds）
     calls = [];
