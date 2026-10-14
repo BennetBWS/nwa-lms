@@ -8,6 +8,10 @@ import type { Prisma } from "@prisma/client";
  * サーバーの判定（question-threads の unlockedCourseIds など）が食い違う。
  * Course / Section / Lesson を orderBy で並べるときは、必ずこの定数を使う（scripts/lib/course-order.test.ts で確かめる）。
  * 一意制約は付けない（スキーマは変えない）。
+ *
+ * 定数はすべての呼び出し元で共有する可変の配列（Prisma の orderBy の型が readonly 配列を受け付けないため、
+ * `as const` や Object.freeze の型にしていない）。中身を変更しないこと。
+ * テスト（course-order.test.ts）は、ルートが渡した orderBy がこの定数と同じ参照であることで確かめている。
  */
 
 export const COURSE_ORDER_BY: Prisma.CourseOrderByWithRelationInput[] = [{ order: "asc" }, { id: "asc" }];
