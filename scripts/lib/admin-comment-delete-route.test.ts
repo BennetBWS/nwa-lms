@@ -642,24 +642,92 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
     }
   });
 
-  it("確認と削除の間に消された（delete が P2025）場合は 500（設計どおり。再試行すれば 404）", async () => {
+  /** 最初の findUnique の直後に、別の講師が removeIds を消したことにする */
+  function deletedRightAfterRead(removeIds: string[]) {
     const origFind = fakeComment.findUnique;
-    const find = mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
+    let n = 0;
+    return mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
+      n += 1;
       const row = await origFind.call(fakeComment, args);
-      // 読んだ直後に、別の講師が同じ返信を消した
-      comments = comments.filter((c) => c.id !== "r_stu");
+      if (n === 1) comments = comments.filter((c) => !removeIds.includes(c.id));
       return row;
+    });
+  }
+
+  it("確認と削除の間に返信が消された（delete が P2025）場合は 404 Comment not found で、ログを出さない", async () => {
+    const find = deletedRightAfterRead(["r_stu"]);
+    const done = captureLogs();
+    try {
+      const res = await del("r_stu");
+      const out = done();
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: "Comment not found" });
+      assert.deepEqual(
+        calls.filter((c) => c.method !== "$transaction").map((c) => [c.method, c.inTx]),
+        [["comment.findUnique", false], ["comment.delete", true]],
+        "delete で失敗し、親の読み直しまで進まない"
+      );
+      assert.deepEqual(out, { error: "", info: "", other: "" }, "成功のログもエラーのログも出さない");
+    } finally {
+      find.mock.restore();
+    }
+    assert.equal((await del("r_stu")).status, 404, "再試行しても 404");
+  });
+
+  it("確認と削除の間に質問ごと消された（deleteMany は 0 件、delete が P2025）場合は 404 で、ログを出さない", async () => {
+    const find = deletedRightAfterRead(["q_stu", "r_stu", "r_ins", "r_other"]);
+    const done = captureLogs();
+    try {
+      const res = await del("q_stu");
+      const out = done();
+      assert.equal(res.status, 404);
+      assert.deepEqual(await res.json(), { error: "Comment not found" });
+      assert.deepEqual(
+        calls.filter((c) => c.method !== "$transaction").map((c) => [c.method, c.inTx]),
+        [["comment.findUnique", false], ["comment.deleteMany", true], ["comment.delete", true]]
+      );
+      assert.deepEqual(out, { error: "", info: "", other: "" }, "成功のログもエラーのログも出さない");
+      assert.deepEqual(ids(), ["q_gone", "r_gone", "q_alone"], "ほかのスレッドは残る");
+    } finally {
+      find.mock.restore();
+    }
+  });
+
+  it("P2025 以外の Prisma のエラー（P2003）は 404 にせず 500", async () => {
+    const m = mock.method(fakeComment, "delete", async (args: Record<string, unknown>) => {
+      calls.push({ method: "comment.delete", args, inTx });
+      throw piiError();
     });
     const done = captureLogs();
     try {
       const res = await del("r_stu");
       const out = done();
       assert.equal(res.status, 500);
-      assert.equal(out.error, "DELETE /api/admin/comments/[id] error: PrismaClientKnownRequestError", "ログにコード P2025 も出さない");
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
+    } finally {
+      m.mock.restore();
+    }
+  });
+
+  it("親の読み直しの失敗（code なしの Error）は 404 にせず 500 のまま", async () => {
+    // 読み直しの失敗は route 内で code なしの Error を投げる。P2025 の 404 と混ざらないことを確かめる
+    const origFind = fakeComment.findUnique;
+    let n = 0;
+    const find = mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
+      n += 1;
+      if (n === 1) return origFind.call(fakeComment, args);
+      record("comment.findUnique", args);
+      return null;
+    });
+    const done = captureLogs();
+    try {
+      const res = await del("r_stu");
+      done();
+      assert.equal(res.status, 500);
     } finally {
       find.mock.restore();
     }
-    assert.equal((await del("r_stu")).status, 404, "再試行すれば 404");
   });
 
   it("$transaction 自体が失敗しても 500、応答とログに本文・メールを出さない", async () => {
