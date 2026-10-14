@@ -123,3 +123,45 @@ describe("GET /api/notifications/unread-count：エラー", () => {
     assert.match(out, /Error/);
   });
 });
+
+// ───────────── 追加（tester、#62）：他人の通知が多い場合・引数・エラー ─────────────
+
+describe("GET /api/notifications/unread-count：追加", () => {
+  it("他人の未読が 60 件あっても、自分が 0 件なら 0", async () => {
+    notifications = [
+      { id: "n1", userId: USER, read: true },
+      ...Array.from({ length: 60 }, (_, i) => ({ id: `o${i}`, userId: OTHER, read: false })),
+    ];
+    assert.deepEqual(await (await GET()).json(), { count: 0 });
+  });
+
+  it("自分の未読 51 件・既読 30 件・他人の未読 40 件なら 51", async () => {
+    notifications = [
+      ...Array.from({ length: 51 }, (_, i) => ({ id: `u${i}`, userId: USER, read: false })),
+      ...Array.from({ length: 30 }, (_, i) => ({ id: `r${i}`, userId: USER, read: true })),
+      ...Array.from({ length: 40 }, (_, i) => ({ id: `o${i}`, userId: OTHER, read: false })),
+    ];
+    assert.deepEqual(await (await GET()).json(), { count: 51 });
+    assert.deepEqual(Object.keys(calls[0].args), ["where"], "count に where 以外（take / skip など）が付いている");
+  });
+
+  it("講師は、受講生に未読が多くても講師本人の件数（0 件）だけ", async () => {
+    session = INSTRUCTOR_SESSION;
+    assert.deepEqual(await (await GET()).json(), { count: 0 });
+    assert.deepEqual(calls[0].args, { where: { userId: "ins_1", read: false } });
+  });
+
+  it("Error でない値（メールアドレス入りの文字列）が投げられても 500 で、ログと応答に出さない", async () => {
+    failWith = `boom ${DUMMY_EMAIL} ${USER}`;
+    const logged = mock.method(console, "error", () => {});
+    const res = await GET();
+    const args = logged.mock.calls.flatMap((c) => c.arguments);
+    logged.mock.restore();
+    assert.equal(res.status, 500);
+    const text = await res.text();
+    const out = args.map((a) => (typeof a === "string" ? a : inspect(a, { depth: 5 }))).join(" ") + text;
+    assert.doesNotMatch(out, /example\.com/);
+    assert.doesNotMatch(out, new RegExp(USER));
+    assert.doesNotMatch(out, /boom/);
+  });
+});
