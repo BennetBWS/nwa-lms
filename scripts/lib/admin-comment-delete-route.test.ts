@@ -1022,22 +1022,27 @@ describe("DELETE /api/admin/comments/[id]：エラーとログ（追加）", () 
 });
 
 // 返信への返信（#32 より前の POST /api/comments は parentId を検証していなかったので、本番に存在しうる）。
-// 実物の FK は ON DELETE SET NULL なので、中間の返信を消すと孫の返信が parentId: null（質問）として残る。
-// 期待：質問を消したら、その下の返信は孫も含めて消える／返信を消しても、その下の返信が質問として浮き上がらない。
-// 現状の実装は直下の返信だけを deleteMany するので失敗する。本番コードの判断待ちのため todo（失敗してもスイートは落とさない）。
-describe("DELETE /api/admin/comments/[id]：返信への返信（孫）がある場合（追加・todo）", () => {
+// 実物の FK は ON DELETE SET NULL なので、中間の返信だけを消すと孫の返信が parentId: null（質問）として残る。
+// 削除 API は子孫を parentId の in で 1 段ずつ集め、先に消す（深さの上限 MAX_REPLY_DEPTH = 10、循環でも止まる）。
+describe("DELETE /api/admin/comments/[id]：返信への返信（孫）がある場合", () => {
   const addNested = () =>
     comments.push({ id: "r_nested", userId: "stu_active", lessonId: "lesson_1", content: "返信への返信", parentId: "r_stu", createdAt: at(180) });
 
-  it("質問を消すと、孫の返信も消え、質問として残らない", { todo: "孫の返信が parentId: null の質問として残る（報告済み）" }, async () => {
+  it("質問を消すと、孫の返信も消え、質問として残らない", async () => {
     addNested();
     const res = await del("q_stu");
     assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { kind: "question", id: "q_stu", deletedReplies: 4 }, "deletedReplies は子孫の総数");
     assert.equal(ids().includes("r_nested"), false, "孫の返信も消える");
     assert.deepEqual(comments.filter((c) => c.parentId === null).map((c) => c.id), ["q_gone", "q_alone"], "質問として浮き上がらない");
+    const dm = calls.find((c) => c.method === "comment.deleteMany");
+    assert.ok(dm && dm.inTx, "子孫の deleteMany はトランザクションの中");
+    assert.deepEqual(dm.args.where, { id: { in: ["r_stu", "r_ins", "r_other", "r_nested"] } }, "子と孫をまとめて消す");
+    const order = calls.map((c) => c.method);
+    assert.ok(order.indexOf("comment.deleteMany") < order.indexOf("comment.delete"), "子孫を消してから質問を消す");
   });
 
-  it("子を持つ返信を消しても、その子が質問として残らない", { todo: "子の返信が parentId: null の質問として残る（報告済み）" }, async () => {
+  it("子を持つ返信を消しても、その子が質問として残らない（子も消え、ほかの返信は残る）", async () => {
     addNested();
     const res = await del("r_stu");
     assert.equal(res.status, 200);
@@ -1045,5 +1050,108 @@ describe("DELETE /api/admin/comments/[id]：返信への返信（孫）がある
       !comments.some((c) => c.id === "r_nested" && c.parentId === null),
       "r_nested が質問（parentId: null）になっていない"
     );
+    assert.deepEqual(ids(), ["q_stu", "r_ins", "r_other", "q_gone", "r_gone", "q_alone"], "r_stu と r_nested だけが消える");
+    const dm = calls.find((c) => c.method === "comment.deleteMany");
+    assert.ok(dm && dm.inTx, "子孫の deleteMany はトランザクションの中");
+    assert.deepEqual(dm.args.where, { id: { in: ["r_nested"] } });
+    const order = calls.map((c) => c.method);
+    assert.ok(order.indexOf("comment.deleteMany") < order.indexOf("comment.delete"), "子孫を消してから返信を消す");
+    const body = await res.json();
+    assert.deepEqual(Object.keys(body).sort(), ["id", "kind", "thread"], "返信の応答の形は今までどおり");
+    assert.deepEqual(body.thread.replies.map((r: { id: string }) => r.id), ["r_ins"], "スレッドは削除後の直下の返信");
+  });
+});
+
+describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", () => {
+  /** parentId から順に、depth 段の返信の鎖を作る（id は `${prefix}1`…） */
+  function addChain(parentId: string, depth: number, prefix = "deep_") {
+    let parent = parentId;
+    for (let i = 1; i <= depth; i++) {
+      const id = `${prefix}${i}`;
+      comments.push({ id, userId: "stu_active", lessonId: "lesson_1", content: `深さ ${i} の返信`, parentId: parent, createdAt: at(100 - i) });
+      parent = id;
+    }
+  }
+
+  it("質問の下に 10 段（上限ちょうど）の返信があれば、すべて消して 200", async () => {
+    addChain("q_alone", 10);
+    const res = await del("q_alone");
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { kind: "question", id: "q_alone", deletedReplies: 10 });
+    assert.equal(ids().some((id) => id.startsWith("deep_") || id === "q_alone"), false, "鎖と質問がすべて消える");
+    assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 11, "10 段 + 子がないことの確認 1 回");
+  });
+
+  it("質問の下に 11 段の返信があれば 500 で、何も消さない（ログはルート名とエラー名だけ）", async () => {
+    addChain("q_alone", 11);
+    const before = ids();
+    const done = captureLogs();
+    const res = await del("q_alone");
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.deepEqual(await res.json(), { error: "Internal server error" });
+    assert.equal(deletes().length, 0, "deleteMany・delete を呼ばない（実物でもトランザクションはロールバックされる）");
+    assert.deepEqual(ids(), before, "コメントは減らない");
+    assert.ok(calls.filter((c) => c.method === "comment.findMany").every((c) => c.inTx), "子孫の収集はトランザクションの中");
+    assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
+    assert.equal(out.info, "", "成功のログを出さない");
+    assert.ok(!out.error.includes("deep_") && !out.error.includes("q_alone"), "ログに id を出さない");
+  });
+
+  it("返信の下に 10 段の返信があれば、返信と子孫を消して 200", async () => {
+    addChain("r_stu", 10);
+    const res = await del("r_stu");
+    assert.equal(res.status, 200);
+    assert.equal(ids().some((id) => id.startsWith("deep_") || id === "r_stu"), false, "鎖と返信がすべて消える");
+    assert.equal(comments.filter((c) => c.parentId === null).length, 3, "質問として浮き上がる行がない");
+  });
+
+  it("返信の下に 11 段の返信があれば 500 で、何も消さない", async () => {
+    addChain("r_stu", 11);
+    const before = ids();
+    const done = captureLogs();
+    const res = await del("r_stu");
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.equal(deletes().length, 0, "deleteMany・delete を呼ばない");
+    assert.deepEqual(ids(), before, "コメントは減らない");
+    assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
+  });
+
+  it("枝分かれした子孫も、段ごとにまとめて集める（深さで数え、件数では数えない）", async () => {
+    for (let i = 0; i < 15; i++) {
+      comments.push({ id: `wide_${i}`, userId: "stu_active", lessonId: "lesson_1", content: "横に並ぶ返信", parentId: "q_alone", createdAt: at(50 - i) });
+    }
+    const res = await del("q_alone");
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { kind: "question", id: "q_alone", deletedReplies: 15 });
+    assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 2, "1 段目と、子がないことの確認だけ");
+  });
+
+  it("parentId が互いを指す返信（循環）を消しても止まり、500 で終わる（親を読み直せない）", async () => {
+    comments.push(
+      { id: "cyc_a", userId: "stu_active", lessonId: "lesson_1", content: "循環 A", parentId: "cyc_b", createdAt: at(40) },
+      { id: "cyc_b", userId: "stu_active", lessonId: "lesson_1", content: "循環 B", parentId: "cyc_a", createdAt: at(39) }
+    );
+    const done = captureLogs();
+    const res = await del("cyc_a");
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 2, "一度見た id で止まる");
+    const dm = calls.find((c) => c.method === "comment.deleteMany");
+    assert.ok(dm, "子孫を消そうとする");
+    assert.deepEqual(dm.args.where, { id: { in: ["cyc_b"] } }, "対象自身は子孫に数えない");
+    assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
+    assert.ok(!out.error.includes("cyc_"), "ログに id を出さない");
+  });
+
+  it("自分自身を親に持つ返信（自己参照）を消しても止まる", async () => {
+    comments.push({ id: "self", userId: "stu_active", lessonId: "lesson_1", content: "自己参照", parentId: "self", createdAt: at(30) });
+    const done = captureLogs();
+    const res = await del("self");
+    done();
+    assert.equal(res.status, 500, "親（自分）を読み直せないので 500");
+    assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 1, "1 回で止まる");
+    assert.equal(calls.some((c) => c.method === "comment.deleteMany"), false, "子孫はない");
   });
 });
