@@ -293,11 +293,11 @@ function textareaOf(tree: El, id: string): El {
   assert.equal(hit.length, 1, `質問 ${id} の回答欄が 1 つでない`);
   return hit[0];
 }
-/** 質問 id の回答欄と同じ領域にある送信ボタン */
+/** 質問 id の回答欄と同じ領域にある送信ボタン（#47 の削除ボタン：aria-label が「…を削除」は除く） */
 function sendButtonOf(tree: El, id: string): El {
   const region = findAll(tree, (e) => e.props.id === `admin-question-thread-${id}`);
   assert.equal(region.length, 1, `質問 ${id} の領域が 1 つでない`);
-  const hit = findAll(region[0], (e) => e.type === Button);
+  const hit = findAll(region[0], (e) => e.type === Button && !String(e.props["aria-label"] ?? "").endsWith("を削除"));
   assert.equal(hit.length, 1, `質問 ${id} の送信ボタンが 1 つでない`);
   return hit[0];
 }

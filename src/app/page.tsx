@@ -74,24 +74,38 @@ import {
   DEFAULT_ADMIN_QUESTION_TAB,
   REPLY_BLOCKED_UNTIL_RELOAD_HINT,
   REPLY_SENT_MESSAGE,
+  COMMENT_ALREADY_DELETED_MESSAGE,
+  DELETE_BLOCKED_HINT,
+  adminCommentDeleteUrl,
   adminReplyUrl,
   adminThreadListUrl,
   adminThreadsEmptyMessage,
   adminThreadsMoreHint,
+  deleteConfirmMessage,
+  deleteDialogTitle,
+  deleteErrorMessage,
+  deleteQuote,
   expandResolvedIds,
+  interpretDeleteResponse,
   interpretReplyResponse,
+  isDeleteBlocked,
   missingUncertainReplies,
   nextReplyDrafts,
   nextReplyErrors,
   nextReplyNotices,
   nextUncertainReplies,
+  questionDeletedMessage,
+  removeReplyFromRow,
+  removeThreadRow,
   replaceThreadRow,
+  replyDeletedMessage,
   resolveUncertainReplies,
   savedDraftOutcome,
   savedReplyStatusMessage,
   toCourseOptions,
   uncertainReplyMissingMessage,
   uncertainReplyRecord,
+  withoutThreadId,
 } from "@/lib/admin-questions";
 import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
 import {
@@ -2892,6 +2906,19 @@ const AdminQuestions = () => {
   // 判定した後にフォーカスを移す先（{ id, target: "notice" | "input" }）。その要素が描画されたときに 1 回だけ移す
   const focusAfterResolveRef = useRef(null);
 
+  // 質問・返信の削除（#47）。確認ダイアログの対象：
+  // { kind: "question" | "reply", id, threadId（根の質問の id）, replyCount（質問のとき）, wasAnswered, quote（本文の先頭の引用） } | null
+  const [deleteDialog, setDeleteDialog] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  // 削除の結果の知らせ（role="status"。行が消えるので見える形で出す）
+  const [deleteStatus, setDeleteStatus] = useState("");
+  // 削除中の質問・返信の id。ボタンの disabled が反映される前の連打でも送らないよう ref で判定する
+  const deletingRef = useRef(new Set());
+  // 確認ダイアログを開いたボタン。閉じたらここにフォーカスを戻す（行ごと消えたときは削除の知らせへ移す）
+  const deleteTriggerRef = useRef(null);
+  const deleteStatusRef = useRef(null);
+
   // firstPageTab：1 ページ目の読み込みならそのタブ（結果不明の質問が見つからないときの知らせに使う）。もっと見るは null
   const requestThreads = (url, onPage, onFail, onDone, firstPageTab = null) => {
     const seq = ++threadsSeq.current;
@@ -2966,6 +2993,7 @@ const AdminQuestions = () => {
     setMoreStatus("");
     setReplyStatus("");
     setMissingNotice("");
+    setDeleteStatus("");
     focusAfterResolveRef.current = null;
     requestThreads(
       adminThreadListUrl(forTab, forCourseId, null),
@@ -3071,6 +3099,108 @@ const AdminQuestions = () => {
     }
   };
 
+  // ── 質問・返信の削除（#47。DELETE /api/admin/comments/[id]、物理削除で元に戻せない） ──
+
+  // 削除の確認ダイアログを開く。target は deleteDialog の形、trigger は押したボタン（閉じたときのフォーカスの戻り先）
+  const openDeleteDialog = (target, trigger = null) => {
+    if (sessionExpired.current) return;
+    deleteTriggerRef.current = trigger;
+    setDeleteError("");
+    setDeleteStatus("");
+    setDeleteDialog(target);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeleteDialog(null);
+  };
+
+  // 確認ダイアログが開いている間だけ Esc で閉じる（処理中は closeDeleteDialog が閉じない）
+  useEffect(() => {
+    if (!deleteDialog) return;
+    // 回答欄が Enter を扱わないことをソースで検査しているため、ハンドラの名前に JSX のキー操作の属性名を使わない
+    const closeOnEscape = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeDeleteDialog();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteDialog, deleting]);
+
+  // 確認ダイアログが閉じたら、開いたボタンにフォーカスを戻す。
+  // 削除して行・返信ごとボタンが消えたときは、削除の知らせ（role="status"）へ移す
+  const deleteDialogOpen = deleteDialog !== null;
+  useEffect(() => {
+    if (deleteDialogOpen) return;
+    const trigger = deleteTriggerRef.current;
+    deleteTriggerRef.current = null;
+    if (!trigger) return;
+    if (trigger.isConnected) trigger.focus();
+    else if (deleteStatusRef.current) deleteStatusRef.current.focus();
+  }, [deleteDialogOpen]);
+
+  // 消した質問の行と、その id の書きかけ・エラー・知らせ・結果不明の記録・開いた状態・フォーカスの予定を片付ける
+  const forgetThread = (id) => {
+    setThreadRows(prev => removeThreadRow(prev, id));
+    updateDrafts(prev => withoutThreadId(prev, id));
+    setReplyErrors(prev => withoutThreadId(prev, id));
+    setReplyNotices(prev => withoutThreadId(prev, id));
+    setExpandedIds(prev => prev.filter(x => x !== id));
+    if (id in uncertainRef.current) {
+      uncertainRef.current = withoutThreadId(uncertainRef.current, id);
+      if (Object.keys(uncertainRef.current).length === 0) setMissingNotice("");
+    }
+    if (focusAfterResolveRef.current && focusAfterResolveRef.current.id === id) focusAfterResolveRef.current = null;
+  };
+
+  // 確認ダイアログの「削除する」。削除中は同じ対象に二度送らない。
+  // 成功：質問なら行を除き、返信なら応答の thread（根の質問）でその行を置き換える（未回答に戻ることもある）。
+  // 404：すでに削除されているので、質問なら行を、返信ならその返信を除く。それ以外の失敗：ダイアログに文言を出し、行は残す
+  const handleDelete = async () => {
+    const target = deleteDialog;
+    if (!target || sessionExpired.current || deletingRef.current.has(target.id)) return;
+    // 回答の送信中・結果不明の間は消さない（ボタンも止めている。開いた後に状態が変わった場合に備える）
+    if (isDeleteBlocked({ sending: sendingRef.current.has(target.threadId), awaitingCheck: target.threadId in uncertainRef.current })) {
+      setDeleteError(DELETE_BLOCKED_HINT);
+      return;
+    }
+    deletingRef.current.add(target.id);
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      let res;
+      try {
+        res = await authFetch(adminCommentDeleteUrl(target.id), { method: "DELETE" });
+      } catch {
+        setDeleteError(deleteErrorMessage(null));
+        return;
+      }
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") sessionExpired.current = true;
+      // 本文が JSON でない（ゲートウェイのエラーページなど）ときは null とし、ステータスだけで文言を決める
+      const body = await res.json().catch(() => null);
+      const outcome = interpretDeleteResponse({ ok: res.ok, status: res.status, redirected: res.redirected, body, target });
+      if (outcome.kind === "error") {
+        setDeleteError(outcome.message);
+        return;
+      }
+      if (outcome.kind === "reply_deleted") {
+        setThreadRows(prev => replaceThreadRow(prev, outcome.thread));
+        setDeleteStatus(replyDeletedMessage(target.wasAnswered === true, outcome.thread));
+      } else if (target.kind === "question") {
+        forgetThread(target.threadId);
+        setDeleteStatus(outcome.kind === "gone" ? COMMENT_ALREADY_DELETED_MESSAGE : questionDeletedMessage(outcome.deletedReplies));
+      } else {
+        setThreadRows(prev => removeReplyFromRow(prev, target.threadId, target.id));
+        setDeleteStatus(COMMENT_ALREADY_DELETED_MESSAGE);
+      }
+      setDeleteDialog(null);
+    } finally {
+      deletingRef.current.delete(target.id);
+      setDeleting(false);
+    }
+  };
+
   useEffect(() => { loadThreads(DEFAULT_ADMIN_QUESTION_TAB, null); loadCourses(); }, []);
 
   const now = new Date();
@@ -3118,6 +3248,10 @@ const AdminQuestions = () => {
           // 結果不明の間は送信を止める（エラーの文言と結果不明の記録は setReplyError・settleUncertainReplies で同時に変わる）
           const awaitingCheck = isUncertainSubmitError(replyError);
           const blockedHintId = `admin-question-reply-blocked-${x.id}`;
+          // 回答の送信中・結果不明の間は、この質問と返信を削除させない（#47）
+          const deleteBlocked = isDeleteBlocked({ sending, awaitingCheck });
+          const deleteBlockedId = `admin-question-delete-blocked-${x.id}`;
+          const deleteButtonStyle = { flexShrink: 0, color: T.danger, borderRadius: 8, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "4px 10px" };
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
               <div style={{ ...glassStyle(), borderRadius: 18, borderLeft: `4px solid ${x.answered ? T.success : T.warning}`, overflow: "hidden" }}>
@@ -3142,7 +3276,15 @@ const AdminQuestions = () => {
                 </button>
                 {open && (
                   <div id={regionId} role="region" aria-labelledby={buttonId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
-                    <div style={{ paddingTop: 14, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12, paddingTop: 14 }}>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
+                      <Button size="sm" variant="ghost" aria-label="この質問を削除" aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteBlocked} onClick={e => openDeleteDialog({ kind: "question", id: x.id, threadId: x.id, replyCount: x.replyCount, wasAnswered: x.answered, quote: deleteQuote(x.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                        削除
+                      </Button>
+                    </div>
+                    {deleteBlocked && (
+                      <div id={deleteBlockedId} style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>{DELETE_BLOCKED_HINT}</div>
+                    )}
                     {x.replies.length === 0 ? (
                       <div style={{ fontSize: 12, color: T.textMuted, paddingTop: 14 }}>まだ返信はありません</div>
                     ) : (
@@ -3161,6 +3303,9 @@ const AdminQuestions = () => {
                             </div>
                             <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
                           </div>
+                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteBlocked} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id, wasAnswered: x.answered, quote: deleteQuote(r.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                            削除
+                          </Button>
                         </div>
                       ))
                     )}
@@ -3239,10 +3384,37 @@ const AdminQuestions = () => {
         </div>
         {/* 結果不明の質問が読み直した一覧に見つからないときの知らせ。行がないので見える形で出す（領域は常に置く） */}
         <div role="status" aria-live="polite" style={{ fontSize: 12, color: T.textSecondary, marginBottom: missingNotice ? 14 : 0 }}>{missingNotice}</div>
+        {/* 削除の結果の知らせ（#47）。削除で行・返信ごとボタンが消えたときは、ここへフォーカスを移す */}
+        <div role="status" aria-live="polite" ref={deleteStatusRef} tabIndex={-1} style={{ fontSize: 12, color: T.textSecondary, marginBottom: deleteStatus ? 14 : 0, outline: "none" }}>{deleteStatus}</div>
         {body}
         {/* 一覧が空の案内に切り替わっても消えないよう、body の外に置く */}
         <div role="status" aria-live="polite" className="sr-only">{moreStatus}</div>
         <div role="status" aria-live="polite" className="sr-only">{replyStatus}</div>
+        {/* 質問・返信の削除の確認ダイアログ（#47）。受講生管理の無効化の確認と同じ作り */}
+        {deleteDialog && (
+          <ModalPortal>
+          <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }} onClick={closeDeleteDialog}>
+            <div role="dialog" aria-modal="true" aria-labelledby="nwa-delete-dialog-title" aria-describedby="nwa-delete-dialog-message" onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 420, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
+              <h3 id="nwa-delete-dialog-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>
+                {deleteDialogTitle(deleteDialog.kind)}
+              </h3>
+              <p id="nwa-delete-dialog-message" style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, margin: "0 0 12px", whiteSpace: "pre-wrap" }}>
+                {deleteConfirmMessage(deleteDialog)}
+              </p>
+              {deleteDialog.quote && (
+                <blockquote style={{ margin: "0 0 20px", padding: "8px 12px", borderLeft: `3px solid ${T.border}`, fontSize: 13, lineHeight: 1.6, color: T.textSecondary, overflowWrap: "anywhere" }}>「{deleteDialog.quote}」</blockquote>
+              )}
+              {deleteError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{deleteError}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="outline" autoFocus onClick={closeDeleteDialog} disabled={deleting} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                <Button onClick={handleDelete} disabled={deleting} style={{ flex: 1, background: T.danger, borderRadius: 10 }}>
+                  {deleting ? "削除中..." : "削除する"}
+                </Button>
+              </div>
+            </div>
+          </div>
+          </ModalPortal>
+        )}
       </div>
     </ScrollArea>
   );
