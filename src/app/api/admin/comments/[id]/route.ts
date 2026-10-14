@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { safeErrorSummary } from "@/lib/safe-error";
@@ -6,6 +7,7 @@ import { toQuestionThreadView } from "@/lib/question-threads";
 import { isValidQuestionId } from "@/lib/question-reply";
 import {
   DELETE_LOG_MESSAGE,
+  collectDescendantIds,
   deletedCommentKind,
   questionDeletedResponse,
   replyDeletedResponse,
@@ -20,14 +22,30 @@ const COMMENT_SELECT = {
   user: { select: { name: true, role: true, deactivatedAt: true } },
 } as const;
 
+/**
+ * rootId の下の返信（子・孫…）をすべて消し、消した件数を返す。rootId 自身は消さない。
+ * 同じトランザクションの中で、parentId の in を 1 段ずつ繰り返して集める（lessonId では絞らない）。
+ * 深さが上限（MAX_REPLY_DEPTH）を超えたら例外（500。削除はロールバックされる）。循環しても止まる
+ */
+async function deleteDescendantReplies(tx: Prisma.TransactionClient, rootId: string): Promise<number> {
+  const ids = await collectDescendantIds(rootId, async (parentIds) => {
+    const rows = await tx.comment.findMany({ where: { parentId: { in: parentIds } }, select: { id: true } });
+    return rows.map((r) => r.id);
+  });
+  if (ids.length === 0) return 0;
+  const result = await tx.comment.deleteMany({ where: { id: { in: ids } } });
+  return result.count;
+}
+
 // 講師による質問・返信の削除（#47 P1）。[id] は質問または返信の id。講師専用（INSTRUCTOR 以外は DB を読む前に 403）。
-// 物理削除。Comment.parentId の FK は ON DELETE SET NULL なので、質問を消すときは返信を同じトランザクションで明示的に消す
-// （lessonId では絞らない。別レッスンの lessonId を持つ古い返信も消さないと、質問として浮き上がるため）。
+// 物理削除。Comment.parentId の FK は ON DELETE SET NULL なので、質問・返信を消すときは、その下の返信（子孫）を
+// 同じトランザクションで先に明示的に消す（lessonId では絞らない。別レッスンの lessonId を持つ古い返信や、
+// #32 より前に作られうる返信への返信も消さないと、質問として浮き上がるため）。
 // 応答：質問なら 200 { kind: "question", id, deletedReplies }、返信なら 200 { kind: "reply", id, thread }（削除後のスレッド）。
 // 既に送った回答の通知には触れない（通知はコメントを参照していない。Tec 決定 C-a）。
 // ログは固定文だけ（id・本文・名前を出さない。Tec 決定 E-a）。
 // 確認と delete の間に別の講師が消した（delete が P2025）場合は 404。返信の削除後に親を読み直せない場合は 500（削除はロールバック）。
-// 既知の残存リスク：deleteMany と delete の間に回答が commit されると、その回答は SET NULL で質問として残る（設計のリスク 2、許容）
+// 既知の残存リスク：子孫を集めてから delete するまでの間に、別の講師の回答が commit されると、その回答は SET NULL で質問として残りうる（設計のリスク 2、許容）
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -58,9 +76,9 @@ export async function DELETE(
 
     if (kind === "question") {
       const deletedReplies = await prisma.$transaction(async (tx) => {
-        const replies = await tx.comment.deleteMany({ where: { parentId: target.id } });
+        const count = await deleteDescendantReplies(tx, target.id);
         await tx.comment.delete({ where: { id: target.id }, select: { id: true } });
-        return replies.count;
+        return count;
       });
       console.info(DELETE_LOG_MESSAGE.question);
       return NextResponse.json(questionDeletedResponse(target.id, deletedReplies), { status: 200 });
@@ -69,6 +87,8 @@ export async function DELETE(
     const parentId = target.parentId;
     const viewerId = session.user.id;
     const thread = await prisma.$transaction(async (tx) => {
+      // 返信への返信（#32 より前のデータ）があれば、先に消す
+      await deleteDescendantReplies(tx, target.id);
       await tx.comment.delete({ where: { id: target.id }, select: { id: true } });
 
       // 応答に使うスレッド（GET /api/comments の 1 件と同じ select）。削除と同じトランザクションで読み直す

@@ -6,7 +6,8 @@ import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession 
 // #47 P1 DELETE /api/admin/comments/[id]（講師による質問・返信の削除）。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
 // （受け取った引数と「トランザクションの中か」を記録し、このルートが使う findUnique の where { id }・
-// 入れ子の select（user / lesson.section.course / replies と orderBy）・deleteMany の where { parentId }・
+// 入れ子の select（user / lesson.section.course / replies と orderBy）・findMany の where { parentId: { in } }・
+// deleteMany の where { id: { in } }・
 // delete の where { id } だけを再現する。知らない select・where は例外。comment と $transaction 以外へのアクセスも記録する）。
 // 偽の $transaction はコールバックを同じ偽物で呼ぶだけで、失敗時のロールバック（原子性）は再現しない。
 // 実物の FK（ON DELETE SET NULL）は、delete のときに残った返信の parentId を null にして再現する。
@@ -129,14 +130,28 @@ const fakeComment = {
     const c = comments.find((x) => x.id === where.id);
     return c ? projectComment(c, args.select as Select) : null;
   },
+  async findMany(args: Record<string, unknown>) {
+    record("comment.findMany", args);
+    const where = args.where as Record<string, unknown>;
+    assert.deepEqual(Object.keys(where), ["parentId"], `findMany の where: ${inspect(where)}`);
+    const cond = where.parentId as Record<string, unknown>;
+    assert.deepEqual(Object.keys(cond), ["in"], `findMany の parentId: ${inspect(cond)}`);
+    const parentIds = cond.in as string[];
+    assert.ok(Array.isArray(parentIds) && parentIds.length > 0, "parentId の in は空でない配列");
+    assert.deepEqual(args.select, { id: true }, "findMany は id だけを読む");
+    return comments.filter((c) => c.parentId !== null && parentIds.includes(c.parentId)).map((c) => ({ id: c.id }));
+  },
   async deleteMany(args: Record<string, unknown>) {
     record("comment.deleteMany", args);
     const where = args.where as Record<string, unknown>;
-    assert.deepEqual(Object.keys(where), ["parentId"], `deleteMany の where: ${inspect(where)}`);
-    assert.equal(typeof where.parentId, "string", "parentId は文字列で指定する");
-    const removed = comments.filter((c) => c.parentId === where.parentId).map((c) => c.id);
-    comments = comments.filter((c) => c.parentId !== where.parentId);
-    // 実物の FK（ON DELETE SET NULL）を再現する（消した返信にさらに返信が付いていた場合）
+    assert.deepEqual(Object.keys(where), ["id"], `deleteMany の where: ${inspect(where)}`);
+    const cond = where.id as Record<string, unknown>;
+    assert.deepEqual(Object.keys(cond), ["in"], `deleteMany の id: ${inspect(cond)}`);
+    const delIds = cond.in as string[];
+    assert.ok(Array.isArray(delIds) && delIds.length > 0, "id の in は空でない配列");
+    const removed = comments.filter((c) => delIds.includes(c.id)).map((c) => c.id);
+    comments = comments.filter((c) => !delIds.includes(c.id));
+    // 実物の FK（ON DELETE SET NULL）を再現する（消した行にさらに返信が付いていて、それが残る場合）
     for (const c of comments) if (c.parentId !== null && removed.includes(c.parentId)) c.parentId = null;
     return { count: removed.length };
   },
@@ -358,7 +373,7 @@ describe("DELETE /api/admin/comments/[id]：入力", () => {
 });
 
 describe("DELETE /api/admin/comments/[id]：質問の削除", () => {
-  it("返信をトランザクション内で deleteMany({ parentId }) してから、質問を delete({ id }) する", async () => {
+  it("トランザクション内で子孫を findMany({ parentId: { in } }) で集め、deleteMany({ id: { in } }) してから、質問を delete({ id }) する", async () => {
     const res = await del("q_stu");
     assert.equal(res.status, 200);
     assert.deepEqual(
@@ -366,20 +381,28 @@ describe("DELETE /api/admin/comments/[id]：質問の削除", () => {
       [
         ["comment.findUnique", false],
         ["$transaction", false],
+        ["comment.findMany", true],
+        ["comment.findMany", true],
         ["comment.deleteMany", true],
         ["comment.delete", true],
       ]
     );
-    assert.deepEqual(calls[2].args, { where: { parentId: "q_stu" } });
-    assert.deepEqual((calls[3].args as { where: unknown }).where, { id: "q_stu" });
+    assert.deepEqual(calls[2].args, { where: { parentId: { in: ["q_stu"] } }, select: { id: true } });
+    assert.deepEqual(calls[3].args, { where: { parentId: { in: ["r_stu", "r_ins", "r_other"] } }, select: { id: true } }, "1 段下を問い合わせる");
+    assert.deepEqual(calls[4].args, { where: { id: { in: ["r_stu", "r_ins", "r_other"] } } });
+    assert.deepEqual((calls[5].args as { where: unknown }).where, { id: "q_stu" });
   });
 
-  it("deleteMany の where に lessonId を入れない（別レッスンの lessonId を持つ古い返信も消す）", async () => {
+  it("子孫の findMany・deleteMany の where に lessonId を入れない（別レッスンの lessonId を持つ古い返信も消す）", async () => {
     await del("q_stu");
     const dm = calls.find((c) => c.method === "comment.deleteMany");
     assert.ok(dm, "deleteMany を呼ぶ");
-    const where = dm.args.where as Record<string, unknown>;
-    assert.equal("lessonId" in where, false, `where: ${inspect(where)}`);
+    const finds = calls.filter((c) => c.method === "comment.findMany");
+    assert.ok(finds.length > 0, "findMany で子孫を集める");
+    for (const c of [dm, ...finds]) {
+      const where = c.args.where as Record<string, unknown>;
+      assert.equal("lessonId" in where, false, `${c.method} の where: ${inspect(where)}`);
+    }
     assert.equal(ids().includes("r_other"), false, "別レッスンの返信も消える");
   });
 
@@ -422,7 +445,7 @@ describe("DELETE /api/admin/comments/[id]：質問の削除", () => {
 });
 
 describe("DELETE /api/admin/comments/[id]：返信の削除", () => {
-  it("その 1 件だけをトランザクション内で delete し、deleteMany は呼ばない", async () => {
+  it("子孫のない返信は、トランザクション内で子を 1 回確かめてから、その 1 件だけを delete し、deleteMany は呼ばない", async () => {
     const res = await del("r_stu");
     assert.equal(res.status, 200);
     assert.deepEqual(
@@ -430,11 +453,13 @@ describe("DELETE /api/admin/comments/[id]：返信の削除", () => {
       [
         ["comment.findUnique", false],
         ["$transaction", false],
+        ["comment.findMany", true],
         ["comment.delete", true],
         ["comment.findUnique", true],
       ]
     );
-    assert.deepEqual((calls[2].args as { where: unknown }).where, { id: "r_stu" });
+    assert.deepEqual(calls[2].args, { where: { parentId: { in: ["r_stu"] } }, select: { id: true } });
+    assert.deepEqual((calls[3].args as { where: unknown }).where, { id: "r_stu" });
     assert.deepEqual(ids(), ["q_stu", "r_ins", "r_other", "q_gone", "r_gone", "q_alone"], "r_stu だけが消える");
   });
 
@@ -573,7 +598,7 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
     }
   });
 
-  it("質問の delete が失敗したら 500（deleteMany のあと、同じトランザクションの中で失敗する）", async () => {
+  it("質問の delete が失敗したら 500（子孫の deleteMany のあと、同じトランザクションの中で失敗する）", async () => {
     const m = mock.method(fakeComment, "delete", async (args: Record<string, unknown>) => {
       calls.push({ method: "comment.delete", args, inTx });
       throw piiError();
@@ -597,7 +622,7 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
       assert.equal(callbackRejected, true, "コールバックが例外で終わる（実物なら返信の削除もロールバックされる）");
       assert.deepEqual(
         calls.filter((c) => c.method !== "$transaction").map((c) => [c.method, c.inTx]),
-        [["comment.findUnique", false], ["comment.deleteMany", true], ["comment.delete", true]]
+        [["comment.findUnique", false], ["comment.findMany", true], ["comment.findMany", true], ["comment.deleteMany", true], ["comment.delete", true]]
       );
       assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
       assert.equal(out.info, "", "成功のログを出さない");
@@ -666,7 +691,7 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
       assert.deepEqual(await res.json(), { error: "Comment not found" });
       assert.deepEqual(
         calls.filter((c) => c.method !== "$transaction").map((c) => [c.method, c.inTx]),
-        [["comment.findUnique", false], ["comment.delete", true]],
+        [["comment.findUnique", false], ["comment.findMany", true], ["comment.delete", true]],
         "delete で失敗し、親の読み直しまで進まない"
       );
       assert.deepEqual(out, { error: "", info: "", other: "" }, "成功のログもエラーのログも出さない");
@@ -676,7 +701,7 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
     assert.equal((await del("r_stu")).status, 404, "再試行しても 404");
   });
 
-  it("確認と削除の間に質問ごと消された（deleteMany は 0 件、delete が P2025）場合は 404 で、ログを出さない", async () => {
+  it("確認と削除の間に質問ごと消された（子孫は 0 件で deleteMany を呼ばず、delete が P2025）場合は 404 で、ログを出さない", async () => {
     const find = deletedRightAfterRead(["q_stu", "r_stu", "r_ins", "r_other"]);
     const done = captureLogs();
     try {
@@ -686,7 +711,7 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
       assert.deepEqual(await res.json(), { error: "Comment not found" });
       assert.deepEqual(
         calls.filter((c) => c.method !== "$transaction").map((c) => [c.method, c.inTx]),
-        [["comment.findUnique", false], ["comment.deleteMany", true], ["comment.delete", true]]
+        [["comment.findUnique", false], ["comment.findMany", true], ["comment.delete", true]]
       );
       assert.deepEqual(out, { error: "", info: "", other: "" }, "成功のログもエラーのログも出さない");
       assert.deepEqual(ids(), ["q_gone", "r_gone", "q_alone"], "ほかのスレッドは残る");
