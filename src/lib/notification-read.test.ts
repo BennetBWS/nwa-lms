@@ -181,3 +181,21 @@ describe("formatBadgeCount：追加の境界", () => {
     assert.equal(formatBadgeCount(BigInt(10)), null);
   });
 });
+
+describe("parseMarkReadBody：上限を超えた時点で止める", () => {
+  it("重複を除いて 51 件目が出たら、残りの要素を見ずに invalid_ids を返す", () => {
+    const ids: unknown[] = Array.from({ length: MARK_READ_MAX_IDS + 1 }, (_, i) => `n${i}`);
+    let touched = false;
+    const rest = new Array(10).fill("x");
+    const arr = [...ids, ...rest];
+    // 52 件目以降を読んだら印を付ける
+    Object.defineProperty(arr, MARK_READ_MAX_IDS + 1, {
+      get() {
+        touched = true;
+        return "late";
+      },
+    });
+    assert.deepEqual(parseMarkReadBody({ ids: arr }), { ok: false, reason: "invalid_ids" });
+    assert.equal(touched, false, "上限を超えたあとも要素を読んでいる");
+  });
+});
