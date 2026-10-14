@@ -993,10 +993,38 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
   });
 });
 
+describe("AdminQuestions 削除：ダイアログが開いている間・処理中の背後のボタン", () => {
+  it("確認ダイアログが開いている間は、背後のすべての削除ボタンが押せない。閉じたら押せる", async () => {
+    const m = await opened();
+    click(threadButton(m.render(), "t2"));
+    click(deleteButton(region(m.render(), "t1"), "この質問を削除"), m.target("q"));
+    let tree = m.render();
+    const all = deleteButtonsIn(tree);
+    assert.equal(all.length, 4);
+    for (const b of all) assert.equal(b.props.disabled, true, `${b.props["aria-label"]} が押せる`);
+    click(button(dialog(tree), "キャンセル"));
+    tree = m.render();
+    for (const b of deleteButtonsIn(tree)) assert.equal(b.props.disabled, false, `閉じた後も ${b.props["aria-label"]} が押せない`);
+  });
+
+  it("削除の処理中は背後の削除ボタンが押せず、押しても（古い描画のボタン）対象を差し替えない", async () => {
+    const m = await opened();
+    click(threadButton(m.render(), "t2"));
+    const staleT2 = deleteButton(region(m.render(), "t2"), "この質問を削除");
+    click(deleteButton(region(m.render(), "t1"), "この質問を削除"), m.target("q"));
+    click(button(dialog(m.render()), "削除する"));
+    const tree = m.render();
+    for (const b of deleteButtonsIn(tree)) assert.equal(b.props.disabled, true, `処理中に ${b.props["aria-label"]} が押せる`);
+    click(staleT2, m.target("t2"));
+    const d = dialog(m.render());
+    assert.ok(text(d).includes("「t1 の質問本文」"), `処理中に対象が差し替わった：${text(d)}`);
+    assert.equal(deleteReqs(m).length, 1);
+  });
+});
+
 describe("AdminQuestions 削除（追加）：既知の問題（todo。直れば通る）", () => {
   it(
     "削除の処理中に別の行の削除ボタン（キーボードでダイアログの外へ移れる）を押しても、対象と失敗の文言が入れ替わらない",
-    { todo: "削除中も openDeleteDialog が対象を差し替え、t1 の失敗の文言が t2 のダイアログに出る（報告済み）" },
     async () => {
       const { m } = await questionDialog();
       click(button(dialog(m.render()), "削除する"));

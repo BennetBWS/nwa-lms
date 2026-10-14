@@ -3102,8 +3102,9 @@ const AdminQuestions = () => {
   // ── 質問・返信の削除（#47。DELETE /api/admin/comments/[id]、物理削除で元に戻せない） ──
 
   // 削除の確認ダイアログを開く。target は deleteDialog の形、trigger は押したボタン（閉じたときのフォーカスの戻り先）
+  // 削除の処理中は開かない（前の対象の結果が、後から開いた対象のダイアログに出ないように）
   const openDeleteDialog = (target, trigger = null) => {
-    if (sessionExpired.current) return;
+    if (sessionExpired.current || deleting || deletingRef.current.size > 0) return;
     deleteTriggerRef.current = trigger;
     setDeleteError("");
     setDeleteStatus("");
@@ -3251,6 +3252,8 @@ const AdminQuestions = () => {
           // 回答の送信中・結果不明の間は、この質問と返信を削除させない（#47）
           const deleteBlocked = isDeleteBlocked({ sending, awaitingCheck });
           const deleteBlockedId = `admin-question-delete-blocked-${x.id}`;
+          // 確認ダイアログが開いている間・削除の処理中は、背後の行の削除ボタンも押せない（Tab で移って押せないように）
+          const deleteDisabled = deleteBlocked || deleteDialogOpen || deleting;
           const deleteButtonStyle = { flexShrink: 0, color: T.danger, borderRadius: 8, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "4px 10px" };
           return (
             <FadeIn key={x.id} delay={threadRowDelay(i, firstPageCount)}>
@@ -3278,7 +3281,7 @@ const AdminQuestions = () => {
                   <div id={regionId} role="region" aria-labelledby={buttonId} style={{ padding: "4px 24px 20px", borderTop: `1px solid ${T.borderSubtle}` }}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12, paddingTop: 14 }}>
                       <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{x.content}</div>
-                      <Button size="sm" variant="ghost" aria-label="この質問を削除" aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteBlocked} onClick={e => openDeleteDialog({ kind: "question", id: x.id, threadId: x.id, replyCount: x.replyCount, wasAnswered: x.answered, quote: deleteQuote(x.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                      <Button size="sm" variant="ghost" aria-label="この質問を削除" aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "question", id: x.id, threadId: x.id, replyCount: x.replyCount, wasAnswered: x.answered, quote: deleteQuote(x.content) }, e.currentTarget)} style={deleteButtonStyle}>
                         削除
                       </Button>
                     </div>
@@ -3303,7 +3306,7 @@ const AdminQuestions = () => {
                             </div>
                             <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
                           </div>
-                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteBlocked} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id, wasAnswered: x.answered, quote: deleteQuote(r.content) }, e.currentTarget)} style={deleteButtonStyle}>
+                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id, wasAnswered: x.answered, quote: deleteQuote(r.content) }, e.currentTarget)} style={deleteButtonStyle}>
                             削除
                           </Button>
                         </div>
