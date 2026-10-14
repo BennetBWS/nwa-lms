@@ -26,6 +26,7 @@ const COMMENT_SELECT = {
 // 応答：質問なら 200 { kind: "question", id, deletedReplies }、返信なら 200 { kind: "reply", id, thread }（削除後のスレッド）。
 // 既に送った回答の通知には触れない（通知はコメントを参照していない。Tec 決定 C-a）。
 // ログは固定文だけ（id・本文・名前を出さない。Tec 決定 E-a）。
+// 確認と delete の間に別の講師が消した（delete が P2025）場合は 404。返信の削除後に親を読み直せない場合は 500（削除はロールバック）。
 // 既知の残存リスク：deleteMany と delete の間に回答が commit されると、その回答は SET NULL で質問として残る（設計のリスク 2、許容）
 export async function DELETE(
   _request: Request,
@@ -92,7 +93,12 @@ export async function DELETE(
     console.info(DELETE_LOG_MESSAGE.reply);
     return NextResponse.json(replyDeletedResponse(target.id, toQuestionThreadView(thread, viewerId)), { status: 200 });
   } catch (error) {
-    console.error("DELETE /api/admin/comments/[id] error:", safeErrorSummary(error).name);
+    const summary = safeErrorSummary(error);
+    if (summary.code === "P2025") {
+      // 確認（findUnique）と delete の間に、別の講師が同じ質問・返信を消した。削除済みとして 404 を返す（成功のログは出さない）
+      return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+    }
+    console.error("DELETE /api/admin/comments/[id] error:", summary.name);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
