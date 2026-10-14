@@ -240,6 +240,21 @@ const delWithParams = (params: unknown) =>
 const deletes = () => calls.filter((c) => c.method === "comment.delete" || c.method === "comment.deleteMany");
 const ids = () => comments.map((c) => c.id);
 
+/** $transaction のコールバックが例外で終わったか（実物ならロールバックされる）を記録する。restore を必ず呼ぶ */
+function spyTransaction() {
+  const origTx = fakeBase.$transaction;
+  const state = { rejected: false };
+  const m = mock.method(fakeBase, "$transaction", async (fn: unknown) => {
+    try {
+      return await origTx.call(fakeBase, fn);
+    } catch (e) {
+      state.rejected = true;
+      throw e;
+    }
+  });
+  return { state, restore: () => m.mock.restore() };
+}
+
 function captureLogs() {
   const err = mock.method(console, "error", () => {});
   const info = mock.method(console, "info", () => {});
@@ -634,7 +649,8 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
     }
   });
 
-  it("返信の削除後に親を読み直せなければ、トランザクションの中で例外を投げて 500（ログはエラー名だけ）", async () => {
+  it("返信の削除後に、根までたどる途中の行（親）が見つからなければ、トランザクションの中で例外を投げて 500（ログはエラー名だけ）", async () => {
+    // 最初の確認だけ本物。2 回目（親の parentId を読む、根までのたどり）で null を返す
     const origFind = fakeComment.findUnique;
     let n = 0;
     const find = mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
@@ -643,30 +659,64 @@ describe("DELETE /api/admin/comments/[id]：エラー", () => {
       record("comment.findUnique", args);
       return null;
     });
-    let callbackRejected = false;
-    const origTx = fakeBase.$transaction;
-    const tx = mock.method(fakeBase, "$transaction", async (fn: unknown) => {
-      try {
-        return await origTx.call(fakeBase, fn);
-      } catch (e) {
-        callbackRejected = true;
-        throw e;
-      }
-    });
+    const tx = spyTransaction();
     const done = captureLogs();
     try {
       const res = await del("r_stu");
       const out = done();
       assert.equal(res.status, 500);
       assert.deepEqual(await res.json(), { error: "Internal server error" });
-      assert.equal(callbackRejected, true, "コールバックが例外で終わる（実物なら返信の削除はロールバックされる）");
-      const reread = calls.filter((c) => c.method === "comment.findUnique")[1];
-      assert.ok(reread && reread.inTx, "読み直しはトランザクションの中");
+      assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物なら返信の削除はロールバックされる）");
+      const finds = calls.filter((c) => c.method === "comment.findUnique");
+      assert.deepEqual(
+        finds.map((c) => [c.args.where, c.args.select, c.inTx]),
+        [
+          [{ id: "r_stu" }, { id: true, parentId: true }, false],
+          [{ id: "q_stu" }, { parentId: true }, true],
+        ],
+        "たどりの 1 回目で止まり、スレッドの読み直しまで進まない"
+      );
       assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
       assert.equal(out.info, "", "成功のログを出さない");
       for (const s of ["r_stu", "q_stu", "受講生の追記"]) assert.ok(!out.error.includes(s), `ログに「${s}」を出さない`);
     } finally {
-      tx.mock.restore();
+      tx.restore();
+      find.mock.restore();
+    }
+  });
+
+  it("根の質問までたどれても、スレッドの読み直しが null なら、トランザクションの中で例外を投げて 500（ログはエラー名だけ）", async () => {
+    // parentId だけを読む findUnique（最初の確認・根までのたどり）は本物。スレッドの select（content を含む）だけ null を返す
+    const origFind = fakeComment.findUnique;
+    const find = mock.method(fakeComment, "findUnique", async (args: Record<string, unknown>) => {
+      const select = args.select as Record<string, unknown>;
+      if (!("content" in select)) return origFind.call(fakeComment, args);
+      record("comment.findUnique", args);
+      return null;
+    });
+    const tx = spyTransaction();
+    const done = captureLogs();
+    try {
+      const res = await del("r_stu");
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { error: "Internal server error" });
+      assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物なら返信の削除はロールバックされる）");
+      const finds = calls.filter((c) => c.method === "comment.findUnique");
+      assert.deepEqual(
+        finds.map((c) => [c.args.where, "content" in (c.args.select as Record<string, unknown>), c.inTx]),
+        [
+          [{ id: "r_stu" }, false, false],
+          [{ id: "q_stu" }, false, true],
+          [{ id: "q_stu" }, true, true],
+        ],
+        "根までたどってから、スレッドをトランザクションの中で読み直す"
+      );
+      assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
+      assert.equal(out.info, "", "成功のログを出さない");
+      for (const s of ["r_stu", "q_stu", "受講生の追記"]) assert.ok(!out.error.includes(s), `ログに「${s}」を出さない`);
+    } finally {
+      tx.restore();
       find.mock.restore();
     }
   });
@@ -1087,8 +1137,14 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
   it("質問の下に 11 段の返信があれば 500 で、何も消さない（ログはルート名とエラー名だけ）", async () => {
     addChain("q_alone", 11);
     const before = ids();
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("q_alone");
+    let res: Response;
+    try {
+      res = await del("q_alone");
+    } finally {
+      tx.restore();
+    }
     const out = done();
     assert.equal(res.status, 500);
     assert.deepEqual(await res.json(), { error: "Internal server error" });
@@ -1098,6 +1154,7 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
     assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
     assert.equal(out.info, "", "成功のログを出さない");
     assert.ok(!out.error.includes("deep_") && !out.error.includes("q_alone"), "ログに id を出さない");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 
   it("返信の下に 10 段の返信があれば、返信と子孫を消して 200", async () => {
@@ -1111,13 +1168,20 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
   it("返信の下に 11 段の返信があれば 500 で、何も消さない", async () => {
     addChain("r_stu", 11);
     const before = ids();
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("r_stu");
+    let res: Response;
+    try {
+      res = await del("r_stu");
+    } finally {
+      tx.restore();
+    }
     const out = done();
     assert.equal(res.status, 500);
     assert.equal(deletes().length, 0, "deleteMany・delete を呼ばない");
     assert.deepEqual(ids(), before, "コメントは減らない");
     assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 
   it("枝分かれした子孫も、段ごとにまとめて集める（深さで数え、件数では数えない）", async () => {
@@ -1130,13 +1194,19 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
     assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 2, "1 段目と、子がないことの確認だけ");
   });
 
-  it("parentId が互いを指す返信（循環）を消しても止まり、500 で終わる（親を読み直せない）", async () => {
+  it("parentId が互いを指す返信（循環）を消しても止まり、500 で終わる（根までたどれない）", async () => {
     comments.push(
       { id: "cyc_a", userId: "stu_active", lessonId: "lesson_1", content: "循環 A", parentId: "cyc_b", createdAt: at(40) },
       { id: "cyc_b", userId: "stu_active", lessonId: "lesson_1", content: "循環 B", parentId: "cyc_a", createdAt: at(39) }
     );
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("cyc_a");
+    let res: Response;
+    try {
+      res = await del("cyc_a");
+    } finally {
+      tx.restore();
+    }
     const out = done();
     assert.equal(res.status, 500);
     assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 2, "一度見た id で止まる");
@@ -1145,16 +1215,24 @@ describe("DELETE /api/admin/comments/[id]：子孫の深さの上限・循環", 
     assert.deepEqual(dm.args.where, { id: { in: ["cyc_b"] } }, "対象自身は子孫に数えない");
     assert.equal(out.error, "DELETE /api/admin/comments/[id] error: Error");
     assert.ok(!out.error.includes("cyc_"), "ログに id を出さない");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 
   it("自分自身を親に持つ返信（自己参照）を消しても止まる", async () => {
     comments.push({ id: "self", userId: "stu_active", lessonId: "lesson_1", content: "自己参照", parentId: "self", createdAt: at(30) });
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("self");
+    let res: Response;
+    try {
+      res = await del("self");
+    } finally {
+      tx.restore();
+    }
     done();
     assert.equal(res.status, 500, "親（自分）を読み直せないので 500");
     assert.equal(calls.filter((c) => c.method === "comment.findMany").length, 1, "1 回で止まる");
     assert.equal(calls.some((c) => c.method === "comment.deleteMany"), false, "子孫はない");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 });
 
@@ -1215,13 +1293,20 @@ describe("DELETE /api/admin/comments/[id]：返信への返信を消したとき
 
   it("11 段目の返信を消すと、根までが上限を超えるので 500（ログはエラー名だけ）", async () => {
     addChain("q_alone", 11);
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("up_11");
+    let res: Response;
+    try {
+      res = await del("up_11");
+    } finally {
+      tx.restore();
+    }
     const out = done();
     assert.equal(res.status, 500);
     assert.deepEqual(await res.json(), { error: "Internal server error" });
     assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeTooDeepError");
     assert.equal(out.info, "", "成功のログを出さない");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 
   it("親より上で parentId が循環していたら止まり、500（ReplyTreeCycleError）", async () => {
@@ -1230,12 +1315,27 @@ describe("DELETE /api/admin/comments/[id]：返信への返信を消したとき
       { id: "loop_b", userId: "stu_active", lessonId: "lesson_1", content: "循環 B", parentId: "loop_a", createdAt: at(39) },
       { id: "loop_leaf", userId: "stu_active", lessonId: "lesson_1", content: "循環の下の返信", parentId: "loop_a", createdAt: at(38) }
     );
+    const tx = spyTransaction();
     const done = captureLogs();
-    const res = await del("loop_leaf");
+    let res: Response;
+    try {
+      res = await del("loop_leaf");
+    } finally {
+      tx.restore();
+    }
     const out = done();
     assert.equal(res.status, 500);
     assert.equal(out.error, "DELETE /api/admin/comments/[id] error: ReplyTreeCycleError");
-    assert.ok(calls.filter((c) => c.method === "comment.findUnique").length <= 4, "読む回数は有限");
+    assert.deepEqual(
+      calls.filter((c) => c.method === "comment.findUnique").map((c) => [c.args.where, c.inTx]),
+      [
+        [{ id: "loop_leaf" }, false],
+        [{ id: "loop_a" }, true],
+        [{ id: "loop_b" }, true],
+      ],
+      "最初の確認と、たどりの 2 回だけ読み、loop_a に戻ったところで止まる"
+    );
     assert.ok(!out.error.includes("loop_"), "ログに id を出さない");
+    assert.equal(tx.state.rejected, true, "コールバックが例外で終わる（実物ならロールバックされる）");
   });
 });
