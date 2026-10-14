@@ -1,7 +1,5 @@
 import { before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "../../src/lib/course-order";
 import { countCourseLessons, isCourseLocked, type CourseWithLessons } from "../../src/lib/course-lock";
@@ -11,6 +9,7 @@ import { countCourseLessons, isCourseLocked, type CourseWithLessons } from "../.
 // （受け取った引数を記録する。course.findMany は orderBy を再現し、orderBy がなければ登録順のまま返す。
 // 入れ子の sections / lessons も orderBy があればその順に並べる）。NextAuth は installFakeAuth で差し替える。
 // データはすべてダミー。
+// ソースを読む確認（orderBy の書き方・コース等を読む箇所の一覧）は course-order.static.test.ts にまとめている。
 
 type Call = { method: string; args: Record<string, unknown> };
 type Row = Record<string, unknown>;
@@ -19,7 +18,6 @@ type SectionRow = { id: string; title: string; order: number; lessons: LessonRow
 type CourseRow = { id: string; name: string; description: string | null; icon: string; color: string; order: number; sections: SectionRow[] };
 type ProgressRow = { id: string; userId: string; lessonId: string; completed: boolean; completedAt: Date | null };
 
-const ROOT = join(__dirname, "..", "..");
 const STUDENT_ID = (STUDENT_SESSION as { user: { id: string } }).user.id;
 
 let session: FakeSession;
@@ -354,31 +352,5 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
       assert.ok(e, `確認テストの一覧に知らないコース ${c.id}`);
       assert.equal(c.locked, e.locked, `確認テストの一覧の ${c.id} のロックが画面と一致しない`);
     }
-  });
-});
-
-describe("並び順の書き方の取りこぼしがない（ソースの確認）", () => {
-  function listTs(dir: string): string[] {
-    const out: string[] = [];
-    for (const ent of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, ent.name);
-      if (ent.isDirectory()) out.push(...listTs(p));
-      else if (/\.tsx?$/.test(ent.name) && !/\.test\.tsx?$/.test(ent.name)) out.push(p);
-    }
-    return out;
-  }
-
-  it("src に order だけで並べる orderBy（同点を決めない書き方）がない", () => {
-    const offenders = listTs(join(ROOT, "src")).filter((f) => /orderBy:\s*\{\s*order\s*:/.test(readFileSync(f, "utf8")));
-    assert.deepEqual(offenders.map((f) => relative(ROOT, f)), [], "orderBy: { order: ... } が残っている");
-  });
-
-  it("API でコース・セクション・レッスンを読むルートは、すべてこのテストの対象に入っている", () => {
-    const apiDir = join(ROOT, "src", "app", "api");
-    const readers = listTs(apiDir)
-      .filter((f) => /prisma\.(course|section|lesson)\.find(Many|First|Unique)\b/.test(readFileSync(f, "utf8")))
-      .map((f) => relative(apiDir, f).split("\\").join("/"))
-      .sort();
-    assert.deepEqual(readers, ROUTES.map((r) => r.file).sort(), "コース等を読むルートの一覧が変わった。ROUTES に加えて並び順を確かめる");
   });
 });
