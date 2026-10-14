@@ -388,7 +388,8 @@ describe("乱数データ（同じ order のコース・セクション・レッ
         `${ctx}: /api/courses の locked が正解と違う`
       );
 
-      for (const [i, c] of ordered.entries()) {
+      for (let i = 0; i < ordered.length; i++) {
+        const c = ordered[i];
         if (expectedLocks[i]) {
           // ロック中のコースの詳細は 403 course_locked（#47 P4）
           const res = await R.courseDetail(c.id);
