@@ -128,7 +128,7 @@ describe("interpretDeleteResponse", () => {
   });
 
   it("404 はすでに削除されている。リダイレクトされた応答は 404 でもセッション切れ", () => {
-    assert.deepEqual(interpretDeleteResponse({ ok: false, status: 404, redirected: false, body: null, target: R }), { kind: "gone" });
+    assert.deepEqual(interpretDeleteResponse({ ok: false, status: 404, redirected: false, body: { error: "Comment not found" }, target: R }), { kind: "gone" });
     assert.deepEqual(interpretDeleteResponse({ ok: true, status: 200, redirected: true, body: { kind: "question", id: "q1" }, target: Q }), {
       kind: "error",
       message: COMMENT_SESSION_EXPIRED_MESSAGE,
@@ -265,10 +265,17 @@ describe("追加：deleteErrorMessage・interpretDeleteResponse", () => {
     });
   });
 
-  it("404 は本文によらず「すでに削除されている」（質問・返信とも）", () => {
+  it("404 は本文がオブジェクト（API の JSON）のときだけ「すでに削除されている」。HTML・読めない本文は削除できたか分からない（質問・返信とも）", () => {
     for (const target of [Q, R]) {
-      for (const body of [null, { error: "Comment not found" }, "<html>"]) {
-        assert.deepEqual(interpretDeleteResponse({ ok: false, status: 404, redirected: false, body, target }), { kind: "gone" });
+      for (const body of [{ error: "Comment not found" }, {}]) {
+        assert.deepEqual(interpretDeleteResponse({ ok: false, status: 404, redirected: false, body, target }), { kind: "gone" }, JSON.stringify(body));
+      }
+      for (const body of [null, "<html>", ["x"], 404]) {
+        assert.deepEqual(
+          interpretDeleteResponse({ ok: false, status: 404, redirected: false, body, target }),
+          { kind: "error", message: DELETE_UNKNOWN_RESULT_MESSAGE },
+          JSON.stringify(body)
+        );
       }
     }
   });

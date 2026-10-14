@@ -465,7 +465,8 @@ export type DeleteOutcome =
 
 /**
  * DELETE /api/admin/comments/[id] の応答を判定する。body は JSON（読めなければ null）。
- * - redirected：セッション切れ。404（リダイレクトなし）：すでに削除されている。それ以外の失敗：deleteErrorMessage
+ * - redirected：セッション切れ。404（リダイレクトなし）で本文がオブジェクト（API の JSON）：すでに削除されている。
+ *   本文がオブジェクトでない 404（HTML・読めない）：削除できたか分からない。それ以外の失敗：deleteErrorMessage
  * - 2xx で、質問なら { kind: "question", id }、返信なら { kind: "reply", id, thread }（thread は根の質問 = target.threadId で、
  *   content が文字列・replies が配列）のときだけ成功。そうでなければ削除できたか分からない
  */
@@ -479,7 +480,8 @@ export function interpretDeleteResponse(input: {
   const { ok, status, redirected, body, target } = input;
   if (redirected) return { kind: "error", message: deleteErrorMessage(status, true) };
   if (!ok) {
-    if (status === 404) return { kind: "gone" };
+    // API の 404 は JSON（{ error: "Comment not found" }）。HTML などの 404（経路の誤り・ゲートウェイ）は削除済みと言い切らない
+    if (status === 404) return isPlainObject(body) ? { kind: "gone" } : { kind: "error", message: DELETE_UNKNOWN_RESULT_MESSAGE };
     return { kind: "error", message: deleteErrorMessage(status) };
   }
   if (!isPlainObject(body) || body.id !== target.id || body.kind !== target.kind) {

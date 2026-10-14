@@ -571,11 +571,22 @@ describe("AdminQuestions 削除：送信", () => {
     assert.ok(statusTexts(tree).includes("すでに削除されています"));
   });
 
+  it("404 でも本文が HTML（JSON でない）なら削除済みと言い切らず、ダイアログに文言を出して行を残す", async () => {
+    const { m } = await questionDialog();
+    click(button(dialog(m.render()), "削除する"));
+    deleteReqs(m)[0].release({ ...res(null, { status: 404, ok: false, url: DEL_URL("t1") }), json: () => Promise.reject(new SyntaxError("x")) });
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(alerts(dialog(tree)), [adminQuestions.DELETE_UNKNOWN_RESULT_MESSAGE]);
+    assert.deepEqual(rowIds(tree), ["t1", "t2"], "HTML の 404 で行を除いた");
+    assert.ok(!statusTexts(tree).includes("すでに削除されています"));
+  });
+
   it("404（返信）：「すでに削除されています」と出して、その返信だけを除く", async () => {
     const m = await opened();
     click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), m.target("reply"));
     click(button(dialog(m.render()), "削除する"));
-    deleteReqs(m)[0].release(res(null, { status: 404, ok: false, url: DEL_URL("r1") }));
+    deleteReqs(m)[0].release(res({ error: "Comment not found" }, { status: 404, ok: false, url: DEL_URL("r1") }));
     await settle();
     const tree = m.render();
     assert.deepEqual(rowIds(tree), ["t1", "t2"], "質問の行まで消した");
@@ -748,7 +759,7 @@ describe("AdminQuestions 削除（追加）：応答ごとの扱い", () => {
     click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), trigger);
     click(button(dialog(m.render()), "削除する"));
     trigger.isConnected = false;
-    deleteReqs(m)[0].release(res(null, { status: 404, ok: false, url: DEL_URL("r1") }));
+    deleteReqs(m)[0].release(res({ error: "Comment not found" }, { status: 404, ok: false, url: DEL_URL("r1") }));
     await settle();
     const tree = m.render();
     assert.equal(m.focused(), deleteStatusEl(tree), "削除の知らせへフォーカスを移していない");
