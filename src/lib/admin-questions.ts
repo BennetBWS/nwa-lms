@@ -7,7 +7,8 @@
  * 行の表示（名前の匿名化・講師バッジ・要約）は question-threads の toQuestionThreadItems をそのまま使う。
  */
 
-import { commentSubmitErrorMessage, COMMENT_UNKNOWN_RESULT_MESSAGE } from "./comment-form";
+import { commentSubmitErrorMessage, COMMENT_SESSION_EXPIRED_MESSAGE, COMMENT_UNKNOWN_RESULT_MESSAGE } from "./comment-form";
+import { displayName } from "./user-display";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -309,4 +310,179 @@ export function expandResolvedIds(prev: readonly string[], r: UncertainReplyReso
   const next = [...prev];
   for (const id of [...r.saved, ...r.notSaved]) if (!next.includes(id)) next.push(id);
   return next;
+}
+
+// ───────────── 質問・返信の削除（#47 P2） ─────────────
+// API は DELETE /api/admin/comments/[id]（講師専用、#47 P1）。物理削除で、元に戻せない。
+// 質問を消すと、その下の返信もすべて消える。返信を消すと、削除後のスレッド（根の質問）が返る。
+
+/** 削除の送信先（DELETE /api/admin/comments/[id]）。id は URL エンコードする */
+export function adminCommentDeleteUrl(id: string): string {
+  return `/api/admin/comments/${encodeURIComponent(id)}`;
+}
+
+/** 確認ダイアログで引用する本文の最大の文字数（書記素で数える） */
+export const DELETE_QUOTE_MAX_CHARS = 40;
+
+const EDGE_ZWJ = new RegExp("^\\u200D+|\\u200D+$", "g");
+
+function graphemes(text: string): string[] {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return Array.from(new Intl.Segmenter("ja", { granularity: "grapheme" }).segment(text), (s) => s.segment);
+  }
+  return Array.from(text);
+}
+
+/**
+ * 確認ダイアログで対象を見分けるための、本文の先頭の引用。
+ * 名前と同じ規則（user-display の displayName：空白・改行を 1 つの空白にまとめ、見えない制御・書式文字や向きの制御文字を除く）で
+ * 整えてから、DELETE_QUOTE_MAX_CHARS 書記素までにする（絵文字や結合文字を途中で切らない）。切ったときは末尾に「…」を付ける。
+ * 文字列でない・見える文字が残らないときは ""（画面は引用を出さない）
+ */
+export function deleteQuote(content: unknown): string {
+  const shown = displayName(content);
+  if (shown === null) return "";
+  const g = graphemes(shown);
+  if (g.length <= DELETE_QUOTE_MAX_CHARS) return shown;
+  return `${g.slice(0, DELETE_QUOTE_MAX_CHARS).join("").trimEnd().replace(EDGE_ZWJ, "")}…`;
+}
+
+/** 削除の対象。threadId は根の質問の id（質問なら id と同じ）。replyCount は質問のときの返信の数（画面に出ている数） */
+export type DeleteTarget =
+  | { kind: "question"; id: string; threadId: string; replyCount: number }
+  | { kind: "reply"; id: string; threadId: string };
+
+/** 確認ダイアログの見出し */
+export function deleteDialogTitle(kind: DeleteTarget["kind"]): string {
+  return kind === "question" ? "質問を削除" : "返信を削除";
+}
+
+/**
+ * 確認ダイアログの本文。返信が 0 件の質問は「この質問を削除します。」とする（「返信 0 件」とは書かない）。
+ * 件数は画面に出ている返信の数（別レッスンの古い返信など、画面に出ない返信も一緒に消える）
+ */
+export function deleteConfirmMessage(target: DeleteTarget): string {
+  if (target.kind === "reply") return "この返信を削除します。元に戻せません。";
+  const n = Number.isInteger(target.replyCount) && target.replyCount > 0 ? target.replyCount : 0;
+  return n === 0 ? "この質問を削除します。元に戻せません。" : `この質問と返信 ${n} 件を削除します。元に戻せません。`;
+}
+
+/** 404（ほかの講師が先に消した等）のときの知らせ。行は一覧から除く */
+export const COMMENT_ALREADY_DELETED_MESSAGE = "すでに削除されています";
+/** 返信を消せたときの知らせ */
+export const REPLY_DELETED_MESSAGE = "返信を削除しました";
+/** 返信を消して、質問が未回答に戻ったときの知らせ */
+export const REPLY_DELETED_NOW_UNANSWERED_MESSAGE = "返信を削除しました。この質問は未回答に戻りました";
+/** 回答の送信中・送信結果を確かめる前は、その質問と返信を削除できないことの補足（削除ボタンの説明） */
+export const DELETE_BLOCKED_HINT = "回答の送信結果が分かるまで、この質問と返信は削除できません。";
+
+/** 質問を消せたときの知らせ。deletedReplies が読めなければ件数を出さない */
+export function questionDeletedMessage(deletedReplies: number | null): string {
+  return deletedReplies !== null && deletedReplies > 0 ? `質問と返信 ${deletedReplies} 件を削除しました` : "質問を削除しました";
+}
+
+/** 返信を消せたときの知らせ。消す前は回答済みで、消した後は未回答なら「未回答に戻りました」を付ける */
+export function replyDeletedMessage(wasAnswered: boolean, thread: Record<string, unknown>): string {
+  return wasAnswered && thread.answered !== true ? REPLY_DELETED_NOW_UNANSWERED_MESSAGE : REPLY_DELETED_MESSAGE;
+}
+
+/** 通信エラー・502〜504・2xx で応答を読めない：削除できたか分からない。押し直すと確かめられる（消えていれば 404 で一覧から除く） */
+export const DELETE_UNKNOWN_RESULT_MESSAGE =
+  "削除できたか確かめられませんでした。もう一度「削除する」を押すと確かめられます（すでに削除されていれば一覧から消えます）。";
+const DELETE_FORBIDDEN_MESSAGE = "この操作を行う権限がありません。";
+const DELETE_INVALID_MESSAGE = "削除する対象が正しくありません。一覧を再読み込みしてください。";
+const DELETE_SERVER_ERROR_MESSAGE = "サーバーでエラーが発生し、削除できませんでした。時間をおいて、もう一度お試しください。";
+const UNKNOWN_DELETE_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+
+/**
+ * 削除に失敗したときの文言（ダイアログに出す。行は残す）。httpStatus が null なら通信エラー。
+ * redirected・401 はセッション切れ（authFetch がサインアウトして /login へ移る）
+ */
+export function deleteErrorMessage(httpStatus: number | null, redirected = false): string {
+  if (httpStatus === null) return DELETE_UNKNOWN_RESULT_MESSAGE;
+  if (redirected || httpStatus === 401) return COMMENT_SESSION_EXPIRED_MESSAGE;
+  if (httpStatus === 403) return DELETE_FORBIDDEN_MESSAGE;
+  if (httpStatus === 400) return DELETE_INVALID_MESSAGE;
+  if (UNKNOWN_DELETE_STATUSES.has(httpStatus)) return DELETE_UNKNOWN_RESULT_MESSAGE;
+  return DELETE_SERVER_ERROR_MESSAGE;
+}
+
+export type DeleteOutcome =
+  | { kind: "question_deleted"; deletedReplies: number | null }
+  | { kind: "reply_deleted"; thread: Record<string, unknown> }
+  /** 404：すでに削除されている */
+  | { kind: "gone" }
+  | { kind: "error"; message: string };
+
+/**
+ * DELETE /api/admin/comments/[id] の応答を判定する。body は JSON（読めなければ null）。
+ * - redirected：セッション切れ。404（リダイレクトなし）：すでに削除されている。それ以外の失敗：deleteErrorMessage
+ * - 2xx で、質問なら { kind: "question", id }、返信なら { kind: "reply", id, thread }（thread は根の質問 = target.threadId で、
+ *   content が文字列・replies が配列）のときだけ成功。そうでなければ削除できたか分からない
+ */
+export function interpretDeleteResponse(input: {
+  ok: boolean;
+  status: number;
+  redirected: boolean;
+  body: unknown;
+  target: DeleteTarget;
+}): DeleteOutcome {
+  const { ok, status, redirected, body, target } = input;
+  if (redirected) return { kind: "error", message: deleteErrorMessage(status, true) };
+  if (!ok) {
+    if (status === 404) return { kind: "gone" };
+    return { kind: "error", message: deleteErrorMessage(status) };
+  }
+  if (!isPlainObject(body) || body.id !== target.id || body.kind !== target.kind) {
+    return { kind: "error", message: DELETE_UNKNOWN_RESULT_MESSAGE };
+  }
+  if (target.kind === "question") {
+    const n = body.deletedReplies;
+    return { kind: "question_deleted", deletedReplies: typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : null };
+  }
+  const thread = body.thread;
+  if (isPlainObject(thread) && thread.id === target.threadId && typeof thread.content === "string" && Array.isArray(thread.replies)) {
+    return { kind: "reply_deleted", thread };
+  }
+  return { kind: "error", message: DELETE_UNKNOWN_RESULT_MESSAGE };
+}
+
+/** 一覧の生の行から、id が同じ質問の行を除く。該当がなければ rows をそのまま返す */
+export function removeThreadRow(rows: unknown[], id: string): unknown[] {
+  const next = rows.filter((r) => !(isPlainObject(r) && r.id === id));
+  return next.length === rows.length ? rows : next;
+}
+
+/**
+ * 返信の削除が 404（すでに削除されている）のとき、一覧の行から、その返信を除く。
+ * replyCount は 1 減らし（0 未満にしない）、answered は残った返信に講師の返信があるかで決め直す（API の answered と同じ考え方。
+ * 次に一覧を読み込めばサーバーの値になる）。該当がなければ rows をそのまま返す
+ */
+export function removeReplyFromRow(rows: unknown[], threadId: string, replyId: string): unknown[] {
+  let hit = false;
+  const next = rows.map((r) => {
+    if (!isPlainObject(r) || r.id !== threadId || !Array.isArray(r.replies)) return r;
+    const replies = r.replies.filter((x) => !(isPlainObject(x) && x.id === replyId));
+    if (replies.length === r.replies.length) return r;
+    hit = true;
+    const replyCount = typeof r.replyCount === "number" && Number.isInteger(r.replyCount) ? Math.max(0, r.replyCount - 1) : replies.length;
+    const answered = replies.some((x) => isPlainObject(x) && isPlainObject(x.author) && x.author.isInstructor === true);
+    return { ...r, replies, replyCount, answered };
+  });
+  return hit ? next : rows;
+}
+
+/** 質問の id ごとの記録（書きかけ・エラー・知らせ・結果不明の記録）から、消した質問の id を除く。なければ prev をそのまま返す */
+export function withoutThreadId<V>(prev: Readonly<Record<string, V>>, id: string): Readonly<Record<string, V>> {
+  if (!Object.prototype.hasOwnProperty.call(prev, id)) return prev;
+  return omitIds(prev, [id]);
+}
+
+/**
+ * その質問（と返信）の削除ボタンを止めるか。回答の送信中と、送信結果を確かめる前（結果不明の記録がある間）は止める。
+ * 送信中・結果不明の回答は、削除の後にサーバーで保存されうる（親がないと保存に失敗するか、子孫を集めた後に保存されると
+ * 質問として残りうる。#47 P1 の既知の残存リスク）ため
+ */
+export function isDeleteBlocked(input: { sending: boolean; awaitingCheck: boolean }): boolean {
+  return input.sending || input.awaitingCheck;
 }
