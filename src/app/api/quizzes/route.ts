@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { COURSE_ORDER_BY } from "@/lib/course-order";
 import { safeErrorSummary } from "@/lib/safe-error";
 import { buildQuizCourses } from "@/lib/student-quizzes";
 
@@ -17,7 +18,7 @@ export async function GET() {
 
     const [courses, progress, quizzes, attempts] = await Promise.all([
       prisma.course.findMany({
-        orderBy: [{ order: "asc" }, { id: "asc" }],
+        orderBy: COURSE_ORDER_BY,
         select: {
           id: true,
           name: true,
