@@ -418,7 +418,11 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       const and = (commentCall.args.where as { AND: Array<{ OR?: Array<Record<string, unknown>> }> }).AND;
       const lockFilter = and.find((w) => Array.isArray(w.OR));
       assert.ok(lockFilter, `${ctx}: 質問一覧にロックの絞り込みがない`);
-      const unlocked = (lockFilter.OR[1] as { lesson: { section: { courseId: { in: string[] } } } }).lesson.section.courseId.in;
+      const courseFilter = lockFilter.OR.find(
+        (w) => Array.isArray((w as { lesson?: { section?: { courseId?: { in?: unknown } } } }).lesson?.section?.courseId?.in)
+      ) as { lesson: { section: { courseId: { in: string[] } } } } | undefined;
+      assert.ok(courseFilter, `${ctx}: 質問一覧のロックの絞り込みに lesson.section.courseId.in がない`);
+      const unlocked = courseFilter.lesson.section.courseId.in;
       assert.deepEqual(unlocked, expectedIds.filter((_, i) => !expectedLocks[i]), `${ctx}: 質問一覧の解放済みコースが画面のロック表示と違う`);
 
       // ── 管理画面 ──
