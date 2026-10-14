@@ -339,12 +339,26 @@ function graphemes(text: string): string[] {
  * 整えてから、DELETE_QUOTE_MAX_CHARS 書記素までにする（絵文字や結合文字を途中で切らない）。切ったときは末尾に「…」を付ける。
  * 文字列でない・見える文字が残らないときは ""（画面は引用を出さない）
  */
-export function deleteQuote(content: unknown): string {
+export function deleteQuote(content: unknown, maxChars: number = DELETE_QUOTE_MAX_CHARS): string {
   const shown = displayName(content);
   if (shown === null) return "";
   const g = graphemes(shown);
-  if (g.length <= DELETE_QUOTE_MAX_CHARS) return shown;
-  return `${g.slice(0, DELETE_QUOTE_MAX_CHARS).join("").trimEnd().replace(EDGE_ZWJ, "")}…`;
+  if (g.length <= maxChars) return shown;
+  return `${g.slice(0, maxChars).join("").trimEnd().replace(EDGE_ZWJ, "")}…`;
+}
+
+/** 返信の削除ボタンの読み上げ名に添える本文の先頭の最大の文字数（書記素） */
+export const DELETE_LABEL_QUOTE_MAX_CHARS = 20;
+
+/**
+ * 返信の削除ボタンの読み上げ名（aria-label）。同じ名前の人の返信が並んでも区別できるよう、本文の先頭
+ * （deleteQuote と同じ整え方で DELETE_LABEL_QUOTE_MAX_CHARS まで）を添える。本文に見える文字がなければ投稿日時を添える。
+ * 見える文字の「削除」を含め、末尾は「を削除」にする。name は表示名（displayName 済み・匿名化済み）
+ */
+export function replyDeleteLabel(name: string, content: unknown, time: string): string {
+  const q = deleteQuote(content, DELETE_LABEL_QUOTE_MAX_CHARS);
+  if (q !== "") return `${name} の返信「${q}」を削除`;
+  return time !== "" ? `${name} の返信（${time}）を削除` : `${name} の返信を削除`;
 }
 
 /** 削除の対象。threadId は根の質問の id（質問なら id と同じ）。replyCount は質問のときの返信の数（画面に出ている数） */

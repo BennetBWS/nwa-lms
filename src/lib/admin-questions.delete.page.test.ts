@@ -285,7 +285,7 @@ function region(tree: El, id: string): El {
   assert.equal(hit.length, 1, `質問 ${id} の領域が 1 つでない`);
   return hit[0];
 }
-/** aria-label が label の削除ボタン（質問は「この質問を削除」、返信は「<名前> の返信を削除」） */
+/** aria-label が label の削除ボタン（質問は「この質問を削除」、返信は「<名前> の返信「<本文の先頭>」を削除」） */
 function deleteButton(tree: El, label: string): El {
   const hit = findAll(tree, (e) => e.type === Button && e.props["aria-label"] === label);
   assert.equal(hit.length, 1, `削除ボタン「${label}」が 1 つでない`);
@@ -377,7 +377,7 @@ describe("AdminQuestions 削除：ボタンと確認ダイアログ", () => {
     const inT1 = deleteButtonsIn(region(tree, "t1"));
     assert.deepEqual(
       inT1.map((b) => b.props["aria-label"]),
-      ["この質問を削除", "講師ビー の返信を削除", "受講生エー の返信を削除"]
+      ["この質問を削除", "講師ビー の返信「講師の回答です」を削除", "受講生エー の返信「受講生の追記です」を削除"]
     );
     for (const b of inT1) {
       assert.equal(text(b).trim(), "削除");
@@ -404,7 +404,7 @@ describe("AdminQuestions 削除：ボタンと確認ダイアログ", () => {
 
   it("返信の確認ダイアログは「この返信を削除します。」と返信の本文を引用する", async () => {
     const m = await opened();
-    click(deleteButton(m.render(), "受講生エー の返信を削除"), m.target("reply"));
+    click(deleteButton(m.render(), "受講生エー の返信「受講生の追記です」を削除"), m.target("reply"));
     const d = dialog(m.render());
     assert.ok(text(d).includes("返信を削除"), "見出しがない");
     assert.ok(text(d).includes("この返信を削除します。元に戻せません。"), `本文が違う：${text(d)}`);
@@ -533,7 +533,7 @@ describe("AdminQuestions 削除：送信", () => {
   it("成功（返信）：応答の thread で行を置き換え、回答済み→未回答に戻ったことを知らせる。行は残る", async () => {
     const m = await opened();
     const trigger = m.target("reply");
-    click(deleteButton(m.render(), "講師ビー の返信を削除"), trigger);
+    click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), trigger);
     click(button(dialog(m.render()), "削除する"));
     assert.equal(deleteReqs(m)[0].url, "/api/admin/comments/r1");
     trigger.isConnected = false;
@@ -545,14 +545,14 @@ describe("AdminQuestions 削除：送信", () => {
     assert.deepEqual(rowIds(tree), ["t1", "t2"], "行の並びが変わった");
     assert.ok(text(threadButton(tree, "t1")).includes("未回答"), "未回答に戻っていない");
     assert.ok(text(threadButton(tree, "t1")).includes("返信 1件"), "返信の件数が変わっていない");
-    assert.deepEqual(deleteButtonsIn(region(tree, "t1")).map((b) => b.props["aria-label"]), ["この質問を削除", "受講生エー の返信を削除"]);
+    assert.deepEqual(deleteButtonsIn(region(tree, "t1")).map((b) => b.props["aria-label"]), ["この質問を削除", "受講生エー の返信「受講生の追記です」を削除"]);
     assert.ok(statusTexts(tree).includes(adminQuestions.REPLY_DELETED_NOW_UNANSWERED_MESSAGE), "知らせがない");
     assert.equal(m.focused(), deleteStatusEl(tree), "削除の知らせへフォーカスを移していない");
   });
 
   it("成功（返信）：回答済みのままなら「返信を削除しました」だけ", async () => {
     const m = await opened();
-    click(deleteButton(m.render(), "受講生エー の返信を削除"), m.target("reply"));
+    click(deleteButton(m.render(), "受講生エー の返信「受講生の追記です」を削除"), m.target("reply"));
     click(button(dialog(m.render()), "削除する"));
     const after = thread("t1", { replies: [T1_REPLIES[0]], replyCount: 1, answered: true });
     deleteReqs(m)[0].release(res({ kind: "reply", id: "r2", thread: after }, { url: DEL_URL("r2") }));
@@ -573,13 +573,13 @@ describe("AdminQuestions 削除：送信", () => {
 
   it("404（返信）：「すでに削除されています」と出して、その返信だけを除く", async () => {
     const m = await opened();
-    click(deleteButton(m.render(), "講師ビー の返信を削除"), m.target("reply"));
+    click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), m.target("reply"));
     click(button(dialog(m.render()), "削除する"));
     deleteReqs(m)[0].release(res(null, { status: 404, ok: false, url: DEL_URL("r1") }));
     await settle();
     const tree = m.render();
     assert.deepEqual(rowIds(tree), ["t1", "t2"], "質問の行まで消した");
-    assert.deepEqual(deleteButtonsIn(region(tree, "t1")).map((b) => b.props["aria-label"]), ["この質問を削除", "受講生エー の返信を削除"]);
+    assert.deepEqual(deleteButtonsIn(region(tree, "t1")).map((b) => b.props["aria-label"]), ["この質問を削除", "受講生エー の返信「受講生の追記です」を削除"]);
     assert.ok(text(threadButton(tree, "t1")).includes("未回答"), "講師の返信がなくなったのに回答済みのまま");
     assert.ok(statusTexts(tree).includes("すでに削除されています"));
   });
@@ -726,7 +726,7 @@ describe("AdminQuestions 削除（追加）：応答ごとの扱い", () => {
   ] as const) {
     it(`返信の 200 で形が違う（${label}）：成功としない。どの行も書き換えない`, async () => {
       const m = await opened();
-      click(deleteButton(m.render(), "講師ビー の返信を削除"), m.target("reply"));
+      click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), m.target("reply"));
       click(button(dialog(m.render()), "削除する"));
       deleteReqs(m)[0].release(res(body, { url: DEL_URL("r1") }));
       await settle();
@@ -735,7 +735,7 @@ describe("AdminQuestions 削除（追加）：応答ごとの扱い", () => {
       assert.deepEqual(rowIds(tree), ["t1", "t2"]);
       assert.deepEqual(
         deleteButtonsIn(region(tree, "t1")).map((b) => b.props["aria-label"]),
-        ["この質問を削除", "講師ビー の返信を削除", "受講生エー の返信を削除"],
+        ["この質問を削除", "講師ビー の返信「講師の回答です」を削除", "受講生エー の返信「受講生の追記です」を削除"],
         "返信の並びが変わった"
       );
       assert.ok(text(threadButton(tree, "t1")).includes("回答済み"), "回答済みが変わった");
@@ -745,7 +745,7 @@ describe("AdminQuestions 削除（追加）：応答ごとの扱い", () => {
   it("返信の 404：押したボタンは消えたので、削除の知らせへフォーカスを移す", async () => {
     const m = await opened();
     const trigger = m.target("reply");
-    click(deleteButton(m.render(), "講師ビー の返信を削除"), trigger);
+    click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), trigger);
     click(button(dialog(m.render()), "削除する"));
     trigger.isConnected = false;
     deleteReqs(m)[0].release(res(null, { status: 404, ok: false, url: DEL_URL("r1") }));
@@ -769,7 +769,7 @@ describe("AdminQuestions 削除（追加）：応答ごとの扱い", () => {
     const t3 = thread("t3", { replies: [reply("r5", "受講生の補足", false, "受講生エー")], replyCount: 1 });
     const m = await opened({ threads: [t1(), t3], nextCursor: null });
     click(threadButton(m.render(), "t3"));
-    click(deleteButton(region(m.render(), "t3"), "受講生エー の返信を削除"), m.target("r5"));
+    click(deleteButton(region(m.render(), "t3"), "受講生エー の返信「受講生の補足」を削除"), m.target("r5"));
     click(button(dialog(m.render()), "削除する"));
     deleteReqs(m)[0].release(res({ kind: "reply", id: "r5", thread: thread("t3") }, { url: DEL_URL("r5") }));
     await settle();
@@ -877,7 +877,7 @@ describe("AdminQuestions 削除（追加）：連続した削除と他の機能"
 
   it("返信を消した後も、その質問に回答を送れる（回答欄・送信は変わらない）", async () => {
     const m = await opened();
-    click(deleteButton(m.render(), "講師ビー の返信を削除"), m.target("reply"));
+    click(deleteButton(m.render(), "講師ビー の返信「講師の回答です」を削除"), m.target("reply"));
     click(button(dialog(m.render()), "削除する"));
     const after = thread("t1", { replies: [T1_REPLIES[1]], replyCount: 1, answered: false });
     deleteReqs(m)[0].release(res({ kind: "reply", id: "r1", thread: after }, { url: DEL_URL("r1") }));
@@ -919,7 +919,7 @@ describe("AdminQuestions 削除（追加）：連続した削除と他の機能"
 describe("AdminQuestions 削除（追加）：回答の送信中とダイアログ", () => {
   it("ダイアログを開いた後に回答の送信が始まったら「削除する」で送らず、送信が終われば送れる", async () => {
     const m = await opened();
-    click(deleteButton(m.render(), "受講生エー の返信を削除"), m.target("r2"));
+    click(deleteButton(m.render(), "受講生エー の返信「受講生の追記です」を削除"), m.target("r2"));
     change(textareaOf(m.render(), "t1"), "講師の回答です");
     click(button(m.render(), "回答を送信"));
     click(button(dialog(m.render()), "削除する"));
@@ -970,7 +970,7 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
     assert.ok(!t.includes("\n"), "改行が残っている");
   });
 
-  it("無効化済み受講生（名前が null）の返信は「受講生 の返信を削除」。向きの制御文字を含む名前は aria-label から除く", async () => {
+  it("無効化済み受講生（名前が null）の返信は「受講生 の返信「…」を削除」。向きの制御文字を含む名前は aria-label から除く", async () => {
     const t3 = thread("t1", {
       replies: [
         { ...reply("r1", "無効化済みの受講生の返信", false, "x"), author: { name: null, isInstructor: false } },
@@ -981,7 +981,7 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
     });
     const m = await opened({ threads: [t3], nextCursor: null });
     const labels = deleteButtonsIn(region(m.render(), "t1")).map((b) => String(b.props["aria-label"]));
-    assert.deepEqual(labels, ["この質問を削除", "受講生 の返信を削除", "講師シー の返信を削除"]);
+    assert.deepEqual(labels, ["この質問を削除", "受講生 の返信「無効化済みの受講生の返信」を削除", "講師シー の返信「講師の返信」を削除"]);
     for (const l of labels) assert.doesNotMatch(l, /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/, `見えない文字が残っている：${JSON.stringify(l)}`);
   });
 
@@ -990,6 +990,21 @@ describe("AdminQuestions 削除（追加）：引用・名前", () => {
     const m = await opened({ threads: [thread("t1", { replies: many, replyCount: 12, answered: true })], nextCursor: null });
     click(deleteButton(m.render(), "この質問を削除"), m.target("q"));
     assert.ok(text(dialog(m.render())).includes("この質問と返信 12 件を削除します。元に戻せません。"));
+  });
+});
+
+describe("AdminQuestions 削除：同じ名前の人の返信", () => {
+  it("同じ名前の返信が複数あっても、削除ボタンの読み上げ名は本文の先頭で区別できる", async () => {
+    const t = thread("t1", {
+      replies: [reply("r1", "一つ目の回答", true, "講師ビー"), reply("r2", "二つ目の回答", true, "講師ビー")],
+      replyCount: 2,
+      answered: true,
+    });
+    const m = await opened({ threads: [t], nextCursor: null });
+    const labels = deleteButtonsIn(region(m.render(), "t1")).map((b) => String(b.props["aria-label"]));
+    assert.deepEqual(labels, ["この質問を削除", "講師ビー の返信「一つ目の回答」を削除", "講師ビー の返信「二つ目の回答」を削除"]);
+    assert.equal(new Set(labels).size, labels.length, "読み上げ名が重なっている");
+    for (const b of deleteButtonsIn(region(m.render(), "t1"))) assert.equal(text(b).trim(), "削除", "見える文字が「削除」でない");
   });
 });
 

@@ -16,6 +16,7 @@ import {
   questionDeletedMessage,
   removeReplyFromRow,
   removeThreadRow,
+  replyDeleteLabel,
   replyDeletedMessage,
   resolveDeleteTarget,
   withoutThreadId,
@@ -368,5 +369,22 @@ describe("resolveDeleteTarget（確認ダイアログの対象を今の一覧か
     assert.equal(resolveDeleteTarget([row()], { kind: "reply", id: "r1", threadId: "q2" }), null);
     assert.equal(resolveDeleteTarget([row()], { kind: "question", id: "r1", threadId: "q1" }), null);
     assert.equal(resolveDeleteTarget([], { kind: "question", id: "q1", threadId: "q1" }), null);
+  });
+});
+
+describe("replyDeleteLabel（返信の削除ボタンの読み上げ名）", () => {
+  it("本文の先頭（20 書記素まで・見えない文字を除く）を添え、末尾は「を削除」", () => {
+    assert.equal(replyDeleteLabel("講師ビー", "  回答\nです\u200B ", "5分前"), "講師ビー の返信「回答 です」を削除");
+    const long = "あ".repeat(25);
+    assert.equal(replyDeleteLabel("講師ビー", long, "5分前"), `講師ビー の返信「${"あ".repeat(20)}…」を削除`);
+  });
+
+  it("同じ名前・同じ時刻でも本文が違えば読み上げ名が違う", () => {
+    assert.notEqual(replyDeleteLabel("受講生", "最初の返信", "1分前"), replyDeleteLabel("受講生", "二つ目の返信", "1分前"));
+  });
+
+  it("本文に見える文字がなければ投稿日時を添え、それもなければ名前だけ", () => {
+    assert.equal(replyDeleteLabel("受講生", "\u200B\u202E", "1分前"), "受講生 の返信（1分前）を削除");
+    assert.equal(replyDeleteLabel("受講生", "\u200B", ""), "受講生 の返信を削除");
   });
 });

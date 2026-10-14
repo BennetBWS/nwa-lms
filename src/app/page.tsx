@@ -98,6 +98,7 @@ import {
   removeReplyFromRow,
   removeThreadRow,
   replaceThreadRow,
+  replyDeleteLabel,
   replyDeletedMessage,
   resolveDeleteTarget,
   resolveUncertainReplies,
@@ -3316,7 +3317,7 @@ const AdminQuestions = () => {
                             </div>
                             <span style={{ fontSize: 10, color: T.textMuted, paddingLeft: 4, marginTop: 4, display: "block", fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{r.time}</span>
                           </div>
-                          <Button size="sm" variant="ghost" aria-label={`${r.name} の返信を削除`} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id }, e.currentTarget)} style={deleteButtonStyle}>
+                          <Button size="sm" variant="ghost" aria-label={replyDeleteLabel(r.name, r.content, r.time)} aria-describedby={deleteBlocked ? deleteBlockedId : undefined} disabled={deleteDisabled} onClick={e => openDeleteDialog({ kind: "reply", id: r.id, threadId: x.id }, e.currentTarget)} style={deleteButtonStyle}>
                             削除
                           </Button>
                         </div>
