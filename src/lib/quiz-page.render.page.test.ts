@@ -8,10 +8,16 @@ import { classifyAuthFailure } from "./client-session";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
+  QUIZ_CHANGED_MESSAGE,
+  QUIZ_DUPLICATE_MESSAGE,
+  QUIZ_RATE_LIMITED_LEAVE_NOTE,
   buildSubmitBody,
+  classifyQuizSubmitResponse,
+  quizAttemptRuleText,
+  quizRateLimitedMessage,
   quizResultTitle,
+  quizWaitMessage,
   toQuizCourseItems,
-  toQuizResultView,
   toQuizTakeView,
 } from "./student-quizzes";
 
@@ -159,9 +165,15 @@ function mount(enabled: boolean, initial: Record<string, unknown> = {}, courseIc
     PASSING_PERCENT,
     toQuizCourseItems,
     toQuizTakeView,
-    toQuizResultView,
+    classifyQuizSubmitResponse,
     buildSubmitBody,
     quizResultTitle,
+    quizAttemptRuleText,
+    quizRateLimitedMessage,
+    quizWaitMessage,
+    QUIZ_CHANGED_MESSAGE,
+    QUIZ_DUPLICATE_MESSAGE,
+    QUIZ_RATE_LIMITED_LEAVE_NOTE,
     T,
     glassStyle: () => ({}),
     CourseIcons: courseIcons,
@@ -519,7 +531,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.deepEqual(byRole(tree, "radio").map((r) => r.props["aria-checked"]), [false, true]);
   });
 
-  it("送信は 1 回だけ（連打しても）。body は { answers } だけで、送信中はボタンが「送信中...」で押せず、一覧にも戻れない", async () => {
+  it("送信は 1 回だけ（連打しても）。body は { answers, questionIds } だけで、送信中はボタンが「送信中...」で押せず、一覧にも戻れない", async () => {
     const m = await openTake();
     chooseAll(m, [1, 2]);
     let tree = m.render();
@@ -529,7 +541,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(m.reqs.length, 3);
     assert.equal(m.reqs[2].url, "/api/quizzes/mini2/submit");
     assert.equal(m.reqs[2].init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(m.reqs[2].init?.body)), { answers: [1, 2] });
+    assert.deepEqual(JSON.parse(String(m.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
     tree = m.render();
     assert.equal(button(tree, "送信中...").props.disabled, true);
     assert.equal(button(tree, "テスト一覧に戻る").props.disabled, true);
@@ -591,7 +603,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
       assert.ok(!text(tree).includes("点（"));
       click(button(tree, "もう一度送信する"));
       assert.equal(m.reqs.length, 4);
-      assert.deepEqual(JSON.parse(String(m.reqs[3].init?.body)), { answers: [1, 2] });
+      assert.deepEqual(JSON.parse(String(m.reqs[3].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
       tree = m.render();
       assert.equal(byRole(tree, "alert").length, 0);
     });
@@ -643,5 +655,121 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.ok(t.includes("STEP1 ダミー"));
     assert.equal(m.state("activeQuizId"), null);
     assert.deepEqual(m.state("answers"), []);
+  });
+});
+
+// ───────────── 受験の公開前の修正（#51） ─────────────
+
+describe("QuizPage 描画：受験の制限と問題の入れ替え（#51、true の経路）", () => {
+  const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
+
+  it("受験画面に、ミニテストの受験の規則（定数から作った文言）を出す。結果の画面には出さない", async () => {
+    const m = await openTake();
+    const t = text(m.render());
+    assert.ok(t.includes(quizAttemptRuleText("MINI")), "規則の文言がない");
+    assert.ok(t.includes("1 分あけて") && t.includes("10 回まで"), "規則の数値が違う");
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    assert.ok(!text(m.render()).includes(quizAttemptRuleText("MINI")), "結果の画面に規則を出している");
+  });
+
+  it("修了テストの規則は 30 分・3 回", async () => {
+    const m = await loadedList(true);
+    click(buttons(m.render())[2]);
+    m.reqs[1].release(res({ ...TAKE, type: "FINAL" }));
+    await settle();
+    assert.ok(text(m.render()).includes("修了テストは前回の受験から 30 分あけて、24 時間に 3 回まで受けられます。"));
+  });
+
+  it("GET に retryAfterSeconds があれば、冒頭に role=status の案内（目安つき）を出し、回答は始められる", async () => {
+    const m = await loadedList(true);
+    click(buttons(m.render())[2]);
+    m.reqs[1].release(res({ ...TAKE, retryAfterSeconds: 600 }));
+    await settle();
+    const tree = m.render();
+    const status = byRole(tree, "status").map(text);
+    assert.ok(status.includes(quizWaitMessage(600)), `案内がない: ${status.join(" / ")}`);
+    assert.ok(quizWaitMessage(600).includes("（目安：約 10 分後）"));
+    assert.equal(byRole(tree, "radio").length, 2, "回答を始められない");
+  });
+
+  it("retryAfterSeconds がなければ案内を出さない", async () => {
+    const m = await openTake();
+    assert.equal(byRole(m.render(), "status").length, 0);
+  });
+
+  it("429：role=alert に上限の文言・目安・一覧に戻ると回答が消える旨を出し、回答は残る", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 1800 }, { status: 429, ok: false, url: SUBMIT }));
+    await settle();
+    const tree = m.render();
+    const alerts = byRole(tree, "alert");
+    assert.equal(alerts.length, 1);
+    assert.equal(text(alerts[0]).trim(), quizRateLimitedMessage(1800) + QUIZ_RATE_LIMITED_LEAVE_NOTE);
+    assert.ok(text(alerts[0]).includes("（目安：約 30 分後）"));
+    assert.ok(!text(tree).includes("送信できませんでした。回答はそのまま残っています。もう一度送信してください。"), "通常の失敗の文言も出ている");
+    assert.deepEqual(byRole(tree, "radio").map((x) => x.props["aria-checked"]), [false, false, true]);
+    assert.equal(m.reqs.length, 3, "一覧を読み直した・自動で再送した");
+    assert.equal(button(tree, "もう一度送信する").props.disabled, false);
+  });
+
+  it("409 quiz_changed：問題を読み直し、成功したら role=status で知らせ、回答は空", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ error: "Conflict", reason: "quiz_changed" }, { status: 409, ok: false, url: SUBMIT }));
+    await settle();
+    assert.equal(m.reqs[3].url, "/api/quizzes/mini2");
+    let tree = m.render();
+    assert.ok(text(tree).includes("Loading..."), "読み込み中でない");
+    assert.ok(!text(tree).includes(QUIZ_CHANGED_MESSAGE), "読み込み前に知らせた");
+    const v2 = { ...TAKE, questionCount: 3, questions: [...TAKE.questions, { id: "q3", question: "ダミー問3", options: ["選択肢F", "選択肢G"] }] };
+    m.reqs[3].release(res(v2, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    tree = m.render();
+    const status = byRole(tree, "status").map(text);
+    assert.ok(status.includes(QUIZ_CHANGED_MESSAGE), "知らせがない");
+    assert.ok(text(tree).includes("問題 1 / 3"));
+    assert.deepEqual(byRole(tree, "radio").map((x) => x.props["aria-checked"]), [false, false]);
+    assert.equal(byRole(tree, "alert").length, 0);
+  });
+
+  it("409 quiz_changed の読み直しに失敗したら「テストを読み込めませんでした」で、更新の知らせは出さない", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ error: "Conflict", reason: "quiz_changed" }, { status: 409, ok: false, url: SUBMIT }));
+    await settle();
+    m.reqs[3].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("テストを読み込めませんでした"));
+    assert.ok(!t.includes(QUIZ_CHANGED_MESSAGE));
+  });
+
+  it("重複（duplicate: true）：結果の上に role=status で知らせ、結果は通常どおり。一覧も読み直す", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: true }, { url: SUBMIT }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(byRole(tree, "status").map(text), [QUIZ_DUPLICATE_MESSAGE]);
+    assert.ok(text(tree).includes("50点（2問中 1問正解）"));
+    assert.ok(text(tree).indexOf(QUIZ_DUPLICATE_MESSAGE) < text(tree).indexOf("50点"), "知らせが結果の上にない");
+    assert.equal(m.reqs[3].url, "/api/quizzes");
+  });
+
+  it("duplicate: false の結果には重複の知らせを出さない", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    assert.ok(!text(m.render()).includes(QUIZ_DUPLICATE_MESSAGE));
   });
 });

@@ -153,17 +153,52 @@ describe("buildSubmitBody：境界", () => {
     ["文字列", ["0"]],
   ] as Array<[string, unknown[]]>) {
     it(`${label} は null（送信しない）`, () => {
-      assert.equal(buildSubmitBody(answers as Array<number | null>), null);
+      assert.equal(buildSubmitBody(answers as Array<number | null>, answers.map((_, i) => `q${i}`)), null);
     });
   }
 
-  it("body は answers だけ（正解・点数を送らない）", () => {
-    assert.deepEqual(Object.keys(buildSubmitBody([0, 1])!), ["answers"]);
+  it("body は answers と questionIds だけ（正解・点数を送らない。#51）", () => {
+    assert.deepEqual(Object.keys(buildSubmitBody([0, 1], ["q1", "q2"])!), ["answers", "questionIds"]);
+  });
+
+  for (const [label, ids] of [
+    ["回答より少ない", ["q1"]],
+    ["回答より多い", ["q1", "q2", "q3"]],
+    ["空文字を含む", ["q1", ""]],
+    ["数値を含む", ["q1", 2]],
+    ["配列でない", "q1,q2"],
+  ] as Array<[string, unknown]>) {
+    it(`問題の id が${label}なら null（送信しない。#51）`, () => {
+      assert.equal(buildSubmitBody([0, 1], ids as string[]), null);
+    });
+  }
+
+  it("返す questionIds は受け取った配列と別物", () => {
+    const ids = ["q1", "q2"];
+    const body = buildSubmitBody([0, 1], ids)!;
+    ids[0] = "x";
+    assert.deepEqual(body.questionIds, ["q1", "q2"]);
   });
 });
 
 describe("toQuizResultView：境界", () => {
   const ok = { score: 50, passed: false, total: 2, correct: 1, results: [true, false] };
+
+  for (const [label, duplicate, want] of [
+    ["duplicate: true", true, true],
+    ["duplicate: false", false, false],
+    ["duplicate なし", undefined, false],
+    ["duplicate が文字列", "true", false],
+    ["duplicate が 1", 1, false],
+    ["duplicate が null", null, false],
+  ] as Array<[string, unknown, boolean]>) {
+    it(`${label} は duplicate ${want}（#51。真偽値の true だけを重複とみなす）`, () => {
+      const data: Record<string, unknown> = { ...ok };
+      if (duplicate !== undefined) data.duplicate = duplicate;
+      assert.equal(toQuizResultView(data, 2)?.duplicate, want);
+    });
+  }
+
   for (const [label, data] of [
     ["点数が 101", { ...ok, score: 101 }],
     ["点数が小数", { ...ok, score: 50.5 }],

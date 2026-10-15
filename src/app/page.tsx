@@ -117,10 +117,16 @@ import { QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE, QUESTION_POST_URL, QUESTION_P
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
+  QUIZ_CHANGED_MESSAGE,
+  QUIZ_DUPLICATE_MESSAGE,
+  QUIZ_RATE_LIMITED_LEAVE_NOTE,
   buildSubmitBody,
+  classifyQuizSubmitResponse,
+  quizAttemptRuleText,
+  quizRateLimitedMessage,
   quizResultTitle,
+  quizWaitMessage,
   toQuizCourseItems,
-  toQuizResultView,
   toQuizTakeView,
 } from "@/lib/student-quizzes";
 
@@ -2274,13 +2280,20 @@ const QuizPage = () => {
   const [submitFailed, setSubmitFailed] = useState(false);
   const [submitLocked, setSubmitLocked] = useState(false);
   const [result, setResult] = useState(null);
+  // #51: the questions were reloaded after 409 quiz_changed (set only when the reload succeeded)
+  const [takeChanged, setTakeChanged] = useState(false);
+  // #51: retryAfterSeconds of GET /api/quizzes/[quizId]; sending now would be refused (answering is still allowed)
+  const [takeRetryAfter, setTakeRetryAfter] = useState(null);
+  // #51: the last submit was refused with 429 ({ retryAfterSeconds }); the answers are kept
+  const [submitRateLimited, setSubmitRateLimited] = useState(null);
 
   // Bumped on every open / close: responses of a quiz that is no longer shown are dropped.
   const takeSeq = useRef(0);
   // Guards against a second submit while one is in flight (double clicks).
   const submitInFlight = useRef(false);
 
-  const openQuiz = (quizId) => {
+  // afterChange: reloading after 409 quiz_changed (#51). The notice is shown only when the reload succeeds.
+  const openQuiz = (quizId, afterChange) => {
     if (!QUIZ_ATTEMPTS_ENABLED) return;
     takeSeq.current += 1;
     const seq = takeSeq.current;
@@ -2294,6 +2307,9 @@ const QuizPage = () => {
     setSubmitFailed(false);
     setSubmitLocked(false);
     setResult(null);
+    setTakeChanged(false);
+    setTakeRetryAfter(null);
+    setSubmitRateLimited(null);
     let sessionExpired = false;
     let courseLocked = false;
     authFetch(`/api/quizzes/${encodeURIComponent(quizId)}`).then(res => {
@@ -2309,7 +2325,12 @@ const QuizPage = () => {
       // The list may still show this course as open: reload it so that the lock is shown there too
       if (courseLocked) { setTakeLocked(true); loadQuizzes(); return; }
       const view = toQuizTakeView(data);
-      if (view) { setTakeQuiz(view); setAnswers(view.questions.map(() => null)); }
+      if (view) {
+        setTakeQuiz(view);
+        setAnswers(view.questions.map(() => null));
+        setTakeRetryAfter(view.retryAfterSeconds);
+        setTakeChanged(afterChange === true);
+      }
       else setTakeFailed(true);
     }).catch(() => { if (takeSeq.current === seq) setTakeFailed(true); }).finally(() => {
       if (sessionExpired || takeSeq.current !== seq) return;
@@ -2330,6 +2351,9 @@ const QuizPage = () => {
     setSubmitFailed(false);
     setSubmitLocked(false);
     setResult(null);
+    setTakeChanged(false);
+    setTakeRetryAfter(null);
+    setSubmitRateLimited(null);
   };
 
   const selectAnswer = (oi) => {
@@ -2337,40 +2361,51 @@ const QuizPage = () => {
     setAnswers(prev => prev.map((a, i) => (i === currentQ ? oi : a)));
   };
 
-  // Sends all answers once. Scoring is done by the server only; the page shows its result.
-  // On failure the answers are kept so that the same answers can be sent again.
+  // Sends all answers once, with the question ids in the order shown (#51). Scoring is done by the server only;
+  // the page shows its result. On failure the answers are kept so that the same answers can be sent again.
   const submitQuiz = () => {
     if (!QUIZ_ATTEMPTS_ENABLED || submitInFlight.current || !takeQuiz || submitLocked) return;
-    const body = buildSubmitBody(answers);
+    const body = buildSubmitBody(answers, takeQuiz.questions.map((x) => x.id));
     if (!body) return;
     submitInFlight.current = true;
     const seq = takeSeq.current;
+    const quizId = takeQuiz.id;
     const questionCount = takeQuiz.questions.length;
     setSubmitting(true);
     setSubmitFailed(false);
     setSubmitLocked(false);
+    setSubmitRateLimited(null);
+    setTakeChanged(false);
+    // The server's answer replaces the notice from GET (it may be out of date by now)
+    setTakeRetryAfter(null);
     let sessionExpired = false;
-    let courseLocked = false;
     authFetch(`/api/quizzes/${encodeURIComponent(takeQuiz.id)}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then(res => {
       if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
-      // 403 course_locked (#47 P5): nothing was saved; sending again would be refused too
-      if (res.status === 403 && !res.redirected) {
-        return res.json().catch(() => null).then(rejected => { courseLocked = isCourseLockedResponse(res.status, rejected); return null; });
-      }
-      if (!res.ok || res.redirected) return null;
-      return res.json();
-    }).then(data => {
+      if (res.redirected) return { kind: "failed" };
+      // Read the body once and classify it: 200 (ok / duplicate), 429, 409 quiz_changed (#51), 403 course_locked (#47 P5)
+      return res.json().catch(() => null).then(data => classifyQuizSubmitResponse(res.status, data, questionCount));
+    }).then(outcome => {
       if (sessionExpired) return;
-      if (courseLocked) { if (takeSeq.current === seq) setSubmitLocked(true); loadQuizzes(); return; }
-      const view = toQuizResultView(data, questionCount);
-      if (!view) { if (takeSeq.current === seq) setSubmitFailed(true); return; }
-      if (takeSeq.current === seq) setResult(view);
-      // The best score and pass / fail in the list have changed.
-      loadQuizzes();
+      const current = takeSeq.current === seq;
+      // 403 course_locked (#47 P5): nothing was saved; sending again would be refused too
+      if (outcome.kind === "course_locked") { if (current) setSubmitLocked(true); loadQuizzes(); return; }
+      if (outcome.kind === "ok" || outcome.kind === "duplicate") {
+        if (current) setResult(outcome.result);
+        // The best score and pass / fail in the list may have changed.
+        loadQuizzes();
+        return;
+      }
+      if (!current) return;
+      // 409 quiz_changed (#51): the questions were replaced. Drop the answers and load the quiz again
+      // (openQuiz bumps takeSeq, so responses for the old questions are dropped).
+      if (outcome.kind === "quiz_changed") { openQuiz(quizId, true); return; }
+      // 429 (#51): keep the answers. No automatic retry.
+      if (outcome.kind === "rate_limited") setSubmitRateLimited({ retryAfterSeconds: outcome.retryAfterSeconds });
+      setSubmitFailed(true);
     }).catch(() => { if (takeSeq.current === seq) setSubmitFailed(true); }).finally(() => {
       if (sessionExpired) return;
       submitInFlight.current = false;
@@ -2385,6 +2420,8 @@ const QuizPage = () => {
     setSubmitFailed(false);
     setSubmitLocked(false);
     setResult(null);
+    setTakeChanged(false);
+    setSubmitRateLimited(null);
   };
 
   const spinner = (
@@ -2400,7 +2437,7 @@ const QuizPage = () => {
     const q = questions[currentQ];
     const isLast = currentQ === questions.length - 1;
     const selectedAnswer = answers[currentQ] ?? null;
-    const submitBody = buildSubmitBody(answers);
+    const submitBody = buildSubmitBody(answers, questions.map((x) => x.id));
 
     let takeBody;
     if (takeLoading) {
@@ -2430,6 +2467,11 @@ const QuizPage = () => {
     } else if (result) {
       takeBody = (
         <div style={{ ...glassStyle(), borderRadius: 22, padding: "40px 32px" }}>
+          {result.duplicate && (
+            <div role="status" style={{ fontSize: 13, color: T.textSecondary, margin: "0 0 20px", overflowWrap: "anywhere" }}>
+              {QUIZ_DUPLICATE_MESSAGE}
+            </div>
+          )}
           <div style={{ textAlign: "center" }}>
             <div style={{ width: 100, height: 100, margin: "0 auto 24px" }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -2465,7 +2507,23 @@ const QuizPage = () => {
         </div>
       );
     } else {
+      const ruleText = quizAttemptRuleText(takeQuiz.type);
       takeBody = (
+        <>
+        {/* #51: the rule for retaking, and notices about the questions and waiting */}
+        {ruleText && (
+          <p style={{ fontSize: 12, color: T.textMuted, margin: "0 0 12px" }}>{ruleText}</p>
+        )}
+        {takeChanged && (
+          <div role="status" style={{ fontSize: 13, color: T.dark, margin: "0 0 12px", overflowWrap: "anywhere" }}>
+            {QUIZ_CHANGED_MESSAGE}
+          </div>
+        )}
+        {takeRetryAfter !== null && (
+          <div role="status" style={{ fontSize: 13, color: T.dark, margin: "0 0 12px", overflowWrap: "anywhere" }}>
+            {quizWaitMessage(takeRetryAfter)}
+          </div>
+        )}
         <div style={{ ...glassStyle(), borderRadius: 22, overflow: "hidden" }}>
           {/* Progress header */}
           <div style={{ padding: "20px 28px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
@@ -2514,7 +2572,9 @@ const QuizPage = () => {
               </div>
             ) : submitFailed && (
               <div role="alert" style={{ marginTop: 20, fontSize: 13, color: T.danger }}>
-                送信できませんでした。回答はそのまま残っています。もう一度送信してください。
+                {submitRateLimited
+                  ? quizRateLimitedMessage(submitRateLimited.retryAfterSeconds) + QUIZ_RATE_LIMITED_LEAVE_NOTE
+                  : "送信できませんでした。回答はそのまま残っています。もう一度送信してください。"}
               </div>
             )}
 
@@ -2543,6 +2603,7 @@ const QuizPage = () => {
             </div>
           </div>
         </div>
+        </>
       );
     }
 

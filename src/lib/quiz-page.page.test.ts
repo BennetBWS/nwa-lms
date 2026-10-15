@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAuthFailure } from "./client-session";
 import { COURSE_LOCKED_DESCRIPTION, QUIZ_SUBMIT_LOCKED_MESSAGE, isCourseLockedResponse } from "./course-locked";
-import { buildSubmitBody, toQuizResultView, toQuizTakeView } from "./student-quizzes";
+import { QUIZ_CHANGED_MESSAGE, buildSubmitBody, classifyQuizSubmitResponse, toQuizTakeView } from "./student-quizzes";
 
 // #32 確認テストのページ：page.tsx（// @ts-nocheck）の QuizPage をソースで検査し、
 // 読み込み・受験・送信の関数を取り出して、偽の useState / useRef / authFetch と本物の lib 関数で動かす。
@@ -67,7 +67,22 @@ describe("QuizPage：データの配線", () => {
     const m = src.match(/import \{([^}]*)\} from "@\/lib\/student-quizzes";/);
     assert.ok(m, "import がない");
     const names = m[1].split(",").map((s) => s.trim()).filter(Boolean);
-    for (const n of ["QUIZ_ATTEMPTS_ENABLED", "PASSING_PERCENT", "buildSubmitBody", "quizResultTitle", "toQuizCourseItems", "toQuizResultView", "toQuizTakeView"]) {
+    for (const n of [
+      "QUIZ_ATTEMPTS_ENABLED",
+      "PASSING_PERCENT",
+      "buildSubmitBody",
+      "quizResultTitle",
+      "toQuizCourseItems",
+      "toQuizTakeView",
+      // #51
+      "classifyQuizSubmitResponse",
+      "quizAttemptRuleText",
+      "quizRateLimitedMessage",
+      "quizWaitMessage",
+      "QUIZ_CHANGED_MESSAGE",
+      "QUIZ_DUPLICATE_MESSAGE",
+      "QUIZ_RATE_LIMITED_LEAVE_NOTE",
+    ]) {
       assert.ok(names.includes(n), n);
     }
   });
@@ -89,10 +104,15 @@ describe("QuizPage：データの配線", () => {
     assert.match(quizPage, /const submitInFlight = useRef\(false\);/);
   });
 
-  it("画面で採点しない（正解・正解率の計算がない。結果はサーバーの値を toQuizResultView で使う）", () => {
+  it("画面で採点しない（正解・正解率の計算がない。結果はサーバーの値を classifyQuizSubmitResponse〔toQuizResultView〕で使う）", () => {
     assert.doesNotMatch(quizPage, /correctIndex|\.correct\b(?!\})|q\.correct|correct:/);
     assert.doesNotMatch(quizPage, /0\.7|\/ questions\.length|score \+/);
-    assert.match(quizPage, /toQuizResultView\(data, questionCount\)/);
+    assert.match(quizPage, /classifyQuizSubmitResponse\(res\.status, data, questionCount\)/);
+  });
+
+  it("送信の body は画面の問題の並びの id を含む（#51）", () => {
+    assert.match(takeSrc, /buildSubmitBody\(answers, takeQuiz\.questions\.map\(\(x\) => x\.id\)\)/);
+    assert.match(quizPage, /const submitBody = buildSubmitBody\(answers, questions\.map\(\(x\) => x\.id\)\);/);
   });
 
   it("URL の quizId は encodeURIComponent する", () => {
@@ -112,14 +132,15 @@ describe("QuizPage：表示", () => {
   it("受験ボタンは QUIZ_ATTEMPTS_ENABLED が true で、ロックされていないコースだけ。false の間は「受験は準備中です」", () => {
     assert.match(quizPage, /\{QUIZ_ATTEMPTS_ENABLED && !course\.locked && \(\s*<Button[^>]*onClick=\{\(\) => openQuiz\(quiz\.id\)\}/);
     assert.match(quizPage, /\{!QUIZ_ATTEMPTS_ENABLED && \(\s*<div role="status"[^>]*>\s*受験は準備中です/);
-    // openQuiz を呼ぶのは受験ボタンと、受験画面の再読み込みだけ
+    // openQuiz を呼ぶのは受験ボタンと、受験画面の再読み込みと、409 quiz_changed の読み直し（#51）だけ
     const calls = quizPage.match(/openQuiz\(/g) ?? [];
-    assert.equal(calls.length, 2, "受験ボタン 1 + 受験画面の再読み込み 1");
+    assert.equal(calls.length, 3, "受験ボタン 1 + 受験画面の再読み込み 1 + quiz_changed の読み直し 1");
+    assert.match(takeSrc, /openQuiz\(quizId, true\)/);
   });
 
   it("受験画面は QUIZ_ATTEMPTS_ENABLED が true のときだけ開く", () => {
     assert.match(quizPage, /if \(QUIZ_ATTEMPTS_ENABLED && activeQuizId !== null\) \{/);
-    assert.match(takeSrc, /const openQuiz = \(quizId\) => \{\s*if \(!QUIZ_ATTEMPTS_ENABLED\) return;/);
+    assert.match(takeSrc, /const openQuiz = \(quizId, afterChange\) => \{\s*if \(!QUIZ_ATTEMPTS_ENABLED\) return;/);
     assert.match(takeSrc, /if \(!QUIZ_ATTEMPTS_ENABLED \|\| submitInFlight\.current \|\| !takeQuiz \|\| submitLocked\) return;/);
   });
 
@@ -334,6 +355,9 @@ function takeHarness(enabled: boolean) {
     submitFailed: false,
     submitLocked: false,
     result: null as unknown,
+    takeChanged: false,
+    takeRetryAfter: null as number | null,
+    submitRateLimited: null as unknown,
     seq: 0,
     submitInFlight: false,
     reloads: 0,
@@ -353,7 +377,7 @@ function takeHarness(enabled: boolean) {
     "classifyAuthFailure",
     "isCourseLockedResponse",
     "toQuizTakeView",
-    "toQuizResultView",
+    "classifyQuizSubmitResponse",
     "buildSubmitBody",
     "loadQuizzes",
     "takeSeq",
@@ -373,6 +397,9 @@ function takeHarness(enabled: boolean) {
     "setSubmitFailed",
     "setSubmitLocked",
     "setResult",
+    "setTakeChanged",
+    "setTakeRetryAfter",
+    "setSubmitRateLimited",
     `${takeSrc}\nreturn { openQuiz, closeQuiz, selectAnswer, submitQuiz, retakeQuiz };`
   );
   const takeSeq = refOf(() => st.seq, (v) => (st.seq = v));
@@ -385,7 +412,7 @@ function takeHarness(enabled: boolean) {
       classifyAuthFailure,
       isCourseLockedResponse,
       toQuizTakeView,
-      toQuizResultView,
+      classifyQuizSubmitResponse,
       buildSubmitBody,
       () => st.reloads++,
       takeSeq,
@@ -404,7 +431,10 @@ function takeHarness(enabled: boolean) {
       set("submitting"),
       set("submitFailed"),
       set("submitLocked"),
-      set("result")
+      set("result"),
+      set("takeChanged"),
+      set("takeRetryAfter"),
+      set("submitRateLimited")
     ) as Take;
   return { st, reqs, render };
 }
@@ -444,7 +474,7 @@ describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true の経
     assert.equal(h.reqs[0].url, "/api/quizzes/quiz%2F1");
     assert.equal(h.reqs[0].init, undefined);
     assert.equal(h.st.activeQuizId, QUIZ.id);
-    assert.deepEqual(h.st.takeQuiz, { id: QUIZ.id, title: QUIZ.title, questions: QUIZ.questions });
+    assert.deepEqual(h.st.takeQuiz, { id: QUIZ.id, title: QUIZ.title, type: "MINI", questions: QUIZ.questions, retryAfterSeconds: null });
     assert.deepEqual(h.st.answers, [null, null]);
     assert.equal(h.st.takeLoading, false);
     assert.equal(h.st.takeFailed, false);
@@ -499,7 +529,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(h.reqs.length, 1);
   });
 
-  it("全問回答で 1 回だけ POST し、body は { answers } だけ（正解・採点を送らない）", async () => {
+  it("全問回答で 1 回だけ POST し、body は { answers, questionIds } だけ（正解・採点を送らない）", async () => {
     const h = await openLoaded();
     answerAll(h, [1, 2]);
     const t = h.render();
@@ -510,7 +540,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     const post = h.reqs[1];
     assert.equal(post.url, "/api/quizzes/quiz%2F1/submit");
     assert.equal(post.init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(post.init?.body)), { answers: [1, 2] });
+    assert.deepEqual(JSON.parse(String(post.init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
     assert.equal(h.st.submitting, true);
   });
 
@@ -531,7 +561,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     h.render().submitQuiz();
     h.reqs[1].release(res({ body: RESULT }));
     await settle();
-    assert.deepEqual(h.st.result, RESULT);
+    assert.deepEqual(h.st.result, { ...RESULT, duplicate: false });
     assert.equal(h.st.submitting, false);
     assert.equal(h.st.submitFailed, false);
     assert.equal(h.st.submitInFlight, false);
@@ -556,7 +586,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
       assert.equal(h.st.reloads, 0);
       h.render().submitQuiz();
       assert.equal(h.reqs.length, 3);
-      assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2] });
+      assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
       assert.equal(h.st.submitFailed, false);
     });
   }
@@ -813,5 +843,211 @@ describe("受験：ロック中のコース（追加の観点。#47 P5）", () =
 
   it("送信ボタンは submitLocked の間 disabled（ソース）", () => {
     assert.match(quizPage, /disabled=\{!submitBody \|\| submitting \|\| submitLocked\}/);
+  });
+});
+
+// ───────────── 実行：受験の公開前の修正（#51） ─────────────
+
+const SUBMIT_URL = `${ORIGIN}/api/quizzes/quiz%2F1/submit`;
+const RATE_LIMITED = { status: 429, ok: false, body: { error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 1800 } };
+const CHANGED = { status: 409, ok: false, body: { error: "Conflict", reason: "quiz_changed" } };
+const QUIZ_V2 = {
+  ...QUIZ,
+  questionCount: 3,
+  questions: [...QUIZ.questions, { id: "q3", question: "問3", options: ["f", "g"] }],
+};
+
+describe("受験：429（間隔・回数の上限。#51）", () => {
+  it("回答を残して submitFailed、submitRateLimited に retryAfterSeconds。一覧は読み直さず、自動で再送しない", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.submitFailed, true, "submitFailed にならない");
+    assert.deepEqual(h.st.submitRateLimited, { retryAfterSeconds: 1800 });
+    assert.deepEqual(h.st.answers, [1, 2], "回答が消えた");
+    assert.equal(h.st.result, null);
+    assert.equal(h.st.submitting, false);
+    assert.equal(h.st.reloads, 0, "一覧を読み直した");
+    await settle();
+    assert.equal(h.reqs.length, 2, "自動で再送した");
+  });
+
+  it("もう一度送信すると submitRateLimited を消し、同じ回答で送る", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    h.render().submitQuiz();
+    assert.equal(h.st.submitRateLimited, null, "再送しても 429 の印が残る");
+    assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+  });
+
+  it("retryAfterSeconds のない 429 も上限として扱う（目安は null）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ status: 429, ok: false, body: null }, SUBMIT_URL));
+    await settle();
+    assert.deepEqual(h.st.submitRateLimited, { retryAfterSeconds: null });
+  });
+
+  it("500 のあとは submitRateLimited を付けない（通常の送信失敗）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ status: 500, ok: false, body: { error: "Internal server error" } }, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.submitFailed, true);
+    assert.equal(h.st.submitRateLimited, null);
+  });
+
+  it("もう一度受ける・一覧に戻ると submitRateLimited を消す", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    h.render().retakeQuiz();
+    assert.equal(h.st.submitRateLimited, null, "もう一度受けても残る");
+    h.st.submitRateLimited = { retryAfterSeconds: 1 };
+    h.render().closeQuiz();
+    assert.equal(h.st.submitRateLimited, null, "一覧に戻っても残る");
+  });
+});
+
+describe("受験：409 quiz_changed（問題の入れ替え。#51）", () => {
+  it("回答を消して同じクイズを読み直し、成功したら takeChanged（新しい問題と未回答の配列）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.reqs.length, 3, "読み直していない");
+    assert.equal(h.reqs[2].url, "/api/quizzes/quiz%2F1");
+    assert.equal(h.reqs[2].init, undefined);
+    assert.deepEqual(h.st.answers, [], "回答が残っている");
+    assert.equal(h.st.takeLoading, true);
+    assert.equal(h.st.takeChanged, false, "読み直しの成功前に知らせた");
+    assert.equal(h.st.submitFailed, false, "送信失敗として扱っている");
+    h.reqs[2].release(res({ body: QUIZ_V2 }, `${ORIGIN}/api/quizzes/quiz%2F1`));
+    await settle();
+    assert.equal(h.st.takeChanged, true, "読み直しの成功を知らせていない");
+    assert.equal(h.st.takeQuiz?.questions.length, 3);
+    assert.deepEqual(h.st.answers, [null, null, null]);
+    assert.equal(h.st.currentQ, 0);
+    assert.equal(h.st.submitting, false);
+    assert.equal(h.st.submitInFlight, false);
+  });
+
+  it("読み直しに失敗したら takeFailed で、takeChanged は出さない", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    h.reqs[2].release(res({ status: 500, ok: false, body: { error: "Internal server error" } }));
+    await settle();
+    assert.equal(h.st.takeFailed, true);
+    assert.equal(h.st.takeChanged, false, "失敗したのに読み込みましたと知らせる");
+  });
+
+  it("読み直しのあと、新しい問題の並びで送る", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    h.reqs[2].release(res({ body: QUIZ_V2 }));
+    await settle();
+    answerAll(h, [0, 1, 1]);
+    h.render().submitQuiz();
+    assert.deepEqual(JSON.parse(String(h.reqs[3].init?.body)), { answers: [0, 1, 1], questionIds: ["q1", "q2", "q3"] });
+    assert.equal(h.st.takeChanged, false, "送信しても知らせが残る");
+  });
+
+  it("読み直しの前に届いていた古い問題の応答は捨てる（読み直しの応答だけを使う）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz(QUIZ.id); // reqs[0]：古い読み込み（まだ届いていない）
+    h.render().openQuiz(QUIZ.id); // reqs[1]
+    h.reqs[1].release(res({ body: QUIZ }));
+    await settle();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz(); // reqs[2]
+    h.reqs[2].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    h.reqs[0].release(res({ body: QUIZ })); // 古い 2 問の応答
+    await settle();
+    assert.equal(h.st.takeQuiz, null, "古い応答を使った");
+    h.reqs[3].release(res({ body: QUIZ_V2 }));
+    await settle();
+    assert.equal(h.st.takeQuiz?.questions.length, 3);
+    assert.equal(h.st.takeChanged, true);
+  });
+
+  it("409 quiz_unavailable は quiz_changed にせず、これまでどおり submitFailed", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ status: 409, ok: false, body: { error: "Quiz unavailable", reason: "quiz_unavailable" } }, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.submitFailed, true);
+    assert.equal(h.reqs.length, 2, "読み直した");
+    assert.deepEqual(h.st.answers, [1, 2]);
+  });
+
+  it("QUIZ_CHANGED_MESSAGE は空でない", () => {
+    assert.ok(QUIZ_CHANGED_MESSAGE.length > 0, "文言が空");
+  });
+});
+
+describe("受験：再送の重複（200 duplicate: true。#51）", () => {
+  it("結果を通常どおり表示し（duplicate: true を持つ）、一覧も読み直す", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ body: { ...RESULT, duplicate: true } }, SUBMIT_URL));
+    await settle();
+    assert.deepEqual(h.st.result, { ...RESULT, duplicate: true });
+    assert.equal(h.st.reloads, 1, "一覧を読み直していない");
+    assert.equal(h.st.submitFailed, false);
+  });
+});
+
+describe("受験：GET の retryAfterSeconds（事前の案内。#51）", () => {
+  it("問題の読み込みで retryAfterSeconds があれば takeRetryAfter に入れ、回答は始められる", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[0].release(res({ body: { ...QUIZ, retryAfterSeconds: 600 } }));
+    await settle();
+    assert.equal(h.st.takeRetryAfter, 600);
+    assert.deepEqual(h.st.answers, [null, null]);
+    answerAll(h, [0, 0]);
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 2, "送信できない");
+    assert.equal(h.st.takeRetryAfter, null, "送信してもサーバーの前の案内が残る");
+  });
+
+  it("retryAfterSeconds が null・壊れていれば takeRetryAfter は null", async () => {
+    for (const v of [null, "600", -1]) {
+      const h = takeHarness(true);
+      h.render().openQuiz(QUIZ.id);
+      h.reqs[0].release(res({ body: { ...QUIZ, retryAfterSeconds: v } }));
+      await settle();
+      assert.equal(h.st.takeRetryAfter, null, `${String(v)} で案内を出す`);
+    }
+  });
+
+  it("一覧に戻ると takeRetryAfter・takeChanged を消す", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[0].release(res({ body: { ...QUIZ, retryAfterSeconds: 600 } }));
+    await settle();
+    h.st.takeChanged = true;
+    h.render().closeQuiz();
+    assert.equal(h.st.takeRetryAfter, null);
+    assert.equal(h.st.takeChanged, false);
   });
 });
