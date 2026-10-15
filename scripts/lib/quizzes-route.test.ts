@@ -43,7 +43,7 @@ let HANDLE_SUBMIT: (
   userId: string,
   req: Request,
   ctx: { params: Promise<{ quizId: string }> },
-  opts: { attemptsEnabled: boolean; role: string | null | undefined }
+  opts: { attemptsEnabled: boolean; role: string | null | undefined; now?: Date }
 ) => Promise<Response>;
 let ATTEMPTS_ENABLED: boolean;
 
@@ -68,7 +68,13 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
 function matchWhere(row: Row, where: unknown): boolean {
   if (!where) return true;
   return Object.entries(where as Row).every(([k, v]) => {
-    if (typeof v === "object" && v !== null) throw new Error(`fake prisma: unsupported where ${k}`);
+    if (typeof v === "object" && v !== null) {
+      // 受験記録の期間（createdAt: { gt: Date }。#51）だけを再現する
+      const keys = Object.keys(v);
+      const gt = (v as { gt?: unknown }).gt;
+      if (keys.length !== 1 || !(gt instanceof Date) || !(row[k] instanceof Date)) throw new Error(`fake prisma: unsupported where ${k}`);
+      return (row[k] as Date).getTime() > gt.getTime();
+    }
     return row[k] === v;
   });
 }
@@ -121,7 +127,8 @@ function findMany(model: string, method: string, rows: () => Row[]) {
   return async (args: Row = {}) => {
     record(method, args);
     const hit = sortRows(rows().filter((r) => matchWhere(r, args.where)), args.orderBy);
-    return hit.map((r) => project(model, r, args.select as Select | undefined));
+    const taken = typeof args.take === "number" ? hit.slice(0, args.take) : hit;
+    return taken.map((r) => project(model, r, args.select as Select | undefined));
   };
 }
 
@@ -162,6 +169,7 @@ const at = (minutesAgo: number) => new Date(BASE - minutesAgo * 60_000);
 
 beforeEach(() => {
   session = STUDENT_SESSION;
+  submitNow = new Date(BASE);
   calls = [];
   failOn = undefined;
   failWith = undefined;
@@ -234,9 +242,26 @@ const submitRequest = (quizId: string, body: unknown, raw?: string) =>
   });
 /** route の POST（QUIZ_ATTEMPTS_ENABLED の値のまま） */
 const submitRoute = (quizId: string, body: unknown, raw?: string) => SUBMIT(submitRequest(quizId, body, raw), ctx(quizId));
-/** 本体に attemptsEnabled: true を渡す（受験を公開したあとの動き）。userId は route と同じくセッションの値 */
-const submit = (quizId: string, body: unknown, raw?: string) =>
-  HANDLE_SUBMIT(session!.user.id!, submitRequest(quizId, body, raw), ctx(quizId), { attemptsEnabled: true, role: session!.user.role });
+/** いまのダミーのデータで、そのクイズの問題の id を GET と同じ並び（[order, id]）で返す */
+const serverQuestionIds = (quizId: string) =>
+  sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => q.id as string);
+/** 送信の時刻（#51 の間隔・回数の判定に使う）。ダミーの受験記録・偽 create の日時と同じ BASE */
+let submitNow: Date;
+/**
+ * 本体に attemptsEnabled: true を渡す（受験を公開したあとの動き）。userId は route と同じくセッションの値。
+ * body が questionIds を持たないオブジェクトなら、画面と同じく、いまの問題の id（[order, id] の順）を足して送る（#51）。
+ * questionIds の検証そのものは submitExact（足さずにそのまま送る）で確かめる
+ */
+const submit = (quizId: string, body: unknown, raw?: string) => {
+  const withIds =
+    raw === undefined && typeof body === "object" && body !== null && !Array.isArray(body) && !("questionIds" in body)
+      ? { ...(body as Row), questionIds: serverQuestionIds(quizId) }
+      : body;
+  return submitExact(quizId, withIds, raw);
+};
+/** body をそのまま送る（questionIds を足さない） */
+const submitExact = (quizId: string, body: unknown, raw?: string) =>
+  HANDLE_SUBMIT(session!.user.id!, submitRequest(quizId, body, raw), ctx(quizId), { attemptsEnabled: true, role: session!.user.role, now: submitNow });
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
 /** 問題を読んだ quiz.findUnique（ロックの確認で読む quiz.findUnique は questions を select しない。#47 P5） */
 const questionReads = () => calls.filter((c) => c.method === "quiz.findUnique" && (c.args.select as Select | undefined)?.questions !== undefined);
@@ -452,7 +477,7 @@ describe("GET /api/quizzes/[quizId]：認証・入力", () => {
     for (const s of ["correctIndex", "questions", "options", "範囲外", "bk1"]) assert.ok(!text.includes(s), s);
     const list = await (await LIST()).text();
     assert.ok(!list.includes("badkey"));
-    assert.equal((await HANDLE_SUBMIT(STUDENT, submitRequest("badkey", { answers: [0] }), ctx("badkey"), { attemptsEnabled: true, role: "STUDENT" })).status, 409);
+    assert.equal((await HANDLE_SUBMIT(STUDENT, submitRequest("badkey", { answers: [0], questionIds: ["bk1"] }), ctx("badkey"), { attemptsEnabled: true, role: "STUDENT" })).status, 409);
   });
 });
 
@@ -473,6 +498,8 @@ describe("GET /api/quizzes/[quizId]：応答", () => {
       attemptCount: 2,
       bestScore: 67,
       passed: false,
+      // 受験記録はどれも 24 時間より前（BASE は過去の日時。GET は実際の時刻で判定する）
+      retryAfterSeconds: null,
     });
   });
 
@@ -650,21 +677,22 @@ describe("POST submit：認証・入力（attemptsEnabled: true）", () => {
 
 describe("POST submit：採点と保存（attemptsEnabled: true）", () => {
   // fin1 の並び（[order, id]）：qz（正解 1）→ qa（正解 0）→ qb（正解 2）
-  it("採点はサーバーで、GET と同じ並び。応答は score / passed / total / correct / results だけ", async () => {
+  it("採点はサーバーで、GET と同じ並び。応答は score / passed / total / correct / results / duplicate だけ", async () => {
     const res = await submit("fin1", { answers: [1, 0, 0] });
     assert.equal(res.status, 200);
     const text = await res.text();
-    assert.deepEqual(JSON.parse(text), { score: 66, passed: false, total: 3, correct: 2, results: [true, true, false] });
+    assert.deepEqual(JSON.parse(text), { score: 66, passed: false, total: 3, correct: 2, results: [true, true, false], duplicate: false });
     for (const k of ["correctIndex", "answers", "options", STUDENT]) assert.doesNotMatch(text, new RegExp(k), k);
     const quiz = questionReads()[0];
     const questions = (quiz?.args.select as Select).questions as { orderBy: unknown; select: Select };
     assert.deepEqual(questions.orderBy, [{ order: "asc" }, { id: "asc" }]);
-    assert.deepEqual(questions.select, { options: true, correctIndex: true });
+    // id は questionIds の照合（#51）に使う
+    assert.deepEqual(questions.select, { id: true, options: true, correctIndex: true });
   });
 
   it("全問正解は 100 点で合格", async () => {
     const body = await (await submit("fin1", { answers: [1, 0, 2] })).json();
-    assert.deepEqual(body, { score: 100, passed: true, total: 3, correct: 3, results: [true, true, true] });
+    assert.deepEqual(body, { score: 100, passed: true, total: 3, correct: 3, results: [true, true, true], duplicate: false });
   });
 
   it("70% ちょうどは合格（10 問中 7 問）", async () => {
@@ -676,7 +704,7 @@ describe("POST submit：採点と保存（attemptsEnabled: true）", () => {
 
   it("1 問のクイズ", async () => {
     const body = await (await submit("mini1a", { answers: [0] })).json();
-    assert.deepEqual(body, { score: 100, passed: true, total: 1, correct: 1, results: [true] });
+    assert.deepEqual(body, { score: 100, passed: true, total: 1, correct: 1, results: [true], duplicate: false });
   });
 
   it("create の data：userId はセッションの値（body の userId・score・passed は使わない）、answers は検証済みの配列だけ", async () => {
@@ -856,7 +884,7 @@ describe("POST submit：コースのロック（#47 P5、attemptsEnabled: true�
   it("解放済みのコースのクイズは今までどおり採点・保存する", async () => {
     const res = await submit("fin2", { answers: [0] });
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { score: 100, passed: true, total: 1, correct: 1, results: [true] });
+    assert.deepEqual(await res.json(), { score: 100, passed: true, total: 1, correct: 1, results: [true], duplicate: false });
     assert.equal(creates().length, 1, "受験記録を書いていない");
   });
 
@@ -885,7 +913,7 @@ describe("POST submit：コースのロック（#47 P5、attemptsEnabled: true�
 
   it("本体に role を渡さない（undefined・null）ときも受講生として扱う", async () => {
     for (const role of [undefined, null]) {
-      const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin3", { answers: [0] }), ctx("fin3"), { attemptsEnabled: true, role });
+      const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin3", { answers: [0], questionIds: ["f3q"] }), ctx("fin3"), { attemptsEnabled: true, role });
       assert.equal(res.status, 403, `role ${String(role)} が 403 でない`);
     }
     assert.equal(creates().length, 0, "受験記録を書いている");
@@ -1182,5 +1210,339 @@ describe("quizCourseId の規則は 1 か所だけ（ソース。#47 P5）", () 
       assert.doesNotMatch(s, /"FINAL"|"MINI"|section/, `${p} にコースの規則がある`);
       assert.match(s, /role !== "INSTRUCTOR"/, `${p} の講師の判定が完全一致でない`);
     }
+  });
+});
+
+// ───────────── 受験の公開前の修正（#51） ─────────────
+// 既定のデータ：fin1（修了テスト、問題は qz → qa → qb、正解 [1, 0, 2]）に STUDENT の受験が 100 分前・300 分前の 2 件。
+// mini1a（ミニテスト）に 50 分前の 1 件。送信の時刻（submitNow）は BASE、偽 create の createdAt も BASE。
+
+const attemptReads = () => calls.filter((c) => c.method === "quizAttempt.findMany");
+const HOUR_MS = 60 * 60_000;
+/** STUDENT の fin1 の既定の受験記録（100 分前・300 分前）を消す（回数の上限にかからない状態で間隔だけを見る） */
+const clearMyFin1 = () => {
+  db.attempts = db.attempts.filter((a) => !(a.userId === STUDENT && a.quizId === "fin1"));
+};
+
+/** 429・409 の本文に、点数・正誤・正解・問題の id・クイズの中身を含まないこと */
+function assertNoQuizContent(text: string) {
+  for (const s of ["score", "results", "correct", "passed", "total", "qz", "qa", "qb", "問Z", "options", "duplicate", STUDENT]) {
+    assert.ok(!text.includes(s), `本文に ${s} が含まれる: ${text}`);
+  }
+}
+
+describe("POST submit：questionIds の形（#51）", () => {
+  it("questionIds がなければ 400 invalid_question_ids で、DB を読まない", async () => {
+    const res = await submitExact("fin1", { answers: [1, 0, 2] });
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_question_ids" });
+    assert.equal(calls.length, 0, "DB を読んでいる");
+  });
+
+  for (const [label, questionIds] of [
+    ["文字列", "qz,qa,qb"],
+    ["空文字の id を含む", ["qz", "", "qb"]],
+    ["数値の id を含む", ["qz", 1, "qb"]],
+    ["65 文字の id を含む", ["qz", "q".repeat(65), "qb"]],
+  ] as Array<[string, unknown]>) {
+    it(`questionIds が${label}なら 400 invalid_question_ids で、DB を読まない`, async () => {
+      const res = await submitExact("fin1", { answers: [1, 0, 2], questionIds });
+      assert.equal(res.status, 400);
+      assert.equal((await res.json()).reason, "invalid_question_ids");
+      assert.equal(calls.length, 0, "DB を読んでいる");
+    });
+  }
+
+  it("answers も壊れていれば invalid_answers（answers を先に見る）", async () => {
+    const res = await submitExact("fin1", { answers: "x" });
+    assert.equal((await res.json()).reason, "invalid_answers");
+  });
+
+  it("ロック中のコースでも、形が壊れていれば DB を読まずに 400", async () => {
+    assert.equal((await submitExact("fin3", { answers: [0] })).status, 400);
+    assert.equal(calls.length, 0, "DB を読んでいる");
+  });
+});
+
+describe("POST submit：問題の入れ替え（409 quiz_changed。#51）", () => {
+  for (const [label, questionIds] of [
+    ["問題が増えた（画面は 2 問）", ["qz", "qa"]],
+    ["問題が減った（画面は 4 問）", ["qz", "qa", "qb", "qx"]],
+    ["順番が違う", ["qa", "qz", "qb"]],
+    ["中身が違う", ["qz", "qa", "qx"]],
+    ["空", []],
+  ] as Array<[string, string[]]>) {
+    it(`${label}なら 409 quiz_changed で、受験記録を読まず・書かない`, async () => {
+      const res = await submitExact("fin1", { answers: [1, 0, 2], questionIds });
+      assert.equal(res.status, 409);
+      const text = await res.text();
+      assert.deepEqual(JSON.parse(text), { error: "Conflict", reason: "quiz_changed" });
+      assertNoQuizContent(text);
+      assert.equal(attemptReads().length, 0, "受験記録を読んでいる");
+      assert.equal(creates().length, 0, "受験記録を書いている");
+    });
+  }
+
+  it("answers の長さが合わなくても、questionIds が違えば 400 ではなく 409（問題が増えたことを先に知らせる）", async () => {
+    const res = await submitExact("fin1", { answers: [1, 0], questionIds: ["qz", "qa"] });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).reason, "quiz_changed");
+  });
+
+  it("questionIds が一致して answers の長さが違えば 400 invalid_answers", async () => {
+    const res = await submitExact("fin1", { answers: [1, 0], questionIds: ["qz", "qa", "qb"] });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).reason, "invalid_answers");
+    assert.equal(attemptReads().length, 0, "受験記録を読んでいる");
+  });
+
+  it("問題が足されたあとに古い画面から送ると 409、読み直した並びで送れば 200", async () => {
+    db.questions.push({ id: "qc", quizId: "fin1", question: "問C", options: ["c0", "c1"], correctIndex: 1, order: 3 });
+    assert.equal((await submitExact("fin1", { answers: [1, 0, 2], questionIds: ["qz", "qa", "qb"] })).status, 409);
+    const res = await submitExact("fin1", { answers: [1, 0, 2, 1], questionIds: ["qz", "qa", "qb", "qc"] });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).total, 4);
+  });
+
+  it("ロック中のコースは、questionIds が違っても 409 より先に 403（問題を読まない）", async () => {
+    const res = await submitExact("fin3", { answers: [0], questionIds: ["wrong"] });
+    assert.equal(res.status, 403);
+    assert.equal(questionReads().length, 0, "問題を読んでいる");
+  });
+
+  it("受験できないクイズは、questionIds が違っても 409 quiz_unavailable", async () => {
+    const res = await submitExact("badkey", { answers: [0], questionIds: ["wrong"] });
+    assert.deepEqual(await res.json(), { error: "Quiz unavailable", reason: "quiz_unavailable" });
+  });
+
+  it("409 quiz_changed はログを出さない", async () => {
+    const done = captureLogs();
+    await submitExact("fin1", { answers: [1, 0, 2], questionIds: ["qa"] });
+    assert.equal(done(), "", "ログが出た");
+  });
+});
+
+describe("POST submit：受験記録の読み方（#51）", () => {
+  it("自分の、このクイズの直近 24 時間の記録を、新しい順に修了テストは 3 件まで読む", async () => {
+    await submit("fin1", { answers: [1, 0, 2], userId: OTHER });
+    const reads = attemptReads();
+    assert.equal(reads.length, 1, "受験記録の読み取りが 1 回でない");
+    const args = reads[0].args;
+    assert.deepEqual(args.where, { userId: STUDENT, quizId: "fin1", createdAt: { gt: new Date(BASE - 24 * HOUR_MS) } });
+    assert.deepEqual(args.select, { answers: true, createdAt: true });
+    assert.deepEqual(args.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
+    assert.equal(args.take, 3);
+  });
+
+  it("ミニテストは 10 件まで読む", async () => {
+    await submit("mini1b", { answers: [1] });
+    assert.equal(attemptReads()[0]?.args.take, 10);
+  });
+
+  it("読む順番：問題を読んで questionIds・answers を確かめたあと、保存の前", async () => {
+    await submit("fin1", { answers: [1, 0, 2] });
+    const order = calls.map((c) => c.method);
+    const q = order.lastIndexOf("quiz.findUnique");
+    const a = order.indexOf("quizAttempt.findMany");
+    const w = order.indexOf("quizAttempt.create");
+    assert.ok(q >= 0 && a > q && w > a, `読む順番が違う: ${order.join(" → ")}`);
+  });
+
+  it("受験記録の読み取りの例外は 500 で書き込まず、ログはエラーの名前だけ", async () => {
+    failOn = "quizAttempt.findMany";
+    failWith = piiError();
+    const done = captureLogs();
+    const res = await submit("fin1", { answers: [1, 0, 2] });
+    const out = done();
+    assert.equal(res.status, 500);
+    assert.equal(creates().length, 0, "受験記録を書いている");
+    assertSafeLog(out);
+  });
+});
+
+describe("POST submit：間隔と回数の上限（429。#51）", () => {
+  it("修了テストを受けた直後に別の回答を送ると 429。Retry-After と retryAfterSeconds は 30 分、記録しない", async () => {
+    clearMyFin1();
+    assert.equal((await submit("fin1", { answers: [1, 0, 2] })).status, 200);
+    const res = await submit("fin1", { answers: [0, 0, 0] });
+    assert.equal(res.status, 429);
+    assert.equal(res.headers.get("Retry-After"), "1800");
+    const text = await res.text();
+    assert.deepEqual(JSON.parse(text), { error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 1800 });
+    assertNoQuizContent(text);
+    assert.equal(creates().length, 1, "429 で記録した");
+  });
+
+  it("30 分たてば送れる（ちょうど 30 分で 200）", async () => {
+    clearMyFin1();
+    await submit("fin1", { answers: [1, 0, 2] });
+    submitNow = new Date(BASE + 30 * 60_000 - 1);
+    assert.equal((await submit("fin1", { answers: [0, 0, 0] })).status, 429, "30 分の 1 ms 前が 429 でない");
+    submitNow = new Date(BASE + 30 * 60_000);
+    assert.equal((await submit("fin1", { answers: [0, 0, 0] })).status, 200, "ちょうど 30 分が 200 でない");
+  });
+
+  it("修了テストは 24 時間に 3 回まで（4 回目は、最も古い 1 件が 24 時間を過ぎるまで 429）", async () => {
+    // 既定の 2 件（300 分前・100 分前）に、いま 1 件を足して 3 件
+    assert.equal((await submit("fin1", { answers: [1, 0, 2] })).status, 200);
+    submitNow = new Date(BASE + 2 * HOUR_MS);
+    const res = await submit("fin1", { answers: [0, 0, 0] });
+    assert.equal(res.status, 429);
+    // 最も古い 300 分前の記録が期間から出るのは BASE + 19 時間。いまは BASE + 2 時間なので 17 時間後
+    assert.equal((await res.json()).retryAfterSeconds, 17 * 60 * 60);
+    assert.equal(res.headers.get("Retry-After"), String(17 * 60 * 60));
+    submitNow = new Date(BASE + 19 * HOUR_MS + 1);
+    assert.equal((await submit("fin1", { answers: [0, 0, 0] })).status, 200, "古い記録が期間から出ても 429 のまま");
+  });
+
+  it("ミニテストは 60 秒あければ続けて受けられる", async () => {
+    assert.equal((await submit("mini1b", { answers: [0] })).status, 200);
+    assert.equal((await submit("mini1b", { answers: [1] })).status, 429);
+    submitNow = new Date(BASE + 60_000);
+    assert.equal((await submit("mini1b", { answers: [1] })).status, 200);
+  });
+
+  it("他人の受験記録は数えない（OTHER が直前に受けていても STUDENT は送れる）", async () => {
+    for (let i = 0; i < 5; i++) db.attempts.push({ id: `att_o${i}`, userId: OTHER, quizId: "mini1b", score: 0, passed: false, answers: [0], createdAt: at(i * 0.1) });
+    const res = await submit("mini1b", { answers: [0] });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).duplicate, false, "他人の記録で重複になった");
+  });
+
+  it("別のクイズの受験記録は数えない", async () => {
+    await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal((await submit("fin2", { answers: [0] })).status, 200);
+  });
+
+  it("429 はログを出さない", async () => {
+    await submit("fin1", { answers: [1, 0, 2] });
+    const done = captureLogs();
+    assert.equal((await submit("fin1", { answers: [0, 0, 0] })).status, 429);
+    assert.equal(done(), "", "ログが出た");
+  });
+});
+
+describe("POST submit：応答が届かなかったときの再送（重複。#51）", () => {
+  it("直前と同じ回答を間隔の内側で送ると、記録せずに 200 duplicate: true（同じ結果）", async () => {
+    const first = await (await submit("fin1", { answers: [1, 0, 0] })).json();
+    submitNow = new Date(BASE + 5_000);
+    const res = await submit("fin1", { answers: [1, 0, 0] });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    const again = JSON.parse(text);
+    assert.deepEqual(again, { ...first, duplicate: true });
+    assert.deepEqual(Object.keys(again).sort(), ["correct", "duplicate", "passed", "results", "score", "total"]);
+    for (const k of ["correctIndex", "answers", "options", STUDENT]) assert.ok(!text.includes(k), `本文に ${k} が含まれる`);
+    assert.equal(creates().length, 1, "重複を記録した");
+  });
+
+  it("24 時間に 3 回受けたあとの再送も、429 ではなく duplicate", async () => {
+    await submit("fin1", { answers: [1, 0, 2] }); // 3 回目
+    const res = await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).duplicate, true);
+  });
+
+  it("間隔を過ぎたら、同じ回答でも新しい受験として記録する", async () => {
+    clearMyFin1();
+    await submit("fin1", { answers: [1, 0, 2] });
+    submitNow = new Date(BASE + 30 * 60_000);
+    const res = await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal((await res.json()).duplicate, false);
+    assert.equal(creates().length, 2);
+  });
+
+  it("前回の記録の answers が壊れていれば重複にしない（429）", async () => {
+    db.attempts.push({ id: "att_broken", userId: STUDENT, quizId: "mini1b", score: 0, passed: false, answers: "1", createdAt: at(0.1) });
+    assert.equal((await submit("mini1b", { answers: [1] })).status, 429);
+  });
+
+  it("重複の点数は、今の正解で採点し直した値", async () => {
+    await submit("mini1b", { answers: [1] });
+    db.questions = db.questions.map((q) => (q.id === "m1b" ? { ...q, correctIndex: 0 } : q));
+    const body = await (await submit("mini1b", { answers: [1] })).json();
+    assert.deepEqual(body, { score: 0, passed: false, total: 1, correct: 0, results: [false], duplicate: true });
+  });
+
+  it("重複はログを出さない", async () => {
+    await submit("fin1", { answers: [1, 0, 2] });
+    const done = captureLogs();
+    await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal(done(), "", "ログが出た");
+  });
+});
+
+describe("POST submit：講師（#51、Tec 決定 Q2 a）", () => {
+  it("講師は間隔・回数の上限を受けない（続けて 5 回、別の回答で受けられる）", async () => {
+    session = INSTRUCTOR_SESSION;
+    const answers = [[1, 0, 2], [0, 0, 0], [1, 1, 1], [0, 1, 2], [1, 0, 0]];
+    for (const a of answers) assert.equal((await submit("fin1", { answers: a })).status, 200, `${JSON.stringify(a)} が 200 でない`);
+    assert.equal(creates().length, 5);
+  });
+
+  it("講師も重複の判定は受ける（同じ回答の再送は記録しない）", async () => {
+    session = INSTRUCTOR_SESSION;
+    await submit("fin1", { answers: [1, 0, 2] });
+    const body = await (await submit("fin1", { answers: [1, 0, 2] })).json();
+    assert.equal(body.duplicate, true);
+    assert.equal(creates().length, 1);
+  });
+
+  it("講師の受験記録の読み取りも、講師自身の userId で絞る", async () => {
+    session = INSTRUCTOR_SESSION;
+    await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal((attemptReads()[0]?.args.where as Row).userId, INSTRUCTOR_SESSION!.user.id);
+  });
+});
+
+describe("POST submit：route は now を渡さない（本番は実際の時刻。#51）", () => {
+  it("route のソースは now を渡さず、本体は省略時に new Date() を使う", () => {
+    const route = readFileSync(join(process.cwd(), "src/app/api/quizzes/[quizId]/submit/route.ts"), "utf8");
+    assert.doesNotMatch(route, /\bnow\b/, "route が now を渡している");
+    const body = readFileSync(join(process.cwd(), "src/lib/quiz-submit.ts"), "utf8");
+    assert.match(body, /const at = now \?\? new Date\(\);/, "本体が省略時に new Date() を使っていない");
+  });
+});
+
+describe("GET /api/quizzes/[quizId]：retryAfterSeconds（#51、Tec 決定 Q3 b）", () => {
+  // GET は実際の時刻で判定する。記録の日時も実際の時刻から作る
+  const realAgo = (ms: number) => new Date(Date.now() - ms);
+
+  it("直近の受験がなければ null", async () => {
+    assert.equal((await (await getOne("mini1b")).json()).retryAfterSeconds, null);
+  });
+
+  it("修了テストを 5 分前に受けていれば、残りの秒数（約 25 分）", async () => {
+    db.attempts.push({ id: "att_r1", userId: STUDENT, quizId: "fin2", score: 0, passed: false, answers: [1], createdAt: realAgo(5 * 60_000) });
+    const s = (await (await getOne("fin2")).json()).retryAfterSeconds;
+    assert.ok(typeof s === "number" && s >= 25 * 60 - 2 && s <= 25 * 60, `retryAfterSeconds が約 25 分でない: ${s}`);
+  });
+
+  it("他人の直近の受験では知らせない", async () => {
+    db.attempts.push({ id: "att_r2", userId: OTHER, quizId: "fin2", score: 0, passed: false, answers: [1], createdAt: realAgo(60_000) });
+    assert.equal((await (await getOne("fin2")).json()).retryAfterSeconds, null);
+  });
+
+  it("講師には null（上限を受けない）", async () => {
+    session = INSTRUCTOR_SESSION;
+    db.attempts.push({ id: "att_r3", userId: INSTRUCTOR_SESSION!.user.id, quizId: "fin2", score: 0, passed: false, answers: [1], createdAt: realAgo(60_000) });
+    assert.equal((await (await getOne("fin2")).json()).retryAfterSeconds, null);
+  });
+
+  it("受験記録の読み取りは 1 回だけで、answers を読まない（追加の読み取りなし）", async () => {
+    await getOne("fin1");
+    const reads = attemptReads();
+    assert.equal(reads.length, 1);
+    assert.deepEqual(reads[0].args.select, { score: true, passed: true, createdAt: true });
+  });
+
+  it("GET の retryAfterSeconds と、同じ時刻の submit の 429 はほぼ同じ値", async () => {
+    db.attempts.push({ id: "att_r4", userId: STUDENT, quizId: "fin2", score: 0, passed: false, answers: [1], createdAt: realAgo(10 * 60_000) });
+    const fromGet = (await (await getOne("fin2")).json()).retryAfterSeconds as number;
+    submitNow = new Date();
+    const res = await submit("fin2", { answers: [0] });
+    assert.equal(res.status, 429);
+    const fromSubmit = (await res.json()).retryAfterSeconds as number;
+    assert.ok(Math.abs(fromGet - fromSubmit) <= 2, `GET ${fromGet} と submit ${fromSubmit} が離れている`);
   });
 });

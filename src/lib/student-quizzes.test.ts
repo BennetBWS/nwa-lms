@@ -5,7 +5,8 @@ import {
   QUIZ_ATTEMPTS_ENABLED,
   buildQuizCourses,
   buildSubmitBody,
-  hasAnswersArray,
+  checkQuestionIds,
+  hasSubmitShape,
   normalizeOptions,
   parseSubmitAnswers,
   quizResultTitle,
@@ -163,12 +164,72 @@ describe("parseSubmitAnswers", () => {
   });
 });
 
-describe("hasAnswersArray", () => {
-  it("{ answers: 配列 } だけ true", () => {
-    assert.equal(hasAnswersArray({ answers: [] }), true);
-    assert.equal(hasAnswersArray({ answers: "x" }), false);
-    assert.equal(hasAnswersArray([]), false);
-    assert.equal(hasAnswersArray(null), false);
+describe("hasSubmitShape（#51）", () => {
+  it("{ answers: 配列, questionIds: id の配列 } なら ok で、questionIds は新しい配列", () => {
+    const ids = ["q1", "q2"];
+    const r = hasSubmitShape({ answers: [], questionIds: ids });
+    assert.deepEqual(r, { ok: true, value: { questionIds: ["q1", "q2"] } });
+    assert.ok("value" in r && r.value.questionIds !== ids, "受け取った配列をそのまま返している");
+    assert.deepEqual(hasSubmitShape({ answers: [0], questionIds: [] }), { ok: true, value: { questionIds: [] } });
+  });
+
+  for (const [label, body] of [
+    ["null", null],
+    ["配列", []],
+    ["文字列", "x"],
+    ["answers なし", { questionIds: ["q1"] }],
+    ["answers が文字列", { answers: "x", questionIds: ["q1"] }],
+    ["answers が null", { answers: null, questionIds: ["q1"] }],
+    ["answers も questionIds もない", {}],
+  ] as Array<[string, unknown]>) {
+    it(`${label} は invalid_answers（answers を questionIds より先に見る）`, () => {
+      assert.deepEqual(hasSubmitShape(body), { ok: false, reason: "invalid_answers" });
+    });
+  }
+
+  for (const [label, questionIds] of [
+    ["questionIds なし", undefined],
+    ["null", null],
+    ["文字列", "q1,q2"],
+    ["オブジェクト", { 0: "q1" }],
+    ["空文字の id", ["q1", ""]],
+    ["65 文字の id", ["q".repeat(65)]],
+    ["数値の id", ["q1", 2]],
+    ["null の id", [null]],
+    ["入れ子の配列", [["q1"]]],
+  ] as Array<[string, unknown]>) {
+    it(`questionIds が${label}なら invalid_question_ids`, () => {
+      const body: Record<string, unknown> = { answers: [0] };
+      if (questionIds !== undefined) body.questionIds = questionIds;
+      assert.deepEqual(hasSubmitShape(body), { ok: false, reason: "invalid_question_ids" });
+    });
+  }
+
+  it("64 文字の id は受け付ける", () => {
+    assert.equal(hasSubmitShape({ answers: [0], questionIds: ["q".repeat(64)] }).ok, true);
+  });
+});
+
+describe("checkQuestionIds（#51）", () => {
+  const server = ["qz", "qa", "qb"];
+  it("件数・順・中身がすべて同じなら true", () => {
+    assert.equal(checkQuestionIds(["qz", "qa", "qb"], server), true);
+  });
+  for (const [label, sent] of [
+    ["件数が少ない（問題が追加された）", ["qz", "qa"]],
+    ["件数が多い（問題が削除された）", ["qz", "qa", "qb", "qc"]],
+    ["順番が違う", ["qa", "qz", "qb"]],
+    ["中身が違う（入れ替え）", ["qz", "qa", "qx"]],
+    ["同じ id の重複", ["qz", "qz", "qb"]],
+    ["空", []],
+  ] as Array<[string, string[]]>) {
+    it(`${label}なら false`, () => {
+      assert.equal(checkQuestionIds(sent, server), false);
+    });
+  }
+  it("大文字・小文字や前後の空白も別の id として扱う", () => {
+    assert.equal(checkQuestionIds(["QZ", "qa", "qb"], server), false);
+    assert.equal(checkQuestionIds([" qz", "qa", "qb"], server), false);
   });
 });
 

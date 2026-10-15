@@ -14,6 +14,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { isCourseLocked, type LessonCounts } from "./course-lock";
+import { isValidId } from "./lesson-comments";
 
 /** 受験（問題の表示・送信）を画面で開けるか。#8 のあとに true にする */
 export const QUIZ_ATTEMPTS_ENABLED = false;
@@ -96,9 +97,28 @@ export function toAnswerKey(rows: ReadonlyArray<AnswerKeyRow>): AnswerKey | null
 
 export type SubmitAnswersReason = "invalid_answers";
 
-/** body が { answers: 配列 } の形か（DB を読む前の確認。中身は parseSubmitAnswers で見る） */
-export function hasAnswersArray(body: unknown): boolean {
-  return isPlainObject(body) && Array.isArray(body.answers);
+export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids";
+
+/**
+ * body が { answers: 配列, questionIds: id の配列 } の形か（DB を読む前の確認。#51）。
+ * - オブジェクトでない・answers が配列でない：invalid_answers（answers の中身は parseSubmitAnswers で見る）
+ * - questionIds が配列でない・要素が isValidId（1〜64 文字の文字列）でない：invalid_question_ids
+ * 成功時の value.questionIds は新しい配列。並びと中身がサーバーの問題と同じかは checkQuestionIds で見る
+ */
+export function hasSubmitShape(body: unknown): ParseResult<{ questionIds: string[] }, SubmitShapeReason> {
+  if (!isPlainObject(body) || !Array.isArray(body.answers)) return { ok: false, reason: "invalid_answers" };
+  const ids = body.questionIds;
+  if (!Array.isArray(ids) || !ids.every((id) => isValidId(id))) return { ok: false, reason: "invalid_question_ids" };
+  return { ok: true, value: { questionIds: [...ids] as string[] } };
+}
+
+/**
+ * 送られた questionIds が、サーバーの問題の並び（[order, id] の順）と件数・順・中身まで完全に同じか（#51）。
+ * 違えば受験画面を開いたあとに問題が入れ替わった（409 quiz_changed）
+ */
+export function checkQuestionIds(sent: ReadonlyArray<string>, serverIds: ReadonlyArray<string>): boolean {
+  if (sent.length !== serverIds.length) return false;
+  return serverIds.every((id, i) => sent[i] === id);
 }
 
 /**
