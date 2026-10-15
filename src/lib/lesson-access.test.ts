@@ -28,7 +28,7 @@ let progress: Progress[];
 let calls: Call[];
 let quizzes: Quiz[];
 
-function makeDb(): LessonAccessDb {
+function makeDb(): LessonAccessDb & QuizAccessDb {
   const fake = {
     quiz: {
       async findUnique(args: Record<string, unknown>) {
