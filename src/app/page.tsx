@@ -110,6 +110,8 @@ import {
   withoutThreadId,
 } from "@/lib/admin-questions";
 import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
+// #46 受講生の質問の投稿欄（LessonQuestionForm）
+import { QUESTION_POST_URL, QUESTION_POSTED_MESSAGE, interpretQuestionPostResponse, questionPostBody } from "@/lib/comment-form";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -958,9 +960,84 @@ const CourseList = ({ setCurrentPage }) => {
 };
 
 // ═══════════════════════════════════════════
+// LESSON QUESTION FORM — 受講生の質問の投稿欄（#46 B-2）
+// ═══════════════════════════════════════════
+// POST /api/comments に親の質問だけを送る（返信の入力欄は出さない。講師には出さない）。
+// 入力欄の状態は commentFormState、応答の解釈と文言は interpretQuestionPostResponse（src/lib/comment-form.ts）。
+// Enter では送信しない（日本語 IME の確定の Enter と区別するため、form にせず keydown も扱わない。送信はボタンだけ）。
+// 送信中は ref とボタンの disabled で二重送信を防ぐ。失敗しても入力は残す。
+// onReload(lessonId)：成功・送信済み（409）・結果不明のときに、そのレッスンの質問の一覧を読み直す。
+// LessonView が key にレッスンの id を渡すので、レッスンを切り替えると入力・知らせは消える。
+const LessonQuestionForm = ({ lessonId, onReload }) => {
+  const [value, setValue] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [status, setStatus] = useState("");
+  const sendingRef = useRef(false);
+  // セッションが切れたら authFetch がサインアウトして /login へ移る。もう送らない
+  const expiredRef = useRef(false);
+  const form = commentFormState(value, sending);
+
+  const submitQuestion = async () => {
+    if (expiredRef.current || sendingRef.current) return;
+    if (!lessonId || !commentFormState(value, false).canSubmit) return;
+    sendingRef.current = true;
+    setSending(true);
+    setError("");
+    setStatus("");
+    try {
+      let res;
+      try {
+        res = await authFetch(QUESTION_POST_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: questionPostBody(lessonId, value) });
+      } catch {
+        res = null;
+      }
+      let outcome;
+      if (res === null) {
+        outcome = interpretQuestionPostResponse(null);
+      } else {
+        const expired = classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired";
+        if (expired) expiredRef.current = true;
+        // 本文が JSON でない（ゲートウェイのエラーページなど）ときは null とし、ステータスだけで文言を決める。成功・期限切れでは読まない
+        const body = !res.ok && !res.redirected && !expired ? await res.json().catch(() => null) : null;
+        outcome = interpretQuestionPostResponse({ ok: res.ok, status: res.status, redirected: res.redirected, expired, body });
+      }
+      if (outcome.kind === "success") {
+        setValue("");
+        setStatus(QUESTION_POSTED_MESSAGE);
+        onReload(lessonId);
+        return;
+      }
+      setError(outcome.message);
+      if (outcome.reload) onReload(lessonId);
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
+  };
+
+  const inputId = `lesson-question-input-${lessonId}`;
+  const counterId = `lesson-question-count-${lessonId}`;
+  return (
+    <div style={{ ...glassStyle(8), borderRadius: 14, padding: "16px 18px", marginBottom: 22 }}>
+      <label htmlFor={inputId} style={{ display: "block", fontSize: 13, fontWeight: 700, color: T.dark, marginBottom: 8, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>このレッスンについて質問する</label>
+      <textarea id={inputId} value={value} onChange={e => setValue(e.target.value)} readOnly={sending} rows={4} aria-describedby={counterId} aria-invalid={form.tooLong ? true : undefined} placeholder="質問を入力してください（Enter で改行します。送信はボタンで行います）" style={{ width: "100%", boxSizing: "border-box", resize: "vertical", borderRadius: 12, border: `1px solid ${form.tooLong ? T.danger : T.border}`, background: "transparent", color: T.textPrimary, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+        <span id={counterId} style={{ fontSize: 11, color: form.tooLong ? T.danger : T.textMuted, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{form.counterLabel}</span>
+        <Button size="sm" onClick={() => submitQuestion()} disabled={!form.canSubmit} style={{ background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+          {sending ? "送信中..." : "質問を送信"}
+        </Button>
+      </div>
+      {error && <div role="alert" style={{ fontSize: 12, color: T.danger, marginTop: 8, lineHeight: 1.6 }}>{error}</div>}
+      <div role="status" style={{ fontSize: 12, color: T.success, marginTop: status ? 8 : 0 }}>{status}</div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════
 // LESSON VIEW
 // ═══════════════════════════════════════════
-const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
+const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle, canAskQuestion }) => {
   const [expanded, setExpanded] = useState(0);
   const [activeLesson, setActiveLesson] = useState(null);
   const [completing, setCompleting] = useState(false);
@@ -1022,7 +1099,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
     [courseData]
   );
 
-  // Questions tab (#32): display only, posting is #46.
+  // Questions tab (#32). Students post a question with LessonQuestionForm (#46); the list is read here.
   // comments is { lessonId, rows } for the lesson the rows were loaded for (or null), so rows
   // of the previous lesson are never shown on the first render after switching lessons.
   const [comments, setComments] = useState(null);
@@ -1071,6 +1148,17 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
   };
 
   useEffect(() => { loadComments(activeLesson?.id); }, [activeLesson?.id]);
+
+  // #46 After a question was posted (or may have been): read the list of that lesson again.
+  // A load already in flight started before the post and may miss it, so it is replaced (its
+  // response is dropped). Nothing is read when the user has moved to another lesson meanwhile.
+  const activeLessonIdRef = useRef(null);
+  activeLessonIdRef.current = activeLesson?.id ?? null;
+  const reloadCommentsAfterPost = (lessonId) => {
+    if (!lessonId || activeLessonIdRef.current !== lessonId) return;
+    commentsInFlight.current = null;
+    loadComments(lessonId);
+  };
 
   // Rows of another lesson (the effect for the new lesson has not run yet) count as not loaded.
   const commentRows = comments && activeLesson?.id && comments.lessonId === activeLesson.id ? comments.rows : null;
@@ -1287,6 +1375,8 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle }) => {
               <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>教材は準備中です</div>
             </TabsContent>
             <TabsContent value="comments" style={{ padding: 28 }}>
+              {/* #46 Students only (instructors answer from 質問対応). Outside the list states so it stays while the list reloads */}
+              {canAskQuestion && activeLesson?.id && <LessonQuestionForm key={activeLesson.id} lessonId={activeLesson.id} onReload={reloadCommentsAfterPost} />}
               {commentsWaiting ? (
                 <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
                   <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
@@ -3693,7 +3783,7 @@ export default function NWALearningPlatform() {
   const pages = {
     "dashboard": <StudentDashboard setCurrentPage={handlePageChange} userName={sessionView.name} />,
     "courses": <CourseList setCurrentPage={handlePageChange} />,
-    "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} isDark={isDark} onThemeToggle={handleThemeToggle} />,
+    "lesson": <LessonView setCurrentPage={handlePageChange} courseId={selectedCourseId} isDark={isDark} onThemeToggle={handleThemeToggle} canAskQuestion={student} />,
     "quiz": <QuizPage />,
     "notifications": <Notifications onUnreadChange={applyUnreadCount} />,
     "questions": <Questions />,
