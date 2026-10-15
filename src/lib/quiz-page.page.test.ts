@@ -702,3 +702,116 @@ describe("受験：ロック中のコース（403 course_locked。#47 P5）", ()
     assert.equal(h.st.submitLocked, false, "一覧に戻っても submitLocked が残る");
   });
 });
+
+// ───────────── ロック中のコース：追加の観点（tester。#47 P5） ─────────────
+
+describe("受験：ロック中のコース（追加の観点。#47 P5）", () => {
+  for (const [label, r] of [
+    ["別の reason の 403", { status: 403, ok: false, body: { error: "Forbidden", reason: "forbidden_role" } }],
+    ["本文を読めない 403", { status: 403, ok: false, json: () => Promise.reject(new SyntaxError("Unexpected token")) }],
+    ["本文が null の 403", { status: 403, ok: false, body: null }],
+    ["reason が course_locked の 500", { status: 500, ok: false, body: { error: "x", reason: "course_locked" } }],
+    ["reason が course_locked の 200", { status: 200, ok: true, body: { error: "x", reason: "course_locked" } }],
+  ] as Array<[string, Partial<FakeRes> & { body?: unknown }]>) {
+    it(`送信が ${label} なら submitFailed（submitLocked にしない）で、回答を残して再送信できる`, async () => {
+      const h = await openLoaded();
+      answerAll(h, [1, 2]);
+      h.render().submitQuiz();
+      h.reqs[1].release(res(r, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+      await settle();
+      assert.equal(h.st.submitFailed, true, "submitFailed にならない");
+      assert.equal(h.st.submitLocked, false, "ロックとして扱っている");
+      assert.equal(h.st.result, null, "結果を表示している");
+      assert.deepEqual(h.st.answers, [1, 2], "回答が消えた");
+      assert.equal(h.st.submitting, false, "送信中のまま");
+      h.render().submitQuiz();
+      assert.equal(h.reqs.length, 3, "再送信できない");
+    });
+  }
+
+  it("問題の読み込みが 200 で本文に reason: course_locked があっても、ロックにしない（問題として解釈できず takeFailed）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res({ status: 200, ok: true, body: { error: "Forbidden", reason: "course_locked" } }));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "200 をロックとして扱っている");
+    assert.equal(h.st.takeFailed, true, "takeFailed にならない");
+  });
+
+  it("問題の読み込みが 403 course_locked でも、/login へのリダイレクトなら失効として扱いロックにしない", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res({ ...LOCKED_403, redirected: true }, `${ORIGIN}/login`));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "リダイレクトをロックとして扱っている");
+    assert.equal(h.st.takeFailed, false, "失効を失敗として扱っている");
+    assert.equal(h.st.reloads, 0, "失効なのに一覧を読み直した");
+  });
+
+  it("別のクイズを開き直したあとに届いた、前のクイズの 403 course_locked は捨てる（新しいクイズの表示は変えない）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quizA");
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[1].release(res({ body: QUIZ }, `${ORIGIN}/api/quizzes/quiz%2F1`));
+    await settle();
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "前のクイズの応答でロック表示になった");
+    assert.equal(h.st.takeQuiz?.id, QUIZ.id, "新しいクイズの問題が消えた");
+    assert.equal(h.st.takeLoading, false, "読み込み中に戻った");
+    assert.equal(h.st.reloads, 0, "捨てた応答で一覧を読み直した");
+  });
+
+  it("前のクイズの 403 course_locked が、新しいクイズの読み込み中に届いても、読み込み中のまま（ロックにしない）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quizA");
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "前のクイズの応答でロック表示になった");
+    assert.equal(h.st.takeLoading, true, "新しいクイズの読み込みが終わったことになった");
+  });
+
+  it("送信中は一覧に戻れず、届いた 403 course_locked は submitLocked になる", async () => {
+    const h = await openLoaded();
+    answerAll(h, [0, 0]);
+    h.render().submitQuiz();
+    h.render().closeQuiz();
+    assert.equal(h.st.activeQuizId, QUIZ.id, "送信中に一覧に戻った");
+    h.reqs[1].release(res(LOCKED_403, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+    await settle();
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+  });
+
+  it("送信の 403 course_locked のあと、一覧に戻って開き直すと submitLocked も takeLocked も消え、送信できる", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(LOCKED_403, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+    await settle();
+    h.render().closeQuiz();
+    h.render().openQuiz(QUIZ.id);
+    assert.equal(h.st.submitLocked, false, "開き直しても submitLocked が残る");
+    assert.equal(h.st.takeLocked, false, "開き直しても takeLocked が残る");
+    h.reqs[2].release(res({ body: QUIZ }, `${ORIGIN}/api/quizzes/quiz%2F1`));
+    await settle();
+    answerAll(h, [0, 0]);
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 4, "開き直したあと送信できない");
+  });
+
+  it("送信が 403 course_locked のとき、本文は 1 回だけ読む", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    let reads = 0;
+    h.reqs[1].release(res({ status: 403, ok: false, json: () => { reads++; return Promise.resolve(LOCKED_403.body); } }));
+    await settle();
+    assert.equal(reads, 1, `本文を ${reads} 回読んだ`);
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+  });
+
+  it("送信ボタンは submitLocked の間 disabled（ソース）", () => {
+    assert.match(quizPage, /disabled=\{!submitBody \|\| submitting \|\| submitLocked\}/);
+  });
+});

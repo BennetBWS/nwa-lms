@@ -1060,3 +1060,127 @@ describe("コースのロック：一覧の locked・GET・submit と isCourseLo
     assert.ok(lockedSeen > 0 && lockedSeen < checked, `locked と ok の両方を照合できていない: ${lockedSeen}/${checked}`);
   });
 });
+
+// ───────────── コースのロック：追加の観点（tester。#47 P5） ─────────────
+
+describe("コースのロック：追加の観点（#47 P5）", () => {
+  it("ロールが null のセッションも受講生として扱い、GET・submit とも 403 で書き込まない", async () => {
+    session = { user: { id: STUDENT, role: null } } as unknown as FakeSession;
+    const g = await getOne("fin3");
+    assert.equal(g.status, 403, "GET が 403 でない");
+    isLockedBody(await g.json());
+    const s = await submit("fin3", { answers: [0] });
+    assert.equal(s.status, 403, "submit が 403 でない");
+    isLockedBody(await s.json());
+    assert.equal(creates().length, 0, "受験記録を書いている");
+    assert.equal(questionReads().length, 0, "問題を読んでいる");
+  });
+
+  it("ロック中の GET の 403 では、受験記録（quizAttempt.findMany）を読まない", async () => {
+    await getOne("fin3");
+    assert.ok(!calls.some((c) => c.method === "quizAttempt.findMany"), "受験記録を読んでいる");
+  });
+
+  for (const target of ["GET", "submit"] as const) {
+    it(`${target}：ロックの確認で quiz を読む段階の例外も 500 で、書き込まず、ログはエラーの名前だけ`, async () => {
+      failOn = "quiz.findUnique";
+      failWith = piiError();
+      const done = captureLogs();
+      const res = target === "GET" ? await getOne("fin1") : await submit("fin1", { answers: [1, 0, 2] });
+      const out = done();
+      assert.equal(res.status, 500, "500 でない");
+      assert.deepEqual(await res.json(), { error: "Internal server error" }, "500 の本文が想定と違う");
+      assert.equal(creates().length, 0, "受験記録を書いている");
+      assert.ok(!calls.some((c) => c.method === "course.findMany" || c.method === "progress.findMany"), "例外のあとも読み続けている");
+      assertSafeLog(out);
+    });
+  }
+
+  it("FINAL の courseId が存在しないコースを指すクイズは、一覧に出ず、受講生の GET・submit は 404 で問題を読まない", async () => {
+    db.quizzes.push({ id: "f_ghost", title: "消えたコース", type: "FINAL", courseId: "c_deleted", lessonId: null });
+    db.questions.push({ id: "q_ghost", quizId: "f_ghost", question: "問", options: ["x", "y"], correctIndex: 0, order: 1 });
+    assert.ok(!(await (await LIST()).text()).includes("f_ghost"), "一覧に出ている");
+    calls = [];
+    assert.equal((await getOne("f_ghost")).status, 404, "GET が 404 でない");
+    assert.equal((await submit("f_ghost", { answers: [0] })).status, 404, "submit が 404 でない");
+    assert.equal(questionReads().length, 0, "問題を読んでいる");
+    assert.equal(creates().length, 0, "受験記録を書いている");
+  });
+
+  it("ロックの確認のあとにクイズが消えても、GET・submit は 404（500 にならない）で書き込まない", async () => {
+    for (const target of ["GET", "submit"] as const) {
+      db.quizzes.push({ id: "f_vanish", title: "消える", type: "FINAL", courseId: "c1", lessonId: null });
+      db.questions.push({ id: "q_vanish", quizId: "f_vanish", question: "問", options: ["x", "y"], correctIndex: 0, order: 1 });
+      const m = mock.method(fakePrisma.progress, "findMany", async (args: Row) => {
+        record("progress.findMany", args);
+        db.quizzes = db.quizzes.filter((q) => q.id !== "f_vanish");
+        return db.progress.filter((p) => matchWhere(p, args.where)).map((p) => project("progress", p, args.select as Select | undefined));
+      });
+      try {
+        const res = target === "GET" ? await getOne("f_vanish") : await submit("f_vanish", { answers: [0] });
+        assert.equal(res.status, 404, `${target} が 404 でない`);
+      } finally {
+        m.mock.restore();
+      }
+    }
+    assert.equal(creates().length, 0, "受験記録を書いている");
+  });
+
+  it("ロック中のコースのレッスンに completed: false の進捗があっても解放されない", async () => {
+    db.progress.push({ id: "p_nc", userId: STUDENT, lessonId: "l3a", completed: false });
+    assert.equal((await getOne("fin3")).status, 403, "GET が 403 でない");
+    assert.equal((await submit("fin3", { answers: [0] })).status, 403, "submit が 403 でない");
+    assert.equal(creates().length, 0, "受験記録を書いている");
+  });
+
+  it("前のコース（STEP2）を全部終えると、ロック中だったクイズも GET・submit できる（一覧も locked: false）", async () => {
+    assert.equal((await submit("fin3", { answers: [0] })).status, 403, "最初は 403 のはず");
+    db.progress.push({ id: "p_s2", userId: STUDENT, lessonId: "l2a", completed: true });
+    const list = (await (await LIST()).json()) as { courses: Array<{ id: string; locked: boolean }> };
+    assert.equal(list.courses.find((c) => c.id === "c3")?.locked, false, "一覧で c3 がロックのまま");
+    assert.equal((await getOne("fin3")).status, 200, "GET が 200 でない");
+    assert.equal((await submit("fin3", { answers: [0] })).status, 200, "submit が 200 でない");
+    assert.equal(creates().length, 1, "受験記録が 1 件でない");
+  });
+
+  it("ロック中でも、壊れた JSON・不正な quizId は DB を読まずに 400", async () => {
+    assert.equal((await submit("fin3", undefined, "{not json")).status, 400, "壊れた JSON が 400 でない");
+    assert.equal((await submit("", { answers: [0] })).status, 400, "空の quizId が 400 でない");
+    assert.equal((await getOne("")).status, 400, "GET の空の quizId が 400 でない");
+    assert.equal(calls.length, 0, "DB を読んでいる");
+  });
+
+  it("他の受講生の受験記録・合格（OTHER の fin2 100 点）があっても、ロックの判定には使わない", async () => {
+    db.attempts.push({ id: "att_o3", userId: OTHER, quizId: "fin3", score: 100, passed: true, answers: [0], createdAt: at(1) });
+    db.progress.push({ id: "p_o3", userId: OTHER, lessonId: "l3a", completed: true });
+    assert.equal((await getOne("fin3")).status, 403, "他人の記録で解放された");
+  });
+});
+
+describe("quizCourseId の規則は 1 か所だけ（ソース。#47 P5）", () => {
+  const read = (p: string) => readFileSync(join(__dirname, "..", "..", p), "utf8");
+  const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("lesson-access.ts は quizCourseId を使い、FINAL / MINI の分岐を自分で書かない", () => {
+    const s = strip(read("src/lib/lesson-access.ts"));
+    assert.match(s, /import \{[^}]*\bquizCourseId\b[^}]*\} from "\.\/student-quizzes";/, "quizCourseId を import していない");
+    assert.match(s, /quizCourseId\(quiz\)/, "quizCourseId を呼んでいない");
+    assert.doesNotMatch(s, /"FINAL"|"MINI"/, "lesson-access.ts に種類の分岐がある");
+  });
+
+  it("buildQuizCourses は quizCourseId でコースを決め、student-quizzes.ts の中で courseId の規則は quizCourseId だけ", () => {
+    const s = strip(read("src/lib/student-quizzes.ts"));
+    assert.match(s, /const courseId = quizCourseId\(q\);/, "buildQuizCourses が quizCourseId を使っていない");
+    const hits = s.match(/lesson\?\.section\.courseId|lesson\.section\.courseId/g) ?? [];
+    assert.equal(hits.length, 1, `lesson.section.courseId を読む箇所が 1 つでない: ${hits.length}`);
+  });
+
+  it("GET・submit は quizAccessFor だけでロックを確かめ、コースの規則を持たない", () => {
+    for (const p of ["src/app/api/quizzes/[quizId]/route.ts", "src/lib/quiz-submit.ts"]) {
+      const s = strip(read(p));
+      assert.match(s, /quizAccessFor\(prisma, userId, quizId\)/, `${p} が quizAccessFor を呼んでいない`);
+      assert.doesNotMatch(s, /"FINAL"|"MINI"|section/, `${p} にコースの規則がある`);
+      assert.match(s, /role !== "INSTRUCTOR"/, `${p} の講師の判定が完全一致でない`);
+    }
+  });
+});
