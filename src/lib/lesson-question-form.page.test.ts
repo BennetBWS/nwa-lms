@@ -294,7 +294,7 @@ describe("LessonQuestionForm 描画：入力欄", () => {
 
   it("空白・見えない文字だけは送れない、2000 字までは送れる、2001 字は送れず aria-invalid と超過数を出す", () => {
     const m = mount();
-    for (const v of ["   ", "\n\n", "​　", "﻿"]) {
+    for (const v of ["   ", "\n\n", "\u200B\u3000", "\uFEFF"]) {
       change(textarea(m.render()), v);
       assert.equal(sendButton(m.render()).props.disabled, true, JSON.stringify(v));
     }
