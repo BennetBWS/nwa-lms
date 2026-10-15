@@ -363,7 +363,7 @@ describe("LessonQuestionForm 描画：送信", () => {
   });
 
   const failures: Array<[string, () => FakeRes | Error, RegExp, boolean]> = [
-    ["429 rate_limited", () => res(429, { reason: "rate_limited", retryAfterSeconds: 25 }), /^続けて投稿できません。しばらく待ってからもう一度お試しください。（目安：約 25 秒後）$/, false],
+    ["429 rate_limited", () => res(429, { reason: "rate_limited", retryAfterSeconds: 25 }), /^投稿の間隔が短いか、1 日に投稿できる件数を超えました。しばらく待ってからもう一度お試しください。（目安：約 25 秒後）$/, false],
     ["409 duplicate", () => res(409, { reason: "duplicate" }), /^同じ内容の質問を送信済みです/, true],
     ["403 course_locked", () => res(403, { reason: "course_locked" }), /^このコースはまだ解放されていません。$/, false],
     ["403 forbidden_role", () => res(403, { reason: "forbidden_role" }), /質問対応/, false],

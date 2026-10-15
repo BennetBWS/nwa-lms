@@ -56,7 +56,7 @@ describe("questionSubmitErrorMessage：受講生向けの文言", () => {
   });
 
   it("429 は待ち時間を言い切らず、retryAfterSeconds を目安として添える", () => {
-    assert.equal(QUESTION_RATE_LIMITED_MESSAGE, "続けて投稿できません。しばらく待ってからもう一度お試しください。");
+    assert.equal(QUESTION_RATE_LIMITED_MESSAGE, "投稿の間隔が短いか、1 日に投稿できる件数を超えました。しばらく待ってからもう一度お試しください。");
     assert.equal(
       questionSubmitErrorMessage({ httpStatus: 429, reason: "rate_limited", retryAfterSeconds: 12 }),
       `${QUESTION_RATE_LIMITED_MESSAGE}（目安：約 12 秒後）`

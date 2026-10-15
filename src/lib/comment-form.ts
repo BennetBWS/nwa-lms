@@ -129,10 +129,10 @@ export const QUESTION_UNKNOWN_RESULT_MESSAGE =
 export const QUESTION_DUPLICATE_MESSAGE = "同じ内容の質問を送信済みです。質問の一覧をご確認ください。";
 
 /**
- * 429 rate_limited。待ち時間は言い切らない（直前の投稿の日時が未来だと、Retry-After を待っても 429 が続くことがある）。
+ * 429 rate_limited（投稿の間隔・1 日の件数の上限のどちらか。画面では区別しない）。待ち時間は言い切らない（直前の投稿の日時が未来だと、Retry-After を待っても 429 が続くことがある）。
  * retryAfterSeconds はおおよその目安として retryAfterHint で添える
  */
-export const QUESTION_RATE_LIMITED_MESSAGE = "続けて投稿できません。しばらく待ってからもう一度お試しください。";
+export const QUESTION_RATE_LIMITED_MESSAGE = "投稿の間隔が短いか、1 日に投稿できる件数を超えました。しばらく待ってからもう一度お試しください。";
 
 /** 403 course_locked（#69 で開けないはずだが、念のため扱う） */
 export const QUESTION_COURSE_LOCKED_MESSAGE = "このコースはまだ解放されていません。";
@@ -169,7 +169,7 @@ export function retryAfterHint(seconds: unknown): string {
  * - 400：本文の検証は講師の回答欄と同じ文言。invalid_lesson_id は再読み込みの案内。それ以外は invalid_body と同じ
  * - 403：reason ごと（forbidden_role / reply_not_allowed / course_locked）。知らない reason は権限なし
  * - 404：レッスンが見つからない
- * - 409 duplicate：送信済み / 429：続けて投稿できない（目安の秒数を添える）
+ * - 409 duplicate：送信済み / 429：投稿の間隔が短いか 1 日の件数の上限（目安の秒数を添える）
  * - それ以外（500 など）：サーバーのエラー
  */
 export function questionSubmitErrorMessage(input: {
