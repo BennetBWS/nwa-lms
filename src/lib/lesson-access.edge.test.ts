@@ -8,8 +8,8 @@ import { isCourseLocked, type LessonCounts } from "./course-lock";
 
 type Course = { id: string; order: number; sections: string[][] };
 type Progress = { userId: string; lessonId: string; completed: boolean };
-/** クイズ（#47 P5）：ミニテストは lessonId、修了テストは courseId */
-type Quiz = { id: string; lessonId: string | null; courseId: string | null };
+/** クイズ（#47 P5）：ミニテストは lessonId、修了テストは courseId のコース */
+type Quiz = { id: string; type: "MINI" | "FINAL"; lessonId: string | null; courseId: string | null };
 
 const STUDENT = "stu_1";
 
@@ -34,7 +34,7 @@ function makeDb(courses: Course[], progress: Progress[], quizzes: Quiz[] = []): 
         const q = quizzes.find((x) => x.id === args.where.id);
         if (!q) return null;
         const c = q.lessonId === null ? undefined : courseOfLesson(q.lessonId);
-        return { courseId: q.courseId, lesson: c ? { section: { courseId: c.id } } : null };
+        return { type: q.type, courseId: q.courseId, lesson: c ? { section: { courseId: c.id } } : null };
       },
     },
     lesson: {
@@ -176,17 +176,20 @@ describe("quizAccessFor と isCourseLocked の照合（乱数。#47 P5）", () =
         else if (r < 0.5) progress.push({ userId: STUDENT, lessonId: l, completed: false });
         else if (r < 0.7) progress.push({ userId: "stu_other", lessonId: l, completed: true });
       }
+      // 種類と違う側の列にも、別のコース・レッスンを入れる（一覧と同じく種類の側だけを見ることを確かめる）
+      const otherCourse = () => (rand() < 0.5 ? null : courses[pick(courses.length)].id);
+      const otherLesson = () => (rand() < 0.5 || allLessons.length === 0 ? null : allLessons[pick(allLessons.length)]);
       const quizzes: Quiz[] = [
-        ...courses.map((c) => ({ id: `final_${c.id}`, lessonId: null, courseId: c.id })),
-        ...allLessons.map((l) => ({ id: `mini_${l}`, lessonId: l, courseId: null })),
-        { id: `orphan_${trial}`, lessonId: null, courseId: null },
-        { id: `gone_${trial}`, lessonId: null, courseId: `q${trial}_course_missing` },
+        ...courses.map((c): Quiz => ({ id: `final_${c.id}`, type: "FINAL", lessonId: otherLesson(), courseId: c.id })),
+        ...allLessons.map((l): Quiz => ({ id: `mini_${l}`, type: "MINI", lessonId: l, courseId: otherCourse() })),
+        { id: `orphan_${trial}`, type: "FINAL", lessonId: otherLesson(), courseId: null },
+        { id: `gone_${trial}`, type: "FINAL", lessonId: null, courseId: `q${trial}_course_missing` },
       ];
       const lockedByCourse = new Map(expectedCourseLocked(courses, progress));
       const lockedByLesson = expectedLocked(courses, progress);
       const db = makeDb(courses, progress, quizzes);
       for (const q of quizzes.slice(0, -2)) {
-        const locked = q.courseId !== null ? lockedByCourse.get(q.courseId) : lockedByLesson.get(q.lessonId as string);
+        const locked = q.type === "FINAL" ? lockedByCourse.get(q.courseId as string) : lockedByLesson.get(q.lessonId as string);
         assert.equal(typeof locked, "boolean", `trial ${trial} quiz ${q.id}: 期待値を作れない`);
         const want = locked ? "locked" : "ok";
         assert.equal(await quizAccessFor(db, STUDENT, q.id), want, `trial ${trial} quiz ${q.id}: ${JSON.stringify({ courses, progress })}`);

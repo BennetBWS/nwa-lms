@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { COURSE_ORDER_BY } from "./course-order";
 import { unlockedCourseIds } from "./question-threads";
+import { quizCourseId } from "./student-quizzes";
 
 /**
  * 受講生がコース・レッスンを使えるか（コースのロック。#46、#47 P4、Tec 決定 2026-10-09 / D-a 2026-10-14）。
@@ -90,8 +91,9 @@ export async function lessonAccessFor(db: LessonAccessDb, userId: string, lesson
 
 /**
  * userId の受講生にとって、quizId のクイズが使えるか（#47 P5、Tec 決定 D-a・F-a）。
- * コースは quiz.lesson.section.courseId（ミニテスト）、なければ quiz.courseId（修了テスト）。
- * - クイズがない、どちらのコースもない、そのコースがない：not_found（クイズがなければコースや進捗は読まない）
+ * コースは student-quizzes.ts の quizCourseId（一覧 GET /api/quizzes の振り分けと同じ規則）：
+ * 修了テスト（FINAL）は quiz.courseId、ミニテスト（MINI）はレッスンのコース。
+ * - クイズがない、規則で決まるコースがない、そのコースがない：not_found（コースが決まらなければコースや進捗は読まない）
  * - コースがロック中なら locked
  * - それ以外は ok
  * 読むのはコースを決める列だけ（問題文・選択肢・正解は読まない）。
@@ -99,11 +101,11 @@ export async function lessonAccessFor(db: LessonAccessDb, userId: string, lesson
 export async function quizAccessFor(db: QuizAccessDb, userId: string, quizId: string): Promise<QuizAccess> {
   const quiz = await db.quiz.findUnique({
     where: { id: quizId },
-    select: { courseId: true, lesson: { select: { section: { select: { courseId: true } } } } },
+    select: { type: true, courseId: true, lesson: { select: { section: { select: { courseId: true } } } } },
   });
   if (!quiz) return "not_found";
 
-  const courseId = quiz.lesson?.section.courseId ?? quiz.courseId;
+  const courseId = quizCourseId(quiz);
   if (!courseId) return "not_found";
   return courseAccessFor(db, userId, courseId);
 }
