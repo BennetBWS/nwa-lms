@@ -6,8 +6,10 @@ import {
   courseAccessFor,
   hideLockedLessonContent,
   lessonAccessFor,
+  quizAccessFor,
   unlockedCourseIdsFor,
   type LessonAccessDb,
+  type QuizAccessDb,
 } from "./lesson-access";
 import { COURSE_ORDER_BY } from "./course-order";
 
@@ -16,15 +18,28 @@ import { COURSE_ORDER_BY } from "./course-order";
 type Course = { id: string; order: number; lessons: string[] };
 type Progress = { userId: string; lessonId: string; completed: boolean };
 type Call = { method: string; args: Record<string, unknown> };
+/** クイズ（#47 P5）。lessonId はミニテスト、courseId は修了テスト（両方・どちらもなしもありうる） */
+type Quiz = { id: string; lessonId: string | null; courseId: string | null };
 
 const STUDENT = "stu_1";
 
 let courses: Course[];
 let progress: Progress[];
 let calls: Call[];
+let quizzes: Quiz[];
 
 function makeDb(): LessonAccessDb {
   const fake = {
+    quiz: {
+      async findUnique(args: Record<string, unknown>) {
+        calls.push({ method: "quiz.findUnique", args });
+        const id = (args.where as { id: string }).id;
+        const q = quizzes.find((x) => x.id === id);
+        if (!q) return null;
+        const course = q.lessonId === null ? undefined : courses.find((c) => c.lessons.includes(q.lessonId as string));
+        return { courseId: q.courseId, lesson: course ? { section: { courseId: course.id } } : null };
+      },
+    },
     lesson: {
       async findUnique(args: Record<string, unknown>) {
         calls.push({ method: "lesson.findUnique", args });
@@ -50,7 +65,7 @@ function makeDb(): LessonAccessDb {
       },
     },
   };
-  return fake as unknown as LessonAccessDb;
+  return fake as unknown as LessonAccessDb & QuizAccessDb;
 }
 
 const done = (lessonId: string, userId = STUDENT): Progress => ({ userId, lessonId, completed: true });
@@ -58,6 +73,13 @@ const done = (lessonId: string, userId = STUDENT): Progress => ({ userId, lesson
 beforeEach(() => {
   calls = [];
   progress = [];
+  quizzes = [
+    { id: "mini_a1", lessonId: "a1", courseId: null },
+    { id: "mini_b1", lessonId: "b1", courseId: null },
+    { id: "final_a", lessonId: null, courseId: "course_a" },
+    { id: "final_b", lessonId: null, courseId: "course_b" },
+    { id: "final_c", lessonId: null, courseId: "course_c" },
+  ];
   courses = [
     { id: "course_a", order: 1, lessons: ["a1", "a2"] },
     { id: "course_b", order: 2, lessons: ["b1", "b2"] },
@@ -166,6 +188,65 @@ describe("courseAccessFor（#47 P4）", () => {
   it("他の受講生の進捗は使わない", async () => {
     progress = [done("a1", "stu_other"), done("a2", "stu_other")];
     assert.equal(await courseAccessFor(makeDb(), STUDENT, "course_b"), "locked");
+  });
+});
+
+describe("quizAccessFor（#47 P5）", () => {
+  it("クイズがなければ not_found で、コースと進捗を読まない", async () => {
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "quiz_missing"), "not_found");
+    assert.deepEqual(calls.map((c) => c.method), ["quiz.findUnique"]);
+  });
+
+  it("レッスンにもコースにも属さないクイズは not_found で、コースと進捗を読まない", async () => {
+    quizzes.push({ id: "orphan", lessonId: null, courseId: null });
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "orphan"), "not_found");
+    assert.deepEqual(calls.map((c) => c.method), ["quiz.findUnique"]);
+  });
+
+  it("courseId のコースがなければ not_found", async () => {
+    quizzes.push({ id: "final_gone", lessonId: null, courseId: "course_missing" });
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_gone"), "not_found");
+  });
+
+  it("修了テストは courseId のコース、ミニテストはレッスンのコースのロックに従う", async () => {
+    progress = [done("a1")];
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_a"), "ok");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "mini_a1"), "ok");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_b"), "locked");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "mini_b1"), "locked");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_c"), "locked");
+  });
+
+  it("前のコースを全部終えれば次のコースのクイズは ok", async () => {
+    progress = [done("a1"), done("a2")];
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_b"), "ok");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "mini_b1"), "ok");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_c"), "locked");
+  });
+
+  it("レッスンと courseId の両方があればレッスンのコースを使う（設計の lesson.section.courseId ?? courseId）", async () => {
+    quizzes.push({ id: "both_b_a", lessonId: "b1", courseId: "course_a" });
+    quizzes.push({ id: "both_a_c", lessonId: "a1", courseId: "course_c" });
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "both_b_a"), "locked");
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "both_a_c"), "ok");
+  });
+
+  it("他の受講生の進捗は使わない", async () => {
+    progress = [done("a1", "stu_other"), done("a2", "stu_other")];
+    assert.equal(await quizAccessFor(makeDb(), STUDENT, "final_b"), "locked");
+  });
+
+  it("クイズはコースを決める列だけを読む（問題・選択肢・正解・受験記録は読まない）", async () => {
+    await quizAccessFor(makeDb(), STUDENT, "final_b");
+    assert.deepEqual(calls[0].args, {
+      where: { id: "final_b" },
+      select: { courseId: true, lesson: { select: { section: { select: { courseId: true } } } } },
+    });
+    assert.doesNotMatch(JSON.stringify(calls[0].args), /questions|options|correctIndex|attempts/, "クイズの中身を読んでいる");
+    assert.ok(!calls.some((c) => c.method.startsWith("lesson.")), "レッスンを別に読んでいる");
+    const course = calls.find((c) => c.method === "course.findMany");
+    assert.ok(course, "course.findMany が呼ばれていない");
+    assert.equal(course.args.orderBy, COURSE_ORDER_BY, "orderBy が COURSE_ORDER_BY でない");
   });
 });
 

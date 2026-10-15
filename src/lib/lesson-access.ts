@@ -11,6 +11,7 @@ import { unlockedCourseIds } from "./question-threads";
  * 並び順は course-order.ts の COURSE_ORDER_BY（画面のロック表示と同じ並び。#47 P3）。
  *
  * 使う API（#47 P4）：POST /api/comments、POST /api/progress、GET /api/courses/[courseId]、GET /api/comments/[lessonId]。
+ * （#47 P5）：GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit（quizAccessFor）。
  * GET /api/courses と GET /api/comments（一覧）は、読んだコースから question-threads の unlockedCourseIds で計算する。
  * ここの関数はロールを見ない。講師を通す（確認しない）かどうかは呼び出し側が決める。
  * prisma は引数で受け取る（student-status.ts と同じ書き方。テストでは偽物を渡す）。
@@ -21,9 +22,14 @@ export type LessonAccessDb = Pick<PrismaClient, "lesson" | "course" | "progress"
 /** コースの確認だけに使う（lesson は読まない） */
 export type CourseAccessDb = Pick<PrismaClient, "course" | "progress">;
 
+/** クイズの確認に使う（quiz からコースを決め、コースのロックを読む。#47 P5） */
+export type QuizAccessDb = Pick<PrismaClient, "quiz" | "course" | "progress">;
+
 export type LessonAccess = "ok" | "locked" | "not_found";
 
 export type CourseAccess = LessonAccess;
+
+export type QuizAccess = LessonAccess;
 
 /** ロック中のコースを拒否するときの理由（403 の body の reason。CommentPostRejectReason の course_locked と同じ値） */
 export type CourseLockedReason = "course_locked";
@@ -80,6 +86,26 @@ export async function lessonAccessFor(db: LessonAccessDb, userId: string, lesson
 
   const unlocked = await unlockedCourseIdsFor(db, userId);
   return unlocked.includes(lesson.section.courseId) ? "ok" : "locked";
+}
+
+/**
+ * userId の受講生にとって、quizId のクイズが使えるか（#47 P5、Tec 決定 D-a・F-a）。
+ * コースは quiz.lesson.section.courseId（ミニテスト）、なければ quiz.courseId（修了テスト）。
+ * - クイズがない、どちらのコースもない、そのコースがない：not_found（クイズがなければコースや進捗は読まない）
+ * - コースがロック中なら locked
+ * - それ以外は ok
+ * 読むのはコースを決める列だけ（問題文・選択肢・正解は読まない）。
+ */
+export async function quizAccessFor(db: QuizAccessDb, userId: string, quizId: string): Promise<QuizAccess> {
+  const quiz = await db.quiz.findUnique({
+    where: { id: quizId },
+    select: { courseId: true, lesson: { select: { section: { select: { courseId: true } } } } },
+  });
+  if (!quiz) return "not_found";
+
+  const courseId = quiz.lesson?.section.courseId ?? quiz.courseId;
+  if (!courseId) return "not_found";
+  return courseAccessFor(db, userId, courseId);
 }
 
 // ───────────── GET /api/courses の応答 ─────────────
