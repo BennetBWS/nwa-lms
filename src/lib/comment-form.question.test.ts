@@ -4,16 +4,21 @@ import {
   COMMENT_SERVER_ERROR_MESSAGE,
   COMMENT_SESSION_EXPIRED_MESSAGE,
   QUESTION_COURSE_LOCKED_MESSAGE,
+  QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE,
   QUESTION_DUPLICATE_MESSAGE,
   QUESTION_POST_URL,
   QUESTION_POSTED_MESSAGE,
   QUESTION_RATE_LIMITED_MESSAGE,
   QUESTION_UNKNOWN_RESULT_MESSAGE,
   commentSubmitErrorMessage,
+  countMyQuestions,
   interpretQuestionPostResponse,
   questionPostBody,
   questionSubmitErrorMessage,
+  resolveUncertainQuestion,
   retryAfterHint,
+  shouldClearAfterDelivered,
+  uncertainQuestionRecord,
 } from "./comment-form";
 
 // #46 B-2 受講生の質問の投稿欄：comment-form.ts に足した受講生向けの文言と応答の解釈。
@@ -26,12 +31,17 @@ describe("questionSubmitErrorMessage：受講生向けの文言", () => {
     }
   });
 
-  it("結果不明の文言は一覧の確認と再送を案内し、二重投稿にならない旨は「直後」に限って書く", () => {
-    assert.ok(QUESTION_UNKNOWN_RESULT_MESSAGE.includes("一覧"), "一覧の確認の案内がない");
-    assert.ok(QUESTION_UNKNOWN_RESULT_MESSAGE.includes("もう一度送信"), "再送の案内がない");
-    assert.ok(QUESTION_UNKNOWN_RESULT_MESSAGE.includes("直後に同じ内容"), "409 で守られる範囲（直後・同じ内容）の説明がない");
-    assert.ok(QUESTION_UNKNOWN_RESULT_MESSAGE.includes("送信済み"), "送信済みの知らせの説明がない");
-    assert.doesNotMatch(QUESTION_UNKNOWN_RESULT_MESSAGE, /二重に投稿されることはありません|必ず/);
+  it("結果不明の文言は一覧を読み直している旨と再送を案内し、読み直しの結果を言い切らない", () => {
+    assert.equal(
+      QUESTION_UNKNOWN_RESULT_MESSAGE,
+      "送信できたかどうか確かめられませんでした。質問の一覧を読み直しています。表示されていなければ、もう一度送信してください。"
+    );
+    // 読み直しが失敗することもあるので「読み直したので」と言い切らない
+    assert.doesNotMatch(QUESTION_UNKNOWN_RESULT_MESSAGE, /読み直したので|二重に投稿されることはありません|必ず/);
+  });
+
+  it("届いていたときの知らせ", () => {
+    assert.ok(QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE.startsWith("質問は届いていました。"), "届いていたときの文言");
   });
 
   it("401・リダイレクトはログインの期限切れ", () => {
@@ -214,5 +224,72 @@ describe("questionPostBody・定数", () => {
   it("URL と成功の文言", () => {
     assert.equal(QUESTION_POST_URL, "/api/comments");
     assert.equal(QUESTION_POSTED_MESSAGE, "質問を投稿しました。");
+  });
+});
+
+// ───────────── 結果不明の質問が届いていたかの判定 ─────────────
+
+const q = (content: unknown, mine: unknown = true) => ({ id: `c-${String(content)}`, content, mine, replies: [] });
+
+describe("countMyQuestions", () => {
+  it("自分の（mine が true の）質問で本文が同じものだけを数える", () => {
+    const rows = [q("質問"), q("質問"), q("質問", false), q("別の質問"), q(" 質問 "), q("質問", "true"), null, "質問", [q("質問")]];
+    assert.equal(countMyQuestions(rows, "質問"), 2);
+    assert.equal(countMyQuestions([], "質問"), 0);
+  });
+
+  it("一覧が配列でなければ null（数えられない）", () => {
+    for (const rows of [null, undefined, {}, "[]", 0]) assert.equal(countMyQuestions(rows, "質問"), null, JSON.stringify(rows));
+  });
+});
+
+describe("uncertainQuestionRecord", () => {
+  it("本文は前後の空白を除き（サーバーと同じ）、送信した時点の件数を記録する", () => {
+    const atSend = [q("質問"), q("質問", false)];
+    const atResult = [q("質問")];
+    assert.deepEqual(uncertainQuestionRecord("\n  質問\u3000", atSend, atResult), { content: "質問", mineCount: 1, rowsAtResult: atResult });
+  });
+
+  it("送信した時点の一覧が読めていない・本文が空なら記録しない（判定しない）", () => {
+    assert.equal(uncertainQuestionRecord("質問", null, []), null);
+    assert.equal(uncertainQuestionRecord("質問", undefined, []), null);
+    assert.equal(uncertainQuestionRecord("   ", [], []), null);
+    assert.equal(uncertainQuestionRecord(undefined, [], []), null);
+  });
+});
+
+describe("resolveUncertainQuestion", () => {
+  const atResult = [q("質問")];
+  const rec = { content: "質問", mineCount: 1, rowsAtResult: atResult };
+
+  it("結果不明になった時点の一覧のまま・一覧が配列でない（読み込み中・失敗）なら pending", () => {
+    assert.equal(resolveUncertainQuestion(rec, atResult), "pending");
+    assert.equal(resolveUncertainQuestion(rec, null), "pending");
+    assert.equal(resolveUncertainQuestion(rec, undefined), "pending");
+  });
+
+  it("読み直した一覧で自分の同じ本文の質問が増えていれば saved", () => {
+    assert.equal(resolveUncertainQuestion(rec, [q("質問"), q("質問")]), "saved");
+    // 結果不明の時点の一覧にすでに含まれていても、送信した時点より増えていれば saved
+    const rec0 = { content: "質問", mineCount: 0, rowsAtResult: atResult };
+    assert.equal(resolveUncertainQuestion(rec0, [q("質問")]), "saved");
+  });
+
+  it("増えていなければ not_saved（他人の同じ本文・自分の別の本文・同じ件数の別の配列）", () => {
+    assert.equal(resolveUncertainQuestion(rec, [q("質問")]), "not_saved");
+    assert.equal(resolveUncertainQuestion(rec, [q("質問"), q("質問", false)]), "not_saved");
+    assert.equal(resolveUncertainQuestion(rec, [q("質問"), q("質問です")]), "not_saved");
+    assert.equal(resolveUncertainQuestion(rec, []), "not_saved");
+  });
+});
+
+describe("shouldClearAfterDelivered", () => {
+  const rec = { content: "質問", mineCount: 0, rowsAtResult: null };
+  it("今の入力が送った本文と前後の空白を除いて同じときだけ空にする", () => {
+    assert.equal(shouldClearAfterDelivered(rec, "質問"), true);
+    assert.equal(shouldClearAfterDelivered(rec, "  質問\n"), true);
+    assert.equal(shouldClearAfterDelivered(rec, "質問を書き直した"), false);
+    assert.equal(shouldClearAfterDelivered(rec, ""), false);
+    assert.equal(shouldClearAfterDelivered(rec, undefined), false);
   });
 });

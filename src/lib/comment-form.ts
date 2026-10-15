@@ -119,11 +119,14 @@ export const QUESTION_POSTED_MESSAGE = "質問を投稿しました。";
 
 /**
  * 送信できたかどうか分からない（通信エラー・502 / 503 / 504・ログイン以外へのリダイレクト）ときの文言。
- * 画面は質問の一覧を読み直す。再送しても、直前の自分の投稿と同じ本文なら 60 秒以内はサーバーが 409 duplicate で断るので、
- * 「一覧になければ送り直してよい。届いていれば送信済みと知らせる」と案内する（それより後の再送までは守れないので「直後に」と書く）
+ * 画面は質問の一覧を読み直し、自分の同じ本文の質問が増えていれば入力を空にして QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE を出す
+ * （resolveUncertainQuestion）。読み直しが失敗することもあるので「読み直しています」と書き、読み直した結果は言い切らない
  */
 export const QUESTION_UNKNOWN_RESULT_MESSAGE =
-  "送信できたかどうか確かめられませんでした。質問の一覧を読み直したので、一覧に表示されていなければ、もう一度送信してください。直後に同じ内容を送り直した場合、すでに届いていれば「送信済み」とお知らせします。";
+  "送信できたかどうか確かめられませんでした。質問の一覧を読み直しています。表示されていなければ、もう一度送信してください。";
+
+/** 結果不明のあと、読み直した一覧に自分の同じ本文の質問が増えていたときの知らせ（role="status"） */
+export const QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE = "質問は届いていました。質問の一覧をご確認ください。";
 
 /** 409 duplicate（60 秒以内に直前の自分の投稿と同じ本文） */
 export const QUESTION_DUPLICATE_MESSAGE = "同じ内容の質問を送信済みです。質問の一覧をご確認ください。";
@@ -230,6 +233,63 @@ export function interpretQuestionPostResponse(
   const message = questionSubmitErrorMessage({ httpStatus: status, reason, retryAfterSeconds });
   const reload = message === QUESTION_UNKNOWN_RESULT_MESSAGE || message === QUESTION_DUPLICATE_MESSAGE;
   return { kind: "error", message, reload };
+}
+
+// ───────────── 結果不明の質問が届いていたかの判定（#46。講師の回答欄の resolveUncertainReplies と同じ考え方） ─────────────
+
+/**
+ * 一覧（GET /api/comments/[lessonId] の配列）にある「自分の（mine が true の）質問で、本文が content と同じもの」の件数。
+ * rows が配列でなければ null（数えられない：読み込み中・失敗）
+ */
+export function countMyQuestions(rows: unknown, content: string): number | null {
+  if (!Array.isArray(rows)) return null;
+  let n = 0;
+  for (const r of rows) {
+    if (isRecord(r) && r.mine === true && r.content === content) n++;
+  }
+  return n;
+}
+
+/** 結果不明になった質問の記録 */
+export type UncertainQuestion = {
+  /** 送った本文（サーバーの parseCommentContent と同じく前後の空白を除いたもの） */
+  content: string;
+  /** 送信した時点の一覧にあった、自分の同じ本文の質問の件数 */
+  mineCount: number;
+  /** 結果不明になった時点の一覧（この配列のままの間は、読み直しが終わっていないので判定しない） */
+  rowsAtResult: unknown;
+};
+
+/**
+ * 結果不明になった質問の記録を作る。value は送った本文（前後の空白はここで除く。サーバーと同じ）、
+ * rowsAtSend は送信した時点の一覧、rowsAtResult は結果不明になった時点の一覧。
+ * 送信した時点の一覧が読めていない（配列でない）・本文が空のときは null（判定しない。入力を残す今の動きのまま）
+ */
+export function uncertainQuestionRecord(value: unknown, rowsAtSend: unknown, rowsAtResult: unknown): UncertainQuestion | null {
+  const content = typeof value === "string" ? value.trim() : "";
+  if (content === "") return null;
+  const mineCount = countMyQuestions(rowsAtSend, content);
+  if (mineCount === null) return null;
+  return { content, mineCount, rowsAtResult };
+}
+
+/**
+ * 読み直した一覧で、結果不明だった質問が届いていたかを判定する。
+ * - "pending"：まだ判定しない（一覧が配列でない〔読み込み中・失敗〕か、結果不明になった時点の一覧のまま）
+ * - "saved"：自分の同じ本文の質問が、送信した時点より増えている
+ * - "not_saved"：増えていない（入力を残す。もう一度送ってよい）
+ * 一覧は新しい順の 100 件までなので、古い質問が押し出されると増えたことが分からず "not_saved" になる（入力が残るだけで安全な側）
+ */
+export function resolveUncertainQuestion(rec: UncertainQuestion, rows: unknown): "pending" | "saved" | "not_saved" {
+  if (!Array.isArray(rows) || rows === rec.rowsAtResult) return "pending";
+  const count = countMyQuestions(rows, rec.content);
+  if (count === null) return "pending";
+  return count > rec.mineCount ? "saved" : "not_saved";
+}
+
+/** 届いていたときに入力を空にするか：今の入力が送った本文と（前後の空白を除いて）同じときだけ。書き直していれば残す */
+export function shouldClearAfterDelivered(rec: UncertainQuestion, value: unknown): boolean {
+  return typeof value === "string" && value.trim() === rec.content;
 }
 
 /** 送る本文。lessonId と content だけ（parentId は送らない：受講生は親の質問だけ投稿できる） */
