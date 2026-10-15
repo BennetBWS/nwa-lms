@@ -2,7 +2,8 @@
  * 受講生画面（src/app/page.tsx）で、API の 403 { reason: "course_locked" }（#47 P4）を扱う純粋関数と文言。
  *
  * API はロック中のコースの詳細（/api/courses/[courseId]）・完了（POST /api/progress）・質問タブ
- * （/api/comments/[lessonId]）を 403 course_locked で断る。画面はこれを「通信エラー」と区別して表示する。
+ * （/api/comments/[lessonId]）・確認テストの問題（/api/quizzes/[quizId]）と回答の送信（submit。#47 P5）を
+ * 403 course_locked で断る。画面はこれを「通信エラー」と区別して表示する。
  * DB・DOM・fetch に触れない。
  */
 
@@ -13,6 +14,8 @@ export const COURSE_LOCKED_TITLE = "このコースはまだ解放されてい�
 export const COURSE_LOCKED_DESCRIPTION = "前のコースのレッスンをすべて完了すると開けます。";
 /** 完了にしようとしたレッスンのコースがロック中だったとき（楽観更新を戻す） */
 export const COMPLETE_LOCKED_MESSAGE = "このコースはまだ解放されていないため、完了にできませんでした";
+/** 確認テストの回答の送信が 403 course_locked で断られたとき（#47 P5。回答は画面に残す） */
+export const QUIZ_SUBMIT_LOCKED_MESSAGE = "このコースはまだ解放されていないため、回答を送信できませんでした。";
 /** 完了が 403 で断られた（ロック以外）とき */
 export const COMPLETE_FORBIDDEN_MESSAGE = "レッスンを完了にできませんでした";
 
