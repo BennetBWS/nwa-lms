@@ -154,6 +154,8 @@ const QUESTION_LESSON_UNKNOWN_MESSAGE = "このレッスンを確かめられま
  */
 export function retryAfterHint(seconds: unknown): string {
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return "";
+  // サーバーは 24 時間（86400 秒）までしか返さない。それを超える値は目安を出さない（表示が崩れないように）
+  if (seconds > 86400) return "";
   const s = Math.ceil(seconds);
   if (s < 60) return `（目安：約 ${s} 秒後）`;
   if (s < 3600) return `（目安：約 ${Math.ceil(s / 60)} 分後）`;

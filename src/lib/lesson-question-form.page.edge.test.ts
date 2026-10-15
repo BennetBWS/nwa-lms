@@ -348,13 +348,13 @@ describe("LessonQuestionForm 応答：429 の目安（retryAfterSeconds）", () 
     });
   }
 
-  it("巨大な値でも例外にならず、目安は 1 つだけ（サーバーは 86400 秒までしか返さない）", async () => {
-    for (const v of [1e9, Number.MAX_SAFE_INTEGER, 1e308]) {
+  it("24 時間（86400 秒）を超える値は目安を出さない（サーバーは 86400 秒までしか返さない。表示が崩れないように）", async () => {
+    for (const v of [86400.5, 1e9, Number.MAX_SAFE_INTEGER, 1e308]) {
       const { tree } = await respond(res(429, { reason: "rate_limited", retryAfterSeconds: v }));
       const a = alerts(tree);
       assert.equal(a.length, 1, `エラーが 1 つでない：${v}`);
       assert.ok(a[0].startsWith(RATE), `429 の文言でない：${a[0]}`);
-      assert.equal((a[0].match(/（目安：/g) ?? []).length, 1, `目安が 1 つでない：${a[0]}`);
+      assert.doesNotMatch(a[0], /（目安：/, `目安が出ている：${a[0]}`);
     }
   });
 });
