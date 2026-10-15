@@ -6,7 +6,7 @@ import { QUIZ_ATTEMPTS_ENABLED } from "@/lib/student-quizzes";
 
 // 回答の送信と採点（#32）。本体は src/lib/quiz-submit.ts。
 // QUIZ_ATTEMPTS_ENABLED が false の間は、認証のあと DB を読まずに 503 attempts_disabled を返す。
-// userId はセッションの値（body の userId は読まない）
+// userId・role はセッションの値（body の userId は読まない）。受講生のロックの確認は本体が行う（#47 P5）
 export async function POST(
   request: Request,
   context: { params: Promise<{ quizId: string }> }
@@ -17,7 +17,7 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    return await handleQuizSubmit(session.user.id, request, context, { attemptsEnabled: QUIZ_ATTEMPTS_ENABLED });
+    return await handleQuizSubmit(session.user.id, request, context, { attemptsEnabled: QUIZ_ATTEMPTS_ENABLED, role: session.user.role });
   } catch (error) {
     console.error("POST /api/quizzes/[quizId]/submit error:", safeErrorSummary(error).name);
     return NextResponse.json(
