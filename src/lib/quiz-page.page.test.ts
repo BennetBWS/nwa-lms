@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { classifyAuthFailure } from "./client-session";
+import { COURSE_LOCKED_DESCRIPTION, QUIZ_SUBMIT_LOCKED_MESSAGE, isCourseLockedResponse } from "./course-locked";
 import { buildSubmitBody, toQuizResultView, toQuizTakeView } from "./student-quizzes";
 
 // #32 確認テストのページ：page.tsx（// @ts-nocheck）の QuizPage をソースで検査し、
@@ -119,7 +120,7 @@ describe("QuizPage：表示", () => {
   it("受験画面は QUIZ_ATTEMPTS_ENABLED が true のときだけ開く", () => {
     assert.match(quizPage, /if \(QUIZ_ATTEMPTS_ENABLED && activeQuizId !== null\) \{/);
     assert.match(takeSrc, /const openQuiz = \(quizId\) => \{\s*if \(!QUIZ_ATTEMPTS_ENABLED\) return;/);
-    assert.match(takeSrc, /if \(!QUIZ_ATTEMPTS_ENABLED \|\| submitInFlight\.current \|\| !takeQuiz\) return;/);
+    assert.match(takeSrc, /if \(!QUIZ_ATTEMPTS_ENABLED \|\| submitInFlight\.current \|\| !takeQuiz \|\| submitLocked\) return;/);
   });
 
   it("ロック中のコースは「前のコースを終えると受けられます」", () => {
@@ -150,7 +151,22 @@ describe("QuizPage：表示", () => {
   it("送信失敗は role=alert で、回答を残してもう一度送信できる", () => {
     assert.ok(quizPage.includes("送信できませんでした。回答はそのまま残っています。"));
     assert.match(quizPage, /submitFailed \? "もう一度送信する" : "回答を送信する"/);
-    assert.match(quizPage, /disabled=\{!submitBody \|\| submitting\}/);
+    assert.match(quizPage, /disabled=\{!submitBody \|\| submitting \|\| submitLocked\}/);
+  });
+
+  it("ロック中のコース（403 course_locked。#47 P5）は通信エラーと分けて表示する", () => {
+    // 問題の読み込み：LessonView と同じ文言（course-locked.ts）で、再読み込みは出さず一覧へ戻るだけ
+    const locked = between("} else if (takeLocked) {", "} else if (takeFailed || !takeQuiz) {");
+    assert.match(locked, /role="alert"/);
+    assert.ok(locked.includes("{COURSE_LOCKED_TITLE}"), "ロック中の見出しがない");
+    assert.ok(locked.includes("{COURSE_LOCKED_DESCRIPTION}"), "ロック中の説明がない");
+    assert.match(locked, /onClick=\{closeQuiz\}/);
+    assert.ok(!locked.includes("openQuiz"), "ロック中に再読み込みを出している");
+    assert.ok(!locked.includes("読み込めませんでした"), "ロック中に通信エラーの文言を出している");
+    // 送信：ロック中の文言を出し、通信エラーの文言は出さない
+    assert.ok(quizPage.includes("{submitLocked ? ("), "送信のロックを表示していない");
+    assert.ok(quizPage.includes("{QUIZ_SUBMIT_LOCKED_MESSAGE}{COURSE_LOCKED_DESCRIPTION}"), "送信のロックの文言がない");
+    assert.ok(QUIZ_SUBMIT_LOCKED_MESSAGE.length > 0 && COURSE_LOCKED_DESCRIPTION.length > 0, "文言が空");
   });
 });
 
@@ -311,10 +327,12 @@ function takeHarness(enabled: boolean) {
     takeQuiz: null as ReturnType<typeof toQuizTakeView>,
     takeLoading: false,
     takeFailed: false,
+    takeLocked: false,
     answers: [] as Array<number | null>,
     currentQ: 0,
     submitting: false,
     submitFailed: false,
+    submitLocked: false,
     result: null as unknown,
     seq: 0,
     submitInFlight: false,
@@ -333,6 +351,7 @@ function takeHarness(enabled: boolean) {
     "QUIZ_ATTEMPTS_ENABLED",
     "authFetch",
     "classifyAuthFailure",
+    "isCourseLockedResponse",
     "toQuizTakeView",
     "toQuizResultView",
     "buildSubmitBody",
@@ -342,14 +361,17 @@ function takeHarness(enabled: boolean) {
     "takeQuiz",
     "answers",
     "currentQ",
+    "submitLocked",
     "setActiveQuizId",
     "setTakeQuiz",
     "setTakeLoading",
     "setTakeFailed",
+    "setTakeLocked",
     "setAnswers",
     "setCurrentQ",
     "setSubmitting",
     "setSubmitFailed",
+    "setSubmitLocked",
     "setResult",
     `${takeSrc}\nreturn { openQuiz, closeQuiz, selectAnswer, submitQuiz, retakeQuiz };`
   );
@@ -361,6 +383,7 @@ function takeHarness(enabled: boolean) {
       enabled,
       authFetch,
       classifyAuthFailure,
+      isCourseLockedResponse,
       toQuizTakeView,
       toQuizResultView,
       buildSubmitBody,
@@ -370,14 +393,17 @@ function takeHarness(enabled: boolean) {
       st.takeQuiz,
       st.answers,
       st.currentQ,
+      st.submitLocked,
       set("activeQuizId"),
       set("takeQuiz"),
       set("takeLoading"),
       set("takeFailed"),
+      set("takeLocked"),
       set("answers"),
       set("currentQ"),
       set("submitting"),
       set("submitFailed"),
+      set("submitLocked"),
       set("result")
     ) as Take;
   return { st, reqs, render };
@@ -576,5 +602,216 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(h.st.activeQuizId, null);
     assert.equal(h.st.takeQuiz, null);
     assert.deepEqual(h.st.answers, []);
+  });
+});
+
+// ───────────── 実行：ロック中のコース（403 course_locked。#47 P5） ─────────────
+
+const LOCKED_403 = { status: 403, ok: false, body: { error: "Forbidden", reason: "course_locked" } };
+
+describe("受験：ロック中のコース（403 course_locked。#47 P5）", () => {
+  it("問題の読み込みが 403 course_locked なら takeLocked（takeFailed にしない）で、一覧を読み直す", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, true, "takeLocked にならない");
+    assert.equal(h.st.takeFailed, false, "通信エラーとして扱っている");
+    assert.equal(h.st.takeQuiz, null, "問題を表示している");
+    assert.equal(h.st.takeLoading, false, "読み込み中のまま");
+    assert.equal(h.st.reloads, 1, "一覧を読み直していない");
+  });
+
+  for (const [label, r] of [
+    ["reason のない 403", { status: 403, ok: false, body: { error: "Forbidden" } }],
+    ["別の reason の 403", { status: 403, ok: false, body: { error: "Forbidden", reason: "forbidden_role" } }],
+    ["本文を読めない 403", { status: 403, ok: false, json: () => Promise.reject(new SyntaxError("Unexpected token")) }],
+    ["reason が course_locked の 500", { status: 500, ok: false, body: { reason: "course_locked" } }],
+  ] as Array<[string, Partial<FakeRes> & { body?: unknown }]>) {
+    it(`問題の読み込みが ${label} なら、これまでどおり takeFailed`, async () => {
+      const h = takeHarness(true);
+      h.render().openQuiz("quiz1");
+      h.reqs[0].release(res(r));
+      await settle();
+      assert.equal(h.st.takeFailed, true, "takeFailed にならない");
+      assert.equal(h.st.takeLocked, false, "ロックとして扱っている");
+      assert.equal(h.st.takeLoading, false, "読み込み中のまま");
+    });
+  }
+
+  it("一覧に戻ったあとに届いた 403 course_locked は捨てる", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.render().closeQuiz();
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "閉じたあとの応答でロック表示になった");
+  });
+
+  it("開き直す・一覧に戻ると takeLocked を消す", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    h.render().closeQuiz();
+    assert.equal(h.st.takeLocked, false, "一覧に戻っても takeLocked が残る");
+    h.st.takeLocked = true;
+    h.render().openQuiz("quiz1");
+    assert.equal(h.st.takeLocked, false, "開き直しても takeLocked が残る");
+  });
+
+  it("送信が 403 course_locked なら submitLocked（submitFailed にしない）で、回答を残し、再送信しない", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+    assert.equal(h.st.submitFailed, false, "通信エラーとして扱っている");
+    assert.equal(h.st.result, null, "結果を表示している");
+    assert.deepEqual(h.st.answers, [1, 2], "回答が消えた");
+    assert.equal(h.st.submitting, false, "送信中のまま");
+    assert.equal(h.st.submitInFlight, false, "送信中の印が残る");
+    assert.equal(h.st.reloads, 1, "一覧を読み直していない");
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 2, "ロック中に再送信した");
+  });
+
+  it("送信が reason のない 403 なら、これまでどおり submitFailed で再送信できる", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ status: 403, ok: false, body: { error: "Forbidden" } }));
+    await settle();
+    assert.equal(h.st.submitFailed, true, "submitFailed にならない");
+    assert.equal(h.st.submitLocked, false, "ロックとして扱っている");
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 3, "再送信できない");
+  });
+
+  it("もう一度受ける・一覧に戻ると submitLocked を消す", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(LOCKED_403));
+    await settle();
+    h.render().retakeQuiz();
+    assert.equal(h.st.submitLocked, false, "もう一度受けても submitLocked が残る");
+    h.st.submitLocked = true;
+    h.render().closeQuiz();
+    assert.equal(h.st.submitLocked, false, "一覧に戻っても submitLocked が残る");
+  });
+});
+
+// ───────────── ロック中のコース：追加の観点（tester。#47 P5） ─────────────
+
+describe("受験：ロック中のコース（追加の観点。#47 P5）", () => {
+  for (const [label, r] of [
+    ["別の reason の 403", { status: 403, ok: false, body: { error: "Forbidden", reason: "forbidden_role" } }],
+    ["本文を読めない 403", { status: 403, ok: false, json: () => Promise.reject(new SyntaxError("Unexpected token")) }],
+    ["本文が null の 403", { status: 403, ok: false, body: null }],
+    ["reason が course_locked の 500", { status: 500, ok: false, body: { error: "x", reason: "course_locked" } }],
+    ["reason が course_locked の 200", { status: 200, ok: true, body: { error: "x", reason: "course_locked" } }],
+  ] as Array<[string, Partial<FakeRes> & { body?: unknown }]>) {
+    it(`送信が ${label} なら submitFailed（submitLocked にしない）で、回答を残して再送信できる`, async () => {
+      const h = await openLoaded();
+      answerAll(h, [1, 2]);
+      h.render().submitQuiz();
+      h.reqs[1].release(res(r, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+      await settle();
+      assert.equal(h.st.submitFailed, true, "submitFailed にならない");
+      assert.equal(h.st.submitLocked, false, "ロックとして扱っている");
+      assert.equal(h.st.result, null, "結果を表示している");
+      assert.deepEqual(h.st.answers, [1, 2], "回答が消えた");
+      assert.equal(h.st.submitting, false, "送信中のまま");
+      h.render().submitQuiz();
+      assert.equal(h.reqs.length, 3, "再送信できない");
+    });
+  }
+
+  it("問題の読み込みが 200 で本文に reason: course_locked があっても、ロックにしない（問題として解釈できず takeFailed）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res({ status: 200, ok: true, body: { error: "Forbidden", reason: "course_locked" } }));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "200 をロックとして扱っている");
+    assert.equal(h.st.takeFailed, true, "takeFailed にならない");
+  });
+
+  it("問題の読み込みが 403 course_locked でも、/login へのリダイレクトなら失効として扱いロックにしない", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quiz1");
+    h.reqs[0].release(res({ ...LOCKED_403, redirected: true }, `${ORIGIN}/login`));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "リダイレクトをロックとして扱っている");
+    assert.equal(h.st.takeFailed, false, "失効を失敗として扱っている");
+    assert.equal(h.st.reloads, 0, "失効なのに一覧を読み直した");
+  });
+
+  it("別のクイズを開き直したあとに届いた、前のクイズの 403 course_locked は捨てる（新しいクイズの表示は変えない）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quizA");
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[1].release(res({ body: QUIZ }, `${ORIGIN}/api/quizzes/quiz%2F1`));
+    await settle();
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "前のクイズの応答でロック表示になった");
+    assert.equal(h.st.takeQuiz?.id, QUIZ.id, "新しいクイズの問題が消えた");
+    assert.equal(h.st.takeLoading, false, "読み込み中に戻った");
+    assert.equal(h.st.reloads, 0, "捨てた応答で一覧を読み直した");
+  });
+
+  it("前のクイズの 403 course_locked が、新しいクイズの読み込み中に届いても、読み込み中のまま（ロックにしない）", async () => {
+    const h = takeHarness(true);
+    h.render().openQuiz("quizA");
+    h.render().openQuiz(QUIZ.id);
+    h.reqs[0].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, false, "前のクイズの応答でロック表示になった");
+    assert.equal(h.st.takeLoading, true, "新しいクイズの読み込みが終わったことになった");
+  });
+
+  it("送信中は一覧に戻れず、届いた 403 course_locked は submitLocked になる", async () => {
+    const h = await openLoaded();
+    answerAll(h, [0, 0]);
+    h.render().submitQuiz();
+    h.render().closeQuiz();
+    assert.equal(h.st.activeQuizId, QUIZ.id, "送信中に一覧に戻った");
+    h.reqs[1].release(res(LOCKED_403, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+    await settle();
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+  });
+
+  it("送信の 403 course_locked のあと、一覧に戻って開き直すと submitLocked も takeLocked も消え、送信できる", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(LOCKED_403, `${ORIGIN}/api/quizzes/quiz%2F1/submit`));
+    await settle();
+    h.render().closeQuiz();
+    h.render().openQuiz(QUIZ.id);
+    assert.equal(h.st.submitLocked, false, "開き直しても submitLocked が残る");
+    assert.equal(h.st.takeLocked, false, "開き直しても takeLocked が残る");
+    h.reqs[2].release(res({ body: QUIZ }, `${ORIGIN}/api/quizzes/quiz%2F1`));
+    await settle();
+    answerAll(h, [0, 0]);
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 4, "開き直したあと送信できない");
+  });
+
+  it("送信が 403 course_locked のとき、本文は 1 回だけ読む", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    let reads = 0;
+    h.reqs[1].release(res({ status: 403, ok: false, json: () => { reads++; return Promise.resolve(LOCKED_403.body); } }));
+    await settle();
+    assert.equal(reads, 1, `本文を ${reads} 回読んだ`);
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+  });
+
+  it("送信ボタンは submitLocked の間 disabled（ソース）", () => {
+    assert.match(quizPage, /disabled=\{!submitBody \|\| submitting \|\| submitLocked\}/);
   });
 });

@@ -22,6 +22,7 @@ import {
   type QuizAttemptInput,
   type QuizCourseInput,
   type QuizInput,
+  quizCourseId,
 } from "./student-quizzes";
 
 // #32 確認テストの純粋関数。DB・ネットワークなし。データはすべてダミー。
@@ -703,5 +704,25 @@ describe("buildSubmitBody / quizResultTitle", () => {
     for (const t of [quizResultTitle(true), quizResultTitle(false)]) {
       assert.doesNotMatch(t, new RegExp("\\p{Extended_Pictographic}", "u"));
     }
+  });
+});
+
+describe("quizCourseId（#47 P5。一覧の振り分けと API のロックの確認で共通）", () => {
+  const lesson = (courseId: string) => ({ section: { courseId } });
+  it("FINAL は courseId だけを見る（lesson があっても使わない）", () => {
+    assert.equal(quizCourseId({ type: "FINAL", courseId: "c1", lesson: null }), "c1");
+    assert.equal(quizCourseId({ type: "FINAL", courseId: "c1", lesson: lesson("c3") }), "c1");
+    assert.equal(quizCourseId({ type: "FINAL", courseId: null, lesson: lesson("c3") }), null);
+  });
+
+  it("MINI はレッスンのコースだけを見る（courseId があっても使わない）", () => {
+    assert.equal(quizCourseId({ type: "MINI", courseId: null, lesson: lesson("c2") }), "c2");
+    assert.equal(quizCourseId({ type: "MINI", courseId: "c1", lesson: lesson("c2") }), "c2");
+    assert.equal(quizCourseId({ type: "MINI", courseId: "c1", lesson: null }), null);
+  });
+
+  it("知らない種類は null", () => {
+    const unknownType = { type: "OTHER", courseId: "c1", lesson: lesson("c1") } as unknown as Parameters<typeof quizCourseId>[0];
+    assert.equal(quizCourseId(unknownType), null);
   });
 });

@@ -257,11 +257,31 @@ function countLessons(course: QuizCourseInput, completedLessonIds: ReadonlySet<s
   return { completedLessons, totalLessons };
 }
 
+/** quizCourseId が読む項目（一覧の QuizInput と、lesson-access.ts の quizAccessFor の select の共通部分） */
+export type QuizCourseRef = {
+  type: QuizType;
+  courseId: string | null;
+  lesson: { section: { courseId: string } } | null;
+};
+
+/**
+ * クイズが属するコースの id（#47 P5。一覧の振り分けと API のロックの確認で同じ規則を使う）。
+ * - 修了テスト（FINAL）は quiz.courseId（lesson は見ない）
+ * - ミニテスト（MINI）は lesson.section.courseId（courseId は見ない）
+ * - それ以外・コースがないときは null（一覧に出さない。API では not_found）
+ */
+export function quizCourseId(q: QuizCourseRef): string | null {
+  if (q.type === "FINAL") return q.courseId;
+  if (q.type === "MINI") return q.lesson?.section.courseId ?? null;
+  return null;
+}
+
 /**
  * GET /api/quizzes の courses。
  * - courses は表示順（route が [order, id] で並べる）。ロックは course-lock の isCourseLocked と同じ規則で、
  *   クイズのないコースも含めた全コースの並びで前のコースを見る
  * - 修了テスト（FINAL）は quiz.courseId のコースへ、ミニテスト（MINI）は lesson.section.courseId のコースへ振り分ける
+ *   （quizCourseId。GET /api/quizzes/[quizId]・submit のロックの確認と同じ規則）
  * - 受験できないクイズ（問題が 0 件、options が壊れている、correctIndex が選択肢の範囲外の問題を 1 つでも含む。
  *   toAnswerKey が null）と、振り分け先のコースがないクイズは除く。クイズが 1 件もないコースは返さない
  * - 修了テストはタイトル順（同じなら id 順）、ミニテストはセクション順・レッスン順（同じなら id 順）、同じレッスンならタイトル・id 順
@@ -284,15 +304,8 @@ export function buildQuizCourses(
   const minis = new Map<string, QuizInput[]>();
   for (const q of quizzes) {
     if (!toAnswerKey(q.questions)) continue;
-    let courseId: string | null = null;
-    let target: Map<string, QuizInput[]> | null = null;
-    if (q.type === "FINAL") {
-      courseId = q.courseId;
-      target = finals;
-    } else if (q.type === "MINI") {
-      courseId = q.lesson?.section.courseId ?? null;
-      target = minis;
-    }
+    const courseId = quizCourseId(q);
+    const target = q.type === "FINAL" ? finals : q.type === "MINI" ? minis : null;
     if (courseId === null || target === null) continue;
     const list = target.get(courseId);
     if (list) list.push(q);

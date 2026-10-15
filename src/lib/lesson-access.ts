@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { COURSE_ORDER_BY } from "./course-order";
 import { unlockedCourseIds } from "./question-threads";
+import { quizCourseId } from "./student-quizzes";
 
 /**
  * 受講生がコース・レッスンを使えるか（コースのロック。#46、#47 P4、Tec 決定 2026-10-09 / D-a 2026-10-14）。
@@ -11,6 +12,7 @@ import { unlockedCourseIds } from "./question-threads";
  * 並び順は course-order.ts の COURSE_ORDER_BY（画面のロック表示と同じ並び。#47 P3）。
  *
  * 使う API（#47 P4）：POST /api/comments、POST /api/progress、GET /api/courses/[courseId]、GET /api/comments/[lessonId]。
+ * （#47 P5）：GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit（quizAccessFor）。
  * GET /api/courses と GET /api/comments（一覧）は、読んだコースから question-threads の unlockedCourseIds で計算する。
  * ここの関数はロールを見ない。講師を通す（確認しない）かどうかは呼び出し側が決める。
  * prisma は引数で受け取る（student-status.ts と同じ書き方。テストでは偽物を渡す）。
@@ -21,9 +23,14 @@ export type LessonAccessDb = Pick<PrismaClient, "lesson" | "course" | "progress"
 /** コースの確認だけに使う（lesson は読まない） */
 export type CourseAccessDb = Pick<PrismaClient, "course" | "progress">;
 
+/** クイズの確認に使う（quiz からコースを決め、コースのロックを読む。#47 P5） */
+export type QuizAccessDb = Pick<PrismaClient, "quiz" | "course" | "progress">;
+
 export type LessonAccess = "ok" | "locked" | "not_found";
 
 export type CourseAccess = LessonAccess;
+
+export type QuizAccess = LessonAccess;
 
 /** ロック中のコースを拒否するときの理由（403 の body の reason。CommentPostRejectReason の course_locked と同じ値） */
 export type CourseLockedReason = "course_locked";
@@ -80,6 +87,27 @@ export async function lessonAccessFor(db: LessonAccessDb, userId: string, lesson
 
   const unlocked = await unlockedCourseIdsFor(db, userId);
   return unlocked.includes(lesson.section.courseId) ? "ok" : "locked";
+}
+
+/**
+ * userId の受講生にとって、quizId のクイズが使えるか（#47 P5、Tec 決定 D-a・F-a）。
+ * コースは student-quizzes.ts の quizCourseId（一覧 GET /api/quizzes の振り分けと同じ規則）：
+ * 修了テスト（FINAL）は quiz.courseId、ミニテスト（MINI）はレッスンのコース。
+ * - クイズがない、規則で決まるコースがない、そのコースがない：not_found（コースが決まらなければコースや進捗は読まない）
+ * - コースがロック中なら locked
+ * - それ以外は ok
+ * 読むのはコースを決める列だけ（問題文・選択肢・正解は読まない）。
+ */
+export async function quizAccessFor(db: QuizAccessDb, userId: string, quizId: string): Promise<QuizAccess> {
+  const quiz = await db.quiz.findUnique({
+    where: { id: quizId },
+    select: { type: true, courseId: true, lesson: { select: { section: { select: { courseId: true } } } } },
+  });
+  if (!quiz) return "not_found";
+
+  const courseId = quizCourseId(quiz);
+  if (!courseId) return "not_found";
+  return courseAccessFor(db, userId, courseId);
 }
 
 // ───────────── GET /api/courses の応答 ─────────────

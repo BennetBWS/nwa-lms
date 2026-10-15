@@ -1,7 +1,7 @@
 import { before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
-import { installFakeAuth, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
+import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 
 // #32 確認テストの API の補強（quizzes-route.test.ts の続き）：
 // - 応答 JSON に出てよい項目を「許可リスト」で検査する（正解・回答・他人の記録が混ざらない）
@@ -30,7 +30,7 @@ let HANDLE_SUBMIT: (
   userId: string,
   req: Request,
   ctx: { params: Promise<{ quizId: string }> },
-  opts: { attemptsEnabled: boolean }
+  opts: { attemptsEnabled: boolean; role: string | null | undefined }
 ) => Promise<Response>;
 
 // ───────────── 偽 prisma（where は値の一致だけ、select は入れ子のリレーションまで） ─────────────
@@ -171,7 +171,7 @@ const submitRequest = (quizId: string, raw: string) =>
   });
 /** 受験を公開したあとの動き（attemptsEnabled: true）。userId は route と同じくセッションの値 */
 const submit = (quizId: string, raw: string) =>
-  HANDLE_SUBMIT(session!.user!.id as string, submitRequest(quizId, raw), ctx(quizId), { attemptsEnabled: true });
+  HANDLE_SUBMIT(session!.user!.id as string, submitRequest(quizId, raw), ctx(quizId), { attemptsEnabled: true, role: session!.user!.role });
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
 
 function captureLogs() {
@@ -215,8 +215,14 @@ describe("応答の項目は許可リストの中だけ（正解・回答・他�
     for (const s of [...LEAK_MARKERS, "SECRET_OPT_A", "問1", "options", "questions"]) assert.ok(!text.includes(s), s);
   });
 
-  for (const id of ["fin1", "mini1", "fin2"]) {
-    it(`GET /api/quizzes/${id}：許可した項目だけで、correctIndex・回答・他人の記録を出さない`, async () => {
+  // fin2 は受講生にはロック中で 403（#47 P5）。中身の項目は講師（ロックを見ない）で確かめる
+  for (const [id, who] of [
+    ["fin1", STUDENT_SESSION],
+    ["mini1", STUDENT_SESSION],
+    ["fin2", INSTRUCTOR_SESSION],
+  ] as Array<[string, FakeSession]>) {
+    it(`GET /api/quizzes/${id}（${who?.user.role}）：許可した項目だけで、correctIndex・回答・他人の記録を出さない`, async () => {
+      session = who;
       const res = await getOne(id);
       assert.equal(res.status, 200);
       const text = await res.text();

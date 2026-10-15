@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { safeErrorSummary } from "@/lib/safe-error";
 import { isValidId } from "@/lib/lesson-comments";
+import { COURSE_LOCKED_REASON, quizAccessFor } from "@/lib/lesson-access";
 import { hasAnswersArray, parseSubmitAnswers, scoreAttempt, toAnswerKey } from "@/lib/student-quizzes";
 
 /**
@@ -11,6 +12,9 @@ import { hasAnswersArray, parseSubmitAnswers, scoreAttempt, toAnswerKey } from "
  *   body の userId は読まない。応答・ログに回答・正解を含めない
  * - attemptsEnabled が false の間（QUIZ_ATTEMPTS_ENABLED、#8 のあとに公開）は、
  *   入力も DB も見ずに 503 attempts_disabled を返す（Tec 決定、2026-10-07）
+ * - 受講生（role が INSTRUCTOR 以外。role がなくても受講生として扱う）は、入力の形を確かめたあと、
+ *   問題を読む前にクイズのコースのロックを確かめる。ロック中なら 403 course_locked で、正解を読まず・採点も保存もしない。
+ *   コースのないクイズは 404（#47 P5、Tec 決定 D-a・F-a）。講師はロックを見ない
  * - route ファイルは GET / POST など決まった名前以外を export できないので、本体はここに置く。
  *   テストは attemptsEnabled: true を渡して採点・保存を確かめる
  */
@@ -18,7 +22,7 @@ export async function handleQuizSubmit(
   userId: string,
   request: Request,
   { params }: { params: Promise<{ quizId: string }> },
-  { attemptsEnabled }: { attemptsEnabled: boolean }
+  { attemptsEnabled, role }: { attemptsEnabled: boolean; role: string | null | undefined }
 ): Promise<Response> {
   if (!attemptsEnabled) {
     return NextResponse.json(
@@ -43,6 +47,16 @@ export async function handleQuizSubmit(
     // 形が違う body は DB を読まずに断る（長さ・範囲は問題を読んでから確かめる）
     if (!hasAnswersArray(body)) {
       return NextResponse.json({ error: "Invalid request", reason: "invalid_answers" }, { status: 400 });
+    }
+
+    if (role !== "INSTRUCTOR") {
+      const access = await quizAccessFor(prisma, userId, quizId);
+      if (access === "not_found") {
+        return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
+      }
+      if (access === "locked") {
+        return NextResponse.json({ error: "Forbidden", reason: COURSE_LOCKED_REASON }, { status: 403 });
+      }
     }
 
     const quiz = await prisma.quiz.findUnique({

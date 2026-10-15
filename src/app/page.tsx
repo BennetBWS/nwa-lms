@@ -61,8 +61,10 @@ import {
   COMPLETE_LOCKED_MESSAGE,
   COURSE_LOCKED_DESCRIPTION,
   COURSE_LOCKED_TITLE,
+  QUIZ_SUBMIT_LOCKED_MESSAGE,
   completeRejection,
   isCourseLockedError,
+  isCourseLockedResponse,
   toRequestError,
 } from "@/lib/course-locked";
 import { commentsTabLabel, lessonTypeLabel, safeExternalUrl, toCommentItems } from "@/lib/lesson-comments";
@@ -2148,10 +2150,13 @@ const QuizPage = () => {
   const [takeQuiz, setTakeQuiz] = useState(null);
   const [takeLoading, setTakeLoading] = useState(false);
   const [takeFailed, setTakeFailed] = useState(false);
+  // The quiz's course is locked for this student (403 { reason: "course_locked" }, #47 P5): not a network error
+  const [takeLocked, setTakeLocked] = useState(false);
   const [answers, setAnswers] = useState([]);
   const [currentQ, setCurrentQ] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
+  const [submitLocked, setSubmitLocked] = useState(false);
   const [result, setResult] = useState(null);
 
   // Bumped on every open / close: responses of a quiz that is no longer shown are dropped.
@@ -2167,17 +2172,26 @@ const QuizPage = () => {
     setTakeQuiz(null);
     setTakeLoading(true);
     setTakeFailed(false);
+    setTakeLocked(false);
     setAnswers([]);
     setCurrentQ(0);
     setSubmitFailed(false);
+    setSubmitLocked(false);
     setResult(null);
     let sessionExpired = false;
+    let courseLocked = false;
     authFetch(`/api/quizzes/${encodeURIComponent(quizId)}`).then(res => {
       if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      // 403 course_locked (#47 P5): read only the reason; any other 403 is a failure as before
+      if (res.status === 403 && !res.redirected) {
+        return res.json().catch(() => null).then(body => { courseLocked = isCourseLockedResponse(res.status, body); return null; });
+      }
       if (!res.ok || res.redirected) return null;
       return res.json();
     }).then(data => {
       if (sessionExpired || takeSeq.current !== seq) return;
+      // The list may still show this course as open: reload it so that the lock is shown there too
+      if (courseLocked) { setTakeLocked(true); loadQuizzes(); return; }
       const view = toQuizTakeView(data);
       if (view) { setTakeQuiz(view); setAnswers(view.questions.map(() => null)); }
       else setTakeFailed(true);
@@ -2194,9 +2208,11 @@ const QuizPage = () => {
     setTakeQuiz(null);
     setTakeLoading(false);
     setTakeFailed(false);
+    setTakeLocked(false);
     setAnswers([]);
     setCurrentQ(0);
     setSubmitFailed(false);
+    setSubmitLocked(false);
     setResult(null);
   };
 
@@ -2208,7 +2224,7 @@ const QuizPage = () => {
   // Sends all answers once. Scoring is done by the server only; the page shows its result.
   // On failure the answers are kept so that the same answers can be sent again.
   const submitQuiz = () => {
-    if (!QUIZ_ATTEMPTS_ENABLED || submitInFlight.current || !takeQuiz) return;
+    if (!QUIZ_ATTEMPTS_ENABLED || submitInFlight.current || !takeQuiz || submitLocked) return;
     const body = buildSubmitBody(answers);
     if (!body) return;
     submitInFlight.current = true;
@@ -2216,17 +2232,24 @@ const QuizPage = () => {
     const questionCount = takeQuiz.questions.length;
     setSubmitting(true);
     setSubmitFailed(false);
+    setSubmitLocked(false);
     let sessionExpired = false;
+    let courseLocked = false;
     authFetch(`/api/quizzes/${encodeURIComponent(takeQuiz.id)}/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then(res => {
       if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired = true; return null; }
+      // 403 course_locked (#47 P5): nothing was saved; sending again would be refused too
+      if (res.status === 403 && !res.redirected) {
+        return res.json().catch(() => null).then(rejected => { courseLocked = isCourseLockedResponse(res.status, rejected); return null; });
+      }
       if (!res.ok || res.redirected) return null;
       return res.json();
     }).then(data => {
       if (sessionExpired) return;
+      if (courseLocked) { if (takeSeq.current === seq) setSubmitLocked(true); loadQuizzes(); return; }
       const view = toQuizResultView(data, questionCount);
       if (!view) { if (takeSeq.current === seq) setSubmitFailed(true); return; }
       if (takeSeq.current === seq) setResult(view);
@@ -2244,6 +2267,7 @@ const QuizPage = () => {
     setAnswers(takeQuiz.questions.map(() => null));
     setCurrentQ(0);
     setSubmitFailed(false);
+    setSubmitLocked(false);
     setResult(null);
   };
 
@@ -2265,6 +2289,18 @@ const QuizPage = () => {
     let takeBody;
     if (takeLoading) {
       takeBody = spinner;
+    } else if (takeLocked) {
+      // Same wording as LessonView (#47 P4). No retry: only the way back to the list.
+      takeBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+          <Lock size={22} style={{ color: T.textMuted }} aria-hidden="true" />
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, marginTop: 8, fontFamily: "var(--font-sora), 'Sora', sans-serif" }}>{COURSE_LOCKED_TITLE}</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>{COURSE_LOCKED_DESCRIPTION}</div>
+          <Button size="sm" onClick={closeQuiz} style={{ marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 12, padding: "6px 15px" }}>
+            テスト一覧に戻る
+          </Button>
+        </div>
+      );
     } else if (takeFailed || !takeQuiz) {
       takeBody = (
         <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
@@ -2356,7 +2392,11 @@ const QuizPage = () => {
               })}
             </div>
 
-            {submitFailed && (
+            {submitLocked ? (
+              <div role="alert" style={{ marginTop: 20, fontSize: 13, color: T.danger }}>
+                {QUIZ_SUBMIT_LOCKED_MESSAGE}{COURSE_LOCKED_DESCRIPTION}
+              </div>
+            ) : submitFailed && (
               <div role="alert" style={{ marginTop: 20, fontSize: 13, color: T.danger }}>
                 送信できませんでした。回答はそのまま残っています。もう一度送信してください。
               </div>
@@ -2377,9 +2417,9 @@ const QuizPage = () => {
                 </Button>
               ) : (
                 <Button
-                  disabled={!submitBody || submitting}
+                  disabled={!submitBody || submitting || submitLocked}
                   onClick={submitQuiz}
-                  style={{ background: submitBody && !submitting ? T.accent : T.border, borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14, padding: "10px 28px", gap: 6 }}
+                  style={{ background: submitBody && !submitting && !submitLocked ? T.accent : T.border, borderRadius: 12, fontWeight: 600, fontFamily: "var(--font-sora), 'Sora', sans-serif", fontSize: 14, padding: "10px 28px", gap: 6 }}
                 >
                   {submitting ? "送信中..." : submitFailed ? "もう一度送信する" : "回答を送信する"}
                 </Button>
