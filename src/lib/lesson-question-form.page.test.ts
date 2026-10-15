@@ -52,7 +52,7 @@ describe("LessonQuestionForm：配線（ソース）", () => {
 
   it("質問タブの一覧の状態（読み込み中・失敗・0 件・一覧）より前に、レッスンの id を key にして置く", () => {
     const formAt = commentsTab.indexOf(
-      "{canAskQuestion && activeLesson?.id && <LessonQuestionForm key={activeLesson.id} lessonId={activeLesson.id} onReload={reloadCommentsAfterPost} />}"
+      "{canAskQuestion && activeLesson?.id && <LessonQuestionForm key={activeLesson.id} lessonId={activeLesson.id} onReload={reloadCommentsAfterPost} rows={commentRows} />}"
     );
     const listAt = commentsTab.indexOf("{commentsWaiting ? (");
     assert.ok(formAt >= 0, "投稿欄の配置が見つからない");

@@ -111,7 +111,7 @@ import {
 } from "@/lib/admin-questions";
 import { commentFormState, commentSubmitErrorMessage, isUncertainSubmitError } from "@/lib/comment-form";
 // #46 受講生の質問の投稿欄（LessonQuestionForm）
-import { QUESTION_POST_URL, QUESTION_POSTED_MESSAGE, interpretQuestionPostResponse, questionPostBody } from "@/lib/comment-form";
+import { QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE, QUESTION_POST_URL, QUESTION_POSTED_MESSAGE, QUESTION_UNKNOWN_RESULT_MESSAGE, interpretQuestionPostResponse, questionPostBody, resolveUncertainQuestion, shouldClearAfterDelivered, uncertainQuestionRecord } from "@/lib/comment-form";
 import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
@@ -967,15 +967,36 @@ const CourseList = ({ setCurrentPage }) => {
 // Enter では送信しない（日本語 IME の確定の Enter と区別するため、form にせず keydown も扱わない。送信はボタンだけ）。
 // 送信中は ref とボタンの disabled で二重送信を防ぐ。失敗しても入力は残す。
 // onReload(lessonId)：成功・送信済み（409）・結果不明のときに、そのレッスンの質問の一覧を読み直す。
+// rows：LessonView が読んだこのレッスンの質問の一覧（読み込み中・失敗は null）。結果不明のあと、読み直した一覧に
+// 自分の同じ本文の質問が増えていれば「届いていました」と知らせる（60 秒を過ぎた再送による二重投稿を防ぐ）。
 // LessonView が key にレッスンの id を渡すので、レッスンを切り替えると入力・知らせは消える。
-const LessonQuestionForm = ({ lessonId, onReload }) => {
+const LessonQuestionForm = ({ lessonId, onReload, rows }) => {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  // 結果不明になった質問の記録（uncertainQuestionRecord）。読み直した一覧が届いたら判定して null に戻す
+  const [uncertain, setUncertain] = useState(null);
   const sendingRef = useRef(false);
   // セッションが切れたら authFetch がサインアウトして /login へ移る。もう送らない
   const expiredRef = useRef(false);
+  // 最新の描画の一覧（送信した時点・結果不明になった時点の一覧を、古いクロージャでなく今の値で読むため）
+  const rowsRef = useRef(null);
+  rowsRef.current = rows;
+  // 読み直した一覧が届いたら（結果不明になった時点と別の配列になったら）、描画中に 1 回だけ判定する。
+  // 判定したら uncertain を null にするので繰り返さない（前の描画の情報から state を直す React の書き方）
+  if (uncertain && !sending) {
+    const verdict = resolveUncertainQuestion(uncertain, rows);
+    if (verdict !== "pending") {
+      setUncertain(null);
+      if (verdict === "saved") {
+        setError("");
+        setStatus(QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE);
+        // 結果不明の間に書き直していれば残す
+        if (shouldClearAfterDelivered(uncertain, value)) setValue("");
+      }
+    }
+  }
   const form = commentFormState(value, sending);
 
   const submitQuestion = async () => {
@@ -985,6 +1006,9 @@ const LessonQuestionForm = ({ lessonId, onReload }) => {
     setSending(true);
     setError("");
     setStatus("");
+    // 前の結果不明の判定は、この送信の結果で置き換える
+    setUncertain(null);
+    const rowsAtSend = rowsRef.current;
     try {
       let res;
       try {
@@ -1009,6 +1033,8 @@ const LessonQuestionForm = ({ lessonId, onReload }) => {
         return;
       }
       setError(outcome.message);
+      // 結果不明：今の一覧（読み直す前）を覚えてから読み直す。送信した時点の一覧が読めていなければ判定しない
+      if (outcome.message === QUESTION_UNKNOWN_RESULT_MESSAGE) setUncertain(uncertainQuestionRecord(value, rowsAtSend, rowsRef.current));
       if (outcome.reload) onReload(lessonId);
     } finally {
       sendingRef.current = false;
@@ -1376,7 +1402,7 @@ const LessonView = ({ setCurrentPage, courseId, isDark, onThemeToggle, canAskQue
             </TabsContent>
             <TabsContent value="comments" style={{ padding: 28 }}>
               {/* #46 Students only (instructors answer from 質問対応). Outside the list states so it stays while the list reloads */}
-              {canAskQuestion && activeLesson?.id && <LessonQuestionForm key={activeLesson.id} lessonId={activeLesson.id} onReload={reloadCommentsAfterPost} />}
+              {canAskQuestion && activeLesson?.id && <LessonQuestionForm key={activeLesson.id} lessonId={activeLesson.id} onReload={reloadCommentsAfterPost} rows={commentRows} />}
               {commentsWaiting ? (
                 <div style={{ ...glassStyle(8), borderRadius: 14, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
                   <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />

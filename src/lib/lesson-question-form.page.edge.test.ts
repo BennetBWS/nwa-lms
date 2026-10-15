@@ -114,13 +114,19 @@ function mount(lessonId = "l1") {
   const Form = new Function(...names, `${compiled}\nreturn LessonQuestionForm;`)(...names.map((n) => scope[n])) as (p: {
     lessonId: string;
     onReload: (id: string) => void;
+    rows?: unknown;
   }) => El;
+  // LessonView が渡す一覧（commentRows）。setRows で読み込み中（null）・読み直した一覧に変える
+  let rows: unknown = undefined;
   const render = (): El => {
     si = 0;
     ri = 0;
-    return Form({ lessonId, onReload: (id) => reloads.push(id) });
+    return Form({ lessonId, onReload: (id) => reloads.push(id), rows });
   };
-  return { render, reqs, reloads, logs };
+  const setRows = (r: unknown) => {
+    rows = r;
+  };
+  return { render, reqs, reloads, logs, setRows };
 }
 
 function text(n: Node | undefined): string {
@@ -561,9 +567,9 @@ describe("受講生だけに投稿欄を出す（式の評価）", () => {
     });
   }
 
-  const slot = lessonView.match(/\{(canAskQuestion && activeLesson\?\.id && <LessonQuestionForm [^}]*\}[^}]*\}[^}]*\} \/>)\}/);
+  const slot = lessonView.match(/\{(canAskQuestion && activeLesson\?\.id && <LessonQuestionForm [^}]*\}[^}]*\}[^}]*\}[^}]*\} \/>)\}/);
   assert.ok(slot, "投稿欄を置く式が見つからない");
-  const slotJs = ts.transpileModule(`const f = (canAskQuestion, activeLesson, reloadCommentsAfterPost) => (${slot[1]});`, {
+  const slotJs = ts.transpileModule(`const f = (canAskQuestion, activeLesson, reloadCommentsAfterPost, commentRows) => (${slot[1]});`, {
     ...JSX_OPTIONS,
     fileName: "slot.jsx",
   }).outputText;
@@ -571,15 +577,17 @@ describe("受講生だけに投稿欄を出す（式の評価）", () => {
   const evalSlot = new Function("h", "LessonQuestionForm", `${slotJs}\nreturn f;`)(
     (type: unknown, props: Record<string, unknown> | null) => ({ type, props: props ?? {} }),
     LessonQuestionForm
-  ) as (can: unknown, lesson: unknown, reload: unknown) => unknown;
+  ) as (can: unknown, lesson: unknown, reload: unknown, rows?: unknown) => unknown;
 
-  it("canAskQuestion が true でレッスンがあるときだけ部品を返し、key と lessonId はレッスンの id", () => {
+  it("canAskQuestion が true でレッスンがあるときだけ部品を返し、key と lessonId はレッスンの id、rows は今のレッスンの一覧", () => {
     const reload = () => {};
-    const el = evalSlot(true, { id: "l1" }, reload) as { type: unknown; props: Record<string, unknown> };
+    const rows = [{ id: "c1" }];
+    const el = evalSlot(true, { id: "l1" }, reload, rows) as { type: unknown; props: Record<string, unknown> };
     assert.equal(el.type, LessonQuestionForm);
     assert.equal(el.props.key, "l1");
     assert.equal(el.props.lessonId, "l1");
     assert.equal(el.props.onReload, reload);
+    assert.equal(el.props.rows, rows, "rows に commentRows を渡していない");
   });
 
   it("講師（false）・未指定（undefined）・レッスンなし・id が空では部品を返さない（描画される値も出さない）", () => {
@@ -600,5 +608,146 @@ describe("受講生だけに投稿欄を出す（式の評価）", () => {
     const uses = Array.from(src.matchAll(/<LessonView\b[^>]*\/>/g)).map((m) => m[0]);
     assert.ok(uses.length >= 1, "LessonView の描画が見つからない");
     for (const u of uses) assert.match(u, /canAskQuestion=\{student\}/, u);
+  });
+});
+
+// ───────────── 6. 結果不明のあと、読み直した一覧で届いていたかを判定する ─────────────
+
+describe("LessonQuestionForm：結果不明のあと、読み直した一覧に自分の同じ本文の質問が増えていれば届いていたと知らせる", () => {
+  const SENT = "  ダミーの質問です\n";
+  const Q = (id: string, content: string, mine = true) => ({ id, content, mine, createdAt: "2026-10-06T12:00:00.000Z", author: { name: "ダミー", isInstructor: false }, replies: [] });
+  const UNKNOWN = commentForm.QUESTION_UNKNOWN_RESULT_MESSAGE;
+  const DELIVERED = commentForm.QUESTION_DELIVERED_AFTER_UNKNOWN_MESSAGE;
+
+  /** 一覧 before を表示した状態で SENT を送り、r（結果不明）を返して、読み直しの間は一覧を null にする */
+  async function uncertainAfter(r: FakeRes | Error, before: unknown[]) {
+    const m = mount();
+    m.setRows(before);
+    change(textarea(m.render()), SENT);
+    click(sendButton(m.render()));
+    assert.equal(m.reqs.length, 1, "送信が 1 本でない");
+    if (r instanceof Error) m.reqs[0].fail(r);
+    else m.reqs[0].release(r);
+    await settle();
+    assert.deepEqual(m.reloads, ["l1"], "結果不明で読み直していない");
+    // 読み直しの間（LessonView は一覧を null にする）
+    m.setRows(null);
+    const waiting = m.render();
+    assert.deepEqual(alerts(waiting), [UNKNOWN], "結果不明の文言が出ていない");
+    assert.equal(textarea(waiting).props.value, SENT, "読み直しの間に入力が消えた");
+    return m;
+  }
+
+  for (const [label, r] of [
+    ["通信エラー", new TypeError("Failed to fetch")],
+    ["502", res(502, undefined)],
+    ["503", res(503, undefined)],
+    ["504", res(504, undefined)],
+  ] as Array<[string, FakeRes | Error]>) {
+    it(`${label}：増えていれば入力を空にし、エラーを消して role="status" で知らせる`, async () => {
+      const m = await uncertainAfter(r, [Q("old", "ダミーの質問です")]);
+      m.setRows([Q("new", "ダミーの質問です"), Q("old", "ダミーの質問です")]);
+      m.render(); // 判定（描画中に state を直す）
+      const tree = m.render();
+      assert.deepEqual(alerts(tree), [], "届いていたのにエラーが残る");
+      assert.deepEqual(statuses(tree), [DELIVERED], "届いていた知らせが role=\"status\" に出ていない");
+      assert.equal(textarea(tree).props.value, "", "届いていたのに入力が残る");
+      assert.equal(m.reqs.length, 1, "判定で送信した");
+      assert.deepEqual(m.logs, [], "ログに出した");
+    });
+  }
+
+  it("増えていなければ（他人の同じ本文・自分の別の本文だけ）入力とエラーを残し、送り直せる", async () => {
+    const m = await uncertainAfter(new TypeError("Failed to fetch"), [Q("old", "ダミーの質問です")]);
+    m.setRows([Q("x", "ダミーの質問です", false), Q("y", "別の質問"), Q("old", "ダミーの質問です")]);
+    m.render();
+    const tree = m.render();
+    assert.deepEqual(alerts(tree), [UNKNOWN], "届いていないのにエラーが変わった");
+    assert.deepEqual(statuses(tree), [""], "届いていないのに知らせた");
+    assert.equal(textarea(tree).props.value, SENT, "届いていないのに入力が消えた");
+    click(sendButton(tree));
+    assert.equal(m.reqs.length, 2, "送り直せない");
+  });
+
+  it("結果不明になった時点の一覧のまま（読み直しが始まる前の描画）では判定しない", async () => {
+    const before = [Q("old", "ダミーの質問です")];
+    const m = mount();
+    m.setRows(before);
+    change(textarea(m.render()), SENT);
+    click(sendButton(m.render()));
+    m.reqs[0].fail(new TypeError("Failed to fetch"));
+    await settle();
+    m.render();
+    const tree = m.render();
+    assert.deepEqual(alerts(tree), [UNKNOWN]);
+    assert.equal(textarea(tree).props.value, SENT, "読み直す前に判定した");
+  });
+
+  it("読み直しが失敗している間（一覧が null）は判定せず、その後の再読み込みで増えていれば知らせる", async () => {
+    const m = await uncertainAfter(res(504, undefined), []);
+    m.render();
+    assert.equal(textarea(m.render()).props.value, SENT, "一覧がないのに判定した");
+    m.setRows([Q("new", "ダミーの質問です")]);
+    m.render();
+    const tree = m.render();
+    assert.deepEqual(statuses(tree), [DELIVERED]);
+    assert.equal(textarea(tree).props.value, "");
+  });
+
+  it("結果不明の間に入力を書き直していれば、届いていても書き直した入力は残す", async () => {
+    const m = await uncertainAfter(new TypeError("Failed to fetch"), []);
+    change(textarea(m.render()), "書き直した質問");
+    m.setRows([Q("new", "ダミーの質問です")]);
+    m.render();
+    const tree = m.render();
+    assert.deepEqual(statuses(tree), [DELIVERED]);
+    assert.deepEqual(alerts(tree), []);
+    assert.equal(textarea(tree).props.value, "書き直した質問", "書き直した入力を消した");
+  });
+
+  it("送信した時点の一覧が読めていなければ（null・未指定）判定しない（今のまま入力を残す）", async () => {
+    for (const before of [null, undefined]) {
+      const m = mount();
+      m.setRows(before);
+      change(textarea(m.render()), SENT);
+      click(sendButton(m.render()));
+      m.reqs[0].fail(new TypeError("Failed to fetch"));
+      await settle();
+      m.setRows([Q("new", "ダミーの質問です")]);
+      m.render();
+      const tree = m.render();
+      assert.deepEqual(alerts(tree), [UNKNOWN], `判定した：${String(before)}`);
+      assert.equal(textarea(tree).props.value, SENT, `入力が消えた：${String(before)}`);
+    }
+  });
+
+  it("結果不明でない失敗（500・409・429）では判定しない", async () => {
+    for (const r of [res(500, undefined), res(409, { reason: "duplicate" }), res(429, { reason: "rate_limited" })]) {
+      const m = mount();
+      m.setRows([]);
+      change(textarea(m.render()), SENT);
+      click(sendButton(m.render()));
+      m.reqs[0].release(r);
+      await settle();
+      m.setRows([Q("new", "ダミーの質問です")]);
+      m.render();
+      const tree = m.render();
+      assert.equal(textarea(tree).props.value, SENT, `判定して入力を消した：${r.status}`);
+      assert.deepEqual(statuses(tree), [""], `知らせた：${r.status}`);
+    }
+  });
+
+  it("送り直したら前の結果不明の判定はしない（送り直しの結果で決める）", async () => {
+    // 読み直しの最中（一覧が null）に送り直す
+    const m = await uncertainAfter(new TypeError("Failed to fetch"), []);
+    click(sendButton(m.render()));
+    assert.equal(m.reqs.length, 2, "送り直せない");
+    m.reqs[1].release(res(409, { reason: "duplicate" }));
+    await settle();
+    m.setRows([Q("new", "ダミーの質問です")]);
+    m.render();
+    const tree = m.render();
+    assert.deepEqual(alerts(tree), [commentForm.QUESTION_DUPLICATE_MESSAGE], "送り直しの結果（409）が出ていない");
+    assert.deepEqual(statuses(tree), [""]);
   });
 });
