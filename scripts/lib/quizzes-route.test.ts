@@ -915,6 +915,49 @@ describe("POST submit：コースのロック（#47 P5、attemptsEnabled: true�
   });
 });
 
+describe("コースのロック：lessonId と courseId が別のコースを指すクイズ（#47 P5）", () => {
+  // c1・c2 は解放、c3 はロック。種類の側（FINAL は courseId、MINI はレッスン）だけで判定し、一覧と一致すること
+  const CASES: Array<[string, Row, boolean]> = [
+    ["FINAL：courseId は解放（c1）、lessonId はロック中（c3）", { id: "fx_open", title: "FX1", type: "FINAL", courseId: "c1", lessonId: "l3a" }, false],
+    ["FINAL：courseId はロック中（c3）、lessonId は解放（c1）", { id: "fx_lock", title: "FX2", type: "FINAL", courseId: "c3", lessonId: "l1a" }, true],
+    ["MINI：レッスンは解放（c1）、courseId はロック中（c3）", { id: "mx_open", title: "MX1", type: "MINI", courseId: "c3", lessonId: "l1a" }, false],
+    ["MINI：レッスンはロック中（c3）、courseId は解放（c1）", { id: "mx_lock", title: "MX2", type: "MINI", courseId: "c1", lessonId: "l3a" }, true],
+  ];
+
+  for (const [label, quiz, locked] of CASES) {
+    it(`${label}：一覧の locked と GET・submit が一致する（${locked ? "403" : "200"}）`, async () => {
+      db.quizzes.push(quiz);
+      db.questions.push({ id: `q_${quiz.id}`, quizId: quiz.id, question: "問", options: ["x", "y"], correctIndex: 0, order: 1 });
+      const list = (await (await LIST()).json()) as { courses: Array<{ id: string; locked: boolean; finalQuizzes: Array<{ id: string }>; miniQuizzes: Array<{ id: string }> }> };
+      const owner = list.courses.find((c) => [...c.finalQuizzes, ...c.miniQuizzes].some((q) => q.id === quiz.id));
+      assert.ok(owner, `${quiz.id} が一覧に出ない`);
+      assert.equal(owner.locked, locked, `一覧の locked が想定と違う（${owner.id}）`);
+      assert.equal((await getOne(quiz.id as string)).status, locked ? 403 : 200, "GET が一覧の locked と違う");
+      const before = creates().length;
+      assert.equal((await submit(quiz.id as string, { answers: [0] })).status, locked ? 403 : 200, "submit が一覧の locked と違う");
+      assert.equal(creates().length - before, locked ? 0 : 1, "受験記録の書き込みが一覧の locked と合わない");
+    });
+  }
+
+  it("courseId のない FINAL・レッスンのない MINI は一覧に出ず、受講生の GET・submit は 404", async () => {
+    db.quizzes.push(
+      { id: "f_nocourse", title: "F", type: "FINAL", courseId: null, lessonId: "l1a" },
+      { id: "m_nolesson", title: "M", type: "MINI", courseId: "c1", lessonId: null }
+    );
+    db.questions.push(
+      { id: "q_fn", quizId: "f_nocourse", question: "問", options: ["x", "y"], correctIndex: 0, order: 1 },
+      { id: "q_mn", quizId: "m_nolesson", question: "問", options: ["x", "y"], correctIndex: 0, order: 1 }
+    );
+    const text = await (await LIST()).text();
+    for (const id of ["f_nocourse", "m_nolesson"]) {
+      assert.ok(!text.includes(id), `${id} が一覧に出ている`);
+      assert.equal((await getOne(id)).status, 404, `${id} の GET が 404 でない`);
+      assert.equal((await submit(id, { answers: [0] })).status, 404, `${id} の submit が 404 でない`);
+    }
+    assert.equal(creates().length, 0, "受験記録を書いている");
+  });
+});
+
 describe("コースのロック：一覧の locked・GET・submit と isCourseLocked の照合（乱数。#47 P5）", () => {
   /** シード固定の乱数（mulberry32） */
   function rng(seed: number) {
@@ -954,6 +997,11 @@ describe("コースのロック：一覧の locked・GET・submit と isCourseLo
             quizzes.push({ id: `mini_${lid}`, title: `M${lid}`, type: "MINI", courseId: null, lessonId: lid });
           }
         }
+      }
+      // 種類と違う側の列にも、別のコース・レッスンをランダムに入れる（一覧と API が同じ側だけを見ることを確かめる）
+      for (const q of quizzes) {
+        if (q.type === "FINAL" && lessons.length > 0 && rand() < 0.5) q.lessonId = lessons[pick(lessons.length)].id;
+        if (q.type === "MINI" && rand() < 0.5) q.courseId = courses[pick(courses.length)].id;
       }
       for (const q of quizzes) questions.push({ id: `q_${q.id}`, quizId: q.id, question: "問", options: ["x", "y"], correctIndex: 0, order: 1 });
       const progress: Row[] = [];
@@ -1002,7 +1050,7 @@ describe("コースのロック：一覧の locked・GET・submit と isCourseLo
         db.attempts.every((a) => {
           const q = quizzes.find((x) => x.id === a.quizId);
           const lesson = q?.lessonId ? lessons.find((l) => l.id === q.lessonId) : undefined;
-          const cid = lesson ? (sections.find((s) => s.id === lesson.sectionId)?.courseId as string) : (q?.courseId as string);
+          const cid = q?.type === "MINI" && lesson ? (sections.find((s) => s.id === lesson.sectionId)?.courseId as string) : (q?.courseId as string);
           return lockedByCourse.get(cid) === false;
         }),
         `trial ${trial}: ロック中のクイズの受験記録が書かれた`
