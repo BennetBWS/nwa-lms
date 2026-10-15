@@ -8,6 +8,7 @@
  * - 一覧と受験を実装する。受験の開始ボタンは QUIZ_ATTEMPTS_ENABLED で隠し、#8（DB の分離）のあとに公開する
  * - 結果は点数・合否・正解数・問題ごとの正誤。正解そのものは見せない（API も返さない）
  * - 合格判定は四捨五入前の値で行う（正解率 70% 以上）
+ * - 点数は正解率の切り捨て（#51、Tec 決定 D。合否と点数が必ず一致する：70 点以上なら合格）
  * - レッスンの種類 QUIZ とはつながない（#50）
  */
 
@@ -17,7 +18,7 @@ import { isCourseLocked, type LessonCounts } from "./course-lock";
 /** 受験（問題の表示・送信）を画面で開けるか。#8 のあとに true にする */
 export const QUIZ_ATTEMPTS_ENABLED = false;
 
-/** 合格に必要な正解率（%）。四捨五入前の値で判定する */
+/** 合格に必要な正解率（%）。丸める前の値で判定する（点数は切り捨てなので、70 点以上と合格は一致する） */
 export const PASSING_PERCENT = 70;
 
 /** 1 問あたりの最小の選択肢数 */
@@ -130,9 +131,9 @@ export function parseSubmitAnswers(
 export type AttemptScore = {
   correct: number;
   total: number;
-  /** 正解率（%）を四捨五入した整数 */
+  /** 正解率（%）を切り捨てた整数（#51） */
   score: number;
-  /** 四捨五入前の正解率が PASSING_PERCENT 以上 */
+  /** 丸める前の正解率が PASSING_PERCENT 以上（score >= PASSING_PERCENT と同じ） */
   passed: boolean;
   /** 問題ごとの正誤（並びは問題の順） */
   results: boolean[];
@@ -150,8 +151,9 @@ export function scoreAttempt(answers: ReadonlyArray<number>, correctIndexes: Rea
   return {
     correct,
     total,
-    // 浮動小数の誤差を避けるため整数だけで四捨五入する（ちょうど .5 は切り上げ。23/40 = 57.5% → 58）
-    score: Math.floor((200 * correct + total) / (2 * total)),
+    // 整数だけで切り捨てる（浮動小数の誤差なし。#51 で四捨五入から変更。23/40 = 57.5% → 57、2/3 → 66）。
+    // PASSING_PERCENT は整数なので、floor(100c/t) >= 70 と 100c >= 70t は同じ条件になる
+    score: (100 * correct - ((100 * correct) % total)) / total,
     passed: correct * 100 >= PASSING_PERCENT * total,
     results,
   };
@@ -173,7 +175,7 @@ export type AttemptStats = {
 
 /**
  * 受験記録をまとめる。渡されたものをすべて数える（他人の記録を除くのは route の where userId の役目）。
- * 合否は記録の passed をそのまま使う（四捨五入後の点数からは判定しない）
+ * 合否は記録の passed をそのまま使う（点数からは判定しない。#51 より前の記録は四捨五入の点数のため）
  */
 export function summarizeAttempts(rows: ReadonlyArray<AttemptRow>): AttemptStats {
   if (rows.length === 0) return { attemptCount: 0, bestScore: null, passed: null, lastAttemptAt: null };

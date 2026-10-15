@@ -14,11 +14,11 @@ import {
 
 // #32 student-quizzes の補強（student-quizzes.test.ts の続き）。境界を総当たりで確かめる。データはすべてダミー。
 
-/** 正解率の四捨五入（0.5 は切り上げ）を整数だけで計算した値 */
-const exactRound = (correct: number, total: number) => Math.floor((200 * correct + total) / (2 * total));
+/** 正解率の切り捨て（#51）を、BigInt の整数の割り算で計算した値（実装と別の方法で求める） */
+const exactFloor = (correct: number, total: number) => Number((BigInt(100) * BigInt(correct)) / BigInt(total));
 
 describe("scoreAttempt：総当たり（1〜200 問、正解数 0〜全問）", () => {
-  it("合否は四捨五入前の正解率が 70% 以上かどうか（整数で比べた値と一致）", () => {
+  it("合否は丸める前の正解率が 70% 以上かどうかで、点数（切り捨て）が 70 以上かどうかと必ず一致する", () => {
     for (let total = 1; total <= 200; total++) {
       const key = Array.from({ length: total }, () => 0);
       for (let correct = 0; correct <= total; correct++) {
@@ -29,8 +29,8 @@ describe("scoreAttempt：総当たり（1〜200 問、正解数 0〜全問）", 
         assert.equal(r.passed, correct * 100 >= PASSING_PERCENT * total, `${correct}/${total}`);
         assert.equal(r.results.length, total);
         assert.ok(Number.isInteger(r.score) && r.score >= 0 && r.score <= 100);
-        // 合格なら点数は 70 以上（四捨五入で下がらない）
-        if (r.passed) assert.ok(r.score >= PASSING_PERCENT, `${correct}/${total}`);
+        // 点数と合否は必ず一致する（切り捨て。#51）：70 点以上なら合格、69 点以下なら不合格
+        assert.equal(r.score >= PASSING_PERCENT, r.passed, `${correct}/${total}: 点数 ${r.score} と合否 ${r.passed} が食い違う`);
       }
     }
   });
@@ -48,23 +48,26 @@ describe("scoreAttempt：総当たり（1〜200 問、正解数 0〜全問）", 
     assert.deepEqual([run(70, 100).score, run(70, 100).passed], [70, true]);
   });
 
-  it("点数は正解率の四捨五入（ちょうど .5 は切り上げ。例：23/40 = 57.5% は 58 点）", () => {
+  it("点数は正解率の切り捨て（例：23/40 = 57.5% は 57 点、2/3 は 66 点）", () => {
     for (let total = 1; total <= 200; total++) {
       const key = Array.from({ length: total }, () => 0);
       for (let correct = 0; correct <= total; correct++) {
         const r = scoreAttempt(key.map((_, i) => (i < correct ? 0 : 1)), key);
-        assert.equal(r.score, exactRound(correct, total), `${correct}/${total}`);
+        assert.equal(r.score, exactFloor(correct, total), `${correct}/${total}`);
       }
     }
   });
 
-  it("浮動小数で誤差が出ていた例（23/40 は 58 点、57/200 は 29 点）", () => {
+  it("浮動小数で誤差が出やすい例も切り捨て（23/40 は 57 点、57/200 は 28 点、29/100 は 29 点、7/10 は 70 点）", () => {
     const run = (correct: number, total: number) => {
       const key = Array.from({ length: total }, () => 0);
       return scoreAttempt(key.map((_, i) => (i < correct ? 0 : 1)), key);
     };
-    assert.equal(run(23, 40).score, 58);
-    assert.equal(run(57, 200).score, 29);
+    assert.equal(run(23, 40).score, 57);
+    assert.equal(run(57, 200).score, 28);
+    // 29 * 100 / 100 や 0.7 * 100 は浮動小数では 28.999… / 69.999… になりうる。整数で計算していれば正確
+    assert.equal(run(29, 100).score, 29);
+    assert.equal(run(7, 10).score, 70);
   });
 });
 

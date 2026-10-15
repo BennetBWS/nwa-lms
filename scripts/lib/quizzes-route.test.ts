@@ -654,7 +654,7 @@ describe("POST submit：採点と保存（attemptsEnabled: true）", () => {
     const res = await submit("fin1", { answers: [1, 0, 0] });
     assert.equal(res.status, 200);
     const text = await res.text();
-    assert.deepEqual(JSON.parse(text), { score: 67, passed: false, total: 3, correct: 2, results: [true, true, false] });
+    assert.deepEqual(JSON.parse(text), { score: 66, passed: false, total: 3, correct: 2, results: [true, true, false] });
     for (const k of ["correctIndex", "answers", "options", STUDENT]) assert.doesNotMatch(text, new RegExp(k), k);
     const quiz = questionReads()[0];
     const questions = (quiz?.args.select as Select).questions as { orderBy: unknown; select: Select };
@@ -684,7 +684,7 @@ describe("POST submit：採点と保存（attemptsEnabled: true）", () => {
     assert.equal(res.status, 200);
     assert.equal(creates().length, 1);
     const args = creates()[0].args;
-    assert.deepEqual(args.data, { userId: STUDENT, quizId: "fin1", score: 67, passed: false, answers: [1, 0, 0] });
+    assert.deepEqual(args.data, { userId: STUDENT, quizId: "fin1", score: 66, passed: false, answers: [1, 0, 0] });
     assert.deepEqual(args.select, { id: true });
     const saved = db.attempts[db.attempts.length - 1];
     assert.equal(saved.userId, STUDENT);

@@ -175,11 +175,11 @@ describe("hasAnswersArray", () => {
 // ───────────── scoreAttempt ─────────────
 
 describe("scoreAttempt", () => {
-  it("正解数・点数（四捨五入）・問題ごとの正誤", () => {
+  it("正解数・点数（切り捨て。2/3 は 66 点）・問題ごとの正誤", () => {
     assert.deepEqual(scoreAttempt([0, 1, 2], [0, 0, 2]), {
       correct: 2,
       total: 3,
-      score: 67,
+      score: 66,
       passed: false,
       results: [true, false, true],
     });
@@ -191,12 +191,15 @@ describe("scoreAttempt", () => {
     assert.equal(r.passed, true);
   });
 
-  it("四捨五入で 70 になっても、元の正解率が 70% 未満なら不合格（139/200 = 69.5%）", () => {
+  it("70% 未満は切り捨てで 69 点以下・不合格（139/200 = 69.5% は 69 点、16/23 は 69 点）", () => {
     const correctIndexes = new Array(200).fill(0);
     const answers = correctIndexes.map((_, i) => (i < 139 ? 0 : 1));
     const r = scoreAttempt(answers, correctIndexes);
-    assert.equal(r.score, 70);
+    assert.equal(r.score, 69);
     assert.equal(r.passed, false);
+    const k23 = new Array(23).fill(0);
+    const r23 = scoreAttempt(k23.map((_, i) => (i < 16 ? 0 : 1)), k23);
+    assert.deepEqual([r23.score, r23.passed], [69, false], "16/23 が 69 点・不合格でない");
   });
 
   it("2/3（66.7%）は不合格、3/4（75%）は合格", () => {
