@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { classifyAuthFailure } from "./client-session";
 
 // #32 レッスン画面：page.tsx（// @ts-nocheck）の LessonView を検査する。
-// 1) ソースの文字列検査：見本データ・投稿欄が残っていないこと、配線・文言
+// 1) ソースの文字列検査：見本データが残っていないこと、配線・文言（投稿欄は LessonQuestionForm に分けた。#46。
+//    投稿欄そのものは lesson-question-form.page.test.ts で確かめる）
 // 2) loadComments の本文をソースから取り出し、偽の useState / useRef / authFetch と
 //    本物の classifyAuthFailure で動かして状態遷移を確かめる（notifications.page.edge.test.ts と同じ方式）
 // レンダリング・DB・ネットワークなし。データはすべてダミー。
@@ -28,7 +29,7 @@ const contentTab = lessonView.slice(lessonView.indexOf('<TabsContent value="cont
 
 // ───────────── ソース検査 ─────────────
 
-describe("LessonView：見本データ・投稿欄を残さない", () => {
+describe("LessonView：見本データを残さない（投稿欄は LessonView に直接置かない）", () => {
   const banned: Array<[string, RegExp]> = [
     ["見本の投稿者（佐藤 太郎）", /佐藤 太郎/],
     ["見本の頭文字（佐）", />佐</],
@@ -53,9 +54,11 @@ describe("LessonView：見本データ・投稿欄を残さない", () => {
     });
   }
 
-  it("質問を投稿する API（POST /api/comments）を画面から呼ばない", () => {
+  it("LessonView 自身は質問を POST しない（投稿は LessonQuestionForm だけが QUESTION_POST_URL で送る。#46）", () => {
     assert.doesNotMatch(src, /authFetch\(\s*["'`]\/api\/comments["'`]/);
     assert.doesNotMatch(lessonView, /method: "POST"[^)]*comments/);
+    assert.doesNotMatch(lessonView, /QUESTION_POST_URL/);
+    assert.equal((src.match(/authFetch\(QUESTION_POST_URL,/g) ?? []).length, 1, "QUESTION_POST_URL への送信が 1 か所でない");
   });
 });
 
