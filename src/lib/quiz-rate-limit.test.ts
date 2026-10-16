@@ -244,3 +244,96 @@ describe("入力を書き換えない", () => {
     assert.deepEqual(answers, A, "answers が書き換えられた");
   });
 });
+
+// ───────────── テスト担当の追加（#51） ─────────────
+
+/** 再現できる疑似乱数（線形合同法） */
+function lcg(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+describe("retryAfterSeconds の待ち時間が正しい（乱数 2,000 通り。追加）", () => {
+  for (const type of ["MINI", "FINAL"] as QuizType[]) {
+    it(`${type}：retryAfterSeconds だけ待てば送れ、1 秒手前ではまだ 429（記録はすべて過去で、回答は違う）`, () => {
+      const { dailyLimit } = QUIZ_RATE_LIMITS[type];
+      const rnd = lcg(type === "MINI" ? 51 : 5151);
+      let limited = 0;
+      for (let i = 0; i < 1000; i++) {
+        const n = Math.floor(rnd() * (dailyLimit + 3));
+        const recent = Array.from({ length: n }, (_, k) => att([k + 10], Math.floor(rnd() * 25 * HOUR)));
+        const d = decideQuizAttempt(recent, A, type, NOW);
+        const g = quizRetryAfterSeconds(recent, type, NOW);
+        const label = `#${i} ${type} n=${n} ${JSON.stringify(recent.map((r) => NOW.getTime() - r.createdAt.getTime()))}`;
+        if (d.kind === "ok") {
+          assert.equal(g, null, `${label}: ok なのに GET の案内がある`);
+          continue;
+        }
+        assert.equal(d.kind, "rate_limited", `${label}: 回答が違うのに ${d.kind}`);
+        limited++;
+        const s = (d as { retryAfterSeconds: number }).retryAfterSeconds;
+        assert.equal(g, s, `${label}: GET（${g}）と submit（${s}）の秒数が違う`);
+        const later = new Date(NOW.getTime() + s * SEC);
+        assert.equal(decideQuizAttempt(recent, A, type, later).kind, "ok", `${label}: ${s} 秒待っても送れない`);
+        if (s > 1) {
+          const before = new Date(NOW.getTime() + (s - 1) * SEC);
+          assert.equal(decideQuizAttempt(recent, A, type, before).kind, "rate_limited", `${label}: ${s - 1} 秒で送れてしまう（待ち時間が長すぎる）`);
+        }
+      }
+      assert.ok(limited > 100, `429 の例が少なすぎる（${limited}）`);
+    });
+  }
+});
+
+describe("回数の境界（追加）", () => {
+  for (const type of ["MINI", "FINAL"] as QuizType[]) {
+    const { intervalMs, dailyLimit } = QUIZ_RATE_LIMITS[type];
+    it(`${type}：最も古い 1 件が 24 時間 - 1 ms 前なら数え（429・1 秒）、24 時間ちょうど前なら数えない（ok）`, () => {
+      const middle = Array.from({ length: dailyLimit - 1 }, (_, k) => att([k + 10], intervalMs + (k + 1) * MIN));
+      const d1 = decideQuizAttempt([...middle, att([99], 24 * HOUR - 1)], A, type, NOW);
+      assert.deepEqual(d1, { kind: "rate_limited", retryAfterSeconds: 1 });
+      assert.deepEqual(decideQuizAttempt([...middle, att([99], 24 * HOUR)], A, type, NOW), { kind: "ok" });
+      assert.equal(quizRetryAfterSeconds([...middle, att([99], 24 * HOUR)], type, NOW), null, "GET が 24 時間ちょうど前の記録を数えた");
+    });
+
+    it(`${type}：日時が不正な記録は回数にも数えない（不正 ${dailyLimit} 件 + 正しい ${dailyLimit - 1} 件で ok）`, () => {
+      const broken = Array.from({ length: dailyLimit }, (_, k) => ({ answers: [k], createdAt: new Date(Number.NaN) }));
+      const ok = Array.from({ length: dailyLimit - 1 }, (_, k) => att([k + 10], intervalMs + (k + 1) * MIN));
+      assert.deepEqual(decideQuizAttempt([...broken, ...ok], A, type, NOW), { kind: "ok" });
+    });
+  }
+});
+
+describe("重複の数値の表現と記録の壊れ方（追加）", () => {
+  it("-0 と 0、1.0 と 1 は同じ回答（JSON では区別できない）", () => {
+    assert.deepEqual(decideQuizAttempt([att([0, 1, 2], SEC)], [-0, 1.0, 2], "FINAL", NOW), { kind: "duplicate" });
+    assert.deepEqual(decideQuizAttempt([att([-0, 1, 2], SEC)], [0, 1, 2], "FINAL", NOW), { kind: "duplicate" });
+  });
+
+  it("保存された回答に NaN・文字列の数字・null が混ざっていれば重複にしない", () => {
+    for (const stored of [[0, 1, Number.NaN], [0, "1", 2], [0, 1, null], [0, 1, [2]]]) {
+      assert.equal(decideQuizAttempt([att(stored, SEC)], A, "FINAL", NOW).kind, "rate_limited", `${JSON.stringify(stored)} を重複にした`);
+    }
+  });
+
+  it("日時が不正な直近の記録は、同じ回答でも重複の比較に使わない（次に新しい正しい記録と比べる）", () => {
+    const recent = [{ answers: [...A], createdAt: new Date(Number.NaN) }, att(B, SEC)];
+    assert.equal(decideQuizAttempt(recent, A, "FINAL", NOW).kind, "rate_limited");
+  });
+
+  it("24 時間ちょうど前の同じ回答は重複にしない（期間の外）", () => {
+    assert.deepEqual(decideQuizAttempt([att([...A], 24 * HOUR)], A, "FINAL", NOW), { kind: "ok" });
+  });
+
+  it("同じ日時の 2 件で片方が同じ回答でも、並び順で結果が変わらないこと（現状の動きの記録）", () => {
+    const same = new Date(NOW.getTime() - SEC);
+    const r1 = decideQuizAttempt([{ answers: [...A], createdAt: same }, { answers: B, createdAt: same }], A, "FINAL", NOW);
+    const r2 = decideQuizAttempt([{ answers: B, createdAt: same }, { answers: [...A], createdAt: same }], A, "FINAL", NOW);
+    // Array.prototype.sort は安定ソートなので、同じ日時なら渡された順の先頭と比べる。route は orderBy [createdAt desc, id desc] で渡す
+    assert.equal(r1.kind, "duplicate");
+    assert.equal(r2.kind, "rate_limited");
+  });
+});

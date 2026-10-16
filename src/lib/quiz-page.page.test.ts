@@ -1051,3 +1051,160 @@ describe("受験：GET の retryAfterSeconds（事前の案内。#51）", () => 
     assert.equal(h.st.takeChanged, false);
   });
 });
+
+// ───────────── テスト担当の追加（#51） ─────────────
+
+describe("受験：古い送信の応答（#51 追加）", () => {
+  /** 送信中に別のクイズを開いた（takeSeq が進んだ）状態を作る。画面では送信中は戻れないが、関数の守りを確かめる */
+  async function submitThenReopen() {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz(); // reqs[1]
+    h.render().openQuiz("other"); // reqs[2]
+    return h;
+  }
+
+  it("古い 409 quiz_changed では読み直さず、takeChanged も出さない", async () => {
+    const h = await submitThenReopen();
+    h.reqs[1].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.reqs.length, 3, "古い応答で読み直した");
+    assert.equal(h.st.activeQuizId, "other", "開いているクイズが変わった");
+    assert.equal(h.st.takeChanged, false, "古い応答で更新を知らせた");
+    assert.equal(h.st.submitInFlight, false, "送信中の印が残った");
+  });
+
+  it("古い 429 では submitRateLimited・submitFailed を付けない", async () => {
+    const h = await submitThenReopen();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.submitRateLimited, null, "古い 429 を表示に使った");
+    assert.equal(h.st.submitFailed, false, "古い 429 で送信失敗にした");
+  });
+
+  it("古い duplicate の結果は表示しないが、一覧は読み直す", async () => {
+    const h = await submitThenReopen();
+    h.reqs[1].release(res({ body: { ...RESULT, duplicate: true } }, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.result, null, "古い結果を表示した");
+    assert.equal(h.st.reloads, 1, "一覧を読み直していない");
+  });
+});
+
+describe("受験：409 quiz_changed の読み直しの結果（#51 追加）", () => {
+  async function changed() {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(CHANGED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.reqs.length, 3, "読み直していない");
+    return h;
+  }
+
+  it("読み直しが 403 course_locked なら takeLocked で、更新の知らせは出さない", async () => {
+    const h = await changed();
+    h.reqs[2].release(res({ status: 403, ok: false, body: { error: "Forbidden", reason: "course_locked" } }));
+    await settle();
+    assert.equal(h.st.takeLocked, true, "takeLocked にならない");
+    assert.equal(h.st.takeChanged, false, "ロックなのに更新を知らせた");
+    assert.equal(h.st.reloads, 1, "一覧を読み直していない");
+  });
+
+  it("読み直しが 401（失効）なら読み込み中のままで、更新の知らせは出さない", async () => {
+    const h = await changed();
+    h.reqs[2].release(res({ status: 401, ok: false, body: { error: "Unauthorized" } }));
+    await settle();
+    assert.equal(h.st.takeLoading, true, "読み込み中でなくなった");
+    assert.equal(h.st.takeChanged, false, "失効なのに更新を知らせた");
+    assert.equal(h.st.takeFailed, false, "失効を読み込み失敗にした");
+  });
+
+  it("読み直しの応答に retryAfterSeconds があれば、更新の知らせと事前の案内の両方を持つ", async () => {
+    const h = await changed();
+    h.reqs[2].release(res({ body: { ...QUIZ_V2, retryAfterSeconds: 600 } }));
+    await settle();
+    assert.equal(h.st.takeChanged, true, "更新を知らせていない");
+    assert.equal(h.st.takeRetryAfter, 600, "事前の案内がない");
+  });
+
+  it("読み直しの最中に送信を押しても送らない（問題がまだない）", async () => {
+    const h = await changed();
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 3, "読み直しの最中に送信した");
+  });
+});
+
+describe("受験：429 の追加の観点（#51 追加）", () => {
+  it("429 の本文が読めなくても上限として扱う（目安は null）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release({ status: 429, ok: false, redirected: false, url: SUBMIT_URL, json: () => Promise.reject(new SyntaxError("bad json")) });
+    await settle();
+    assert.deepEqual(h.st.submitRateLimited, { retryAfterSeconds: null });
+    assert.equal(h.st.submitFailed, true, "submitFailed にならない");
+    assert.deepEqual(h.st.answers, [1, 2], "回答が消えた");
+  });
+
+  it("/login へのリダイレクトは失効として扱い、429 の印を付けない（送信中のまま）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ status: 200, redirected: true, body: null }, `${ORIGIN}/login?callbackUrl=%2F`));
+    await settle();
+    assert.equal(h.st.submitRateLimited, null, "失効に 429 の印を付けた");
+    assert.equal(h.st.submitting, true, "送信中でなくなった");
+  });
+
+  it("送信中にもう一度押しても 1 回しか送らない（429 の応答待ち）", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 2, "二重に送信した");
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    assert.equal(h.reqs.length, 2, "自動で再送した");
+  });
+
+  it("429 のあとに送り直して 403 course_locked なら、submitLocked で 429 の印は消える", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    h.render().submitQuiz();
+    h.reqs[2].release(res({ status: 403, ok: false, body: { error: "Forbidden", reason: "course_locked" } }, SUBMIT_URL));
+    await settle();
+    assert.equal(h.st.submitLocked, true, "submitLocked にならない");
+    assert.equal(h.st.submitRateLimited, null, "429 の印が残った");
+  });
+
+  it("429 のあとに送り直して 200 なら結果を出し、429 の印は消える", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res(RATE_LIMITED, SUBMIT_URL));
+    await settle();
+    h.render().submitQuiz();
+    h.reqs[2].release(res({ body: { ...RESULT, duplicate: false } }, SUBMIT_URL));
+    await settle();
+    assert.deepEqual(h.st.result, { ...RESULT, duplicate: false });
+    assert.equal(h.st.submitRateLimited, null, "429 の印が残った");
+  });
+});
+
+describe("QUIZ_ATTEMPTS_ENABLED が false（#51 追加）", () => {
+  it("事前の案内・更新の知らせ・429 の印はどれも付かない（取得・送信しない）", () => {
+    const h = takeHarness(false);
+    h.render().openQuiz("quiz1");
+    h.st.takeQuiz = toQuizTakeView({ ...QUIZ, retryAfterSeconds: 600 });
+    h.st.answers = [0, 0];
+    h.render().submitQuiz();
+    assert.equal(h.reqs.length, 0, "取得・送信した");
+    assert.equal(h.st.takeRetryAfter, null);
+    assert.equal(h.st.takeChanged, false);
+    assert.equal(h.st.submitRateLimited, null);
+  });
+});

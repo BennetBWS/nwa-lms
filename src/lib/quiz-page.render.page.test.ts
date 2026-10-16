@@ -773,3 +773,117 @@ describe("QuizPage 描画：受験の制限と問題の入れ替え（#51、true
     assert.ok(!text(m.render()).includes(QUIZ_DUPLICATE_MESSAGE));
   });
 });
+
+// ───────────── テスト担当の追加（#51） ─────────────
+
+// ロックとの関係（403 course_locked）は、この器がロック用の部品を持たないため quiz-page.page.test.ts で確かめる
+describe("QuizPage 描画：#51 の追加の観点", () => {
+  const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
+  const RATE = res({ error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 600 }, { status: 429, ok: false, url: SUBMIT });
+
+  async function openWithWait(seconds: number) {
+    const m = await loadedList(true);
+    click(buttons(m.render())[2]);
+    m.reqs[1].release(res({ ...TAKE, retryAfterSeconds: seconds }));
+    await settle();
+    return m;
+  }
+
+  it("事前の案内は送信を始めると消え、429 のあとは role=alert だけで案内は出し直さない", async () => {
+    const m = await openWithWait(600);
+    assert.ok(byRole(m.render(), "status").map(text).includes(quizWaitMessage(600)), "案内がない");
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    let tree = m.render();
+    assert.ok(!text(tree).includes(quizWaitMessage(600)), "送信中も案内が残る");
+    m.reqs[2].release(RATE);
+    await settle();
+    tree = m.render();
+    assert.equal(byRole(tree, "status").length, 0, "429 のあとに案内を出し直した");
+    const alerts = byRole(tree, "alert");
+    assert.equal(alerts.length, 1, "alert が 1 つでない");
+    assert.ok(text(alerts[0]).includes(QUIZ_RATE_LIMITED_LEAVE_NOTE), "一覧に戻ると消える旨がない");
+  });
+
+  it("429 のあとに送り直すと alert が消え、200 で結果を出す（規則の文言は結果の画面に出さない）", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(RATE);
+    await settle();
+    click(button(m.render(), "もう一度送信する"));
+    assert.equal(byRole(m.render(), "alert").length, 0, "送信中に 429 の alert が残る");
+    m.reqs[3].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("50点（2問中 1問正解）"), "結果がない");
+    assert.ok(!t.includes(quizAttemptRuleText("MINI")), "結果の画面に規則を出した");
+  });
+
+  it("読み込み中・読み込み失敗の画面には規則・案内を出さない", async () => {
+    const m = await loadedList(true);
+    click(buttons(m.render())[2]);
+    let t = text(m.render());
+    assert.ok(t.includes("Loading..."), "読み込み中でない");
+    assert.ok(!t.includes(quizAttemptRuleText("MINI")), "読み込み中に規則を出した");
+    m.reqs[1].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+    await settle();
+    t = text(m.render());
+    assert.ok(t.includes("テストを読み込めませんでした"), "失敗の画面でない");
+    assert.ok(!t.includes(quizAttemptRuleText("MINI")), "失敗の画面に規則を出した");
+  });
+
+  it("種類が不明なクイズは規則の文言を出さない（受験はできる）", async () => {
+    const m = await loadedList(true);
+    click(buttons(m.render())[2]);
+    m.reqs[1].release(res({ ...TAKE, type: "OTHER" }));
+    await settle();
+    const t = text(m.render());
+    assert.ok(!t.includes("前回の受験から"), "不明な種類で規則を出した");
+    assert.equal(byRole(m.render(), "radio").length, 2, "受験できない");
+  });
+
+  it("読み直しに retryAfterSeconds があれば、更新の知らせと事前の案内を両方 role=status で出す", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ error: "Conflict", reason: "quiz_changed" }, { status: 409, ok: false, url: SUBMIT }));
+    await settle();
+    m.reqs[3].release(res({ ...TAKE, retryAfterSeconds: 30 }));
+    await settle();
+    const status = byRole(m.render(), "status").map(text);
+    assert.deepEqual(status, [QUIZ_CHANGED_MESSAGE, quizWaitMessage(30)]);
+  });
+
+});
+
+describe("QuizPage 描画：QUIZ_ATTEMPTS_ENABLED が false の間は #51 の表示が出ない", () => {
+  it("一覧に規則・事前の案内・429・更新・重複の文言を出さず、受験画面の状態が残っていても出さない", async () => {
+    const m = mount(false, {
+      activeQuizId: "mini2",
+      takeQuiz: toQuizTakeView({ ...TAKE, retryAfterSeconds: 600 }),
+      answers: [1, 2],
+      takeChanged: true,
+      takeRetryAfter: 600,
+      submitFailed: true,
+      submitRateLimited: { retryAfterSeconds: 600 },
+    });
+    m.render();
+    m.reqs[0].release(res(LIST));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("受験は準備中です"), "準備中の案内がない");
+    for (const s of [
+      quizAttemptRuleText("MINI"),
+      quizAttemptRuleText("FINAL"),
+      quizWaitMessage(600),
+      quizRateLimitedMessage(600),
+      QUIZ_RATE_LIMITED_LEAVE_NOTE,
+      QUIZ_CHANGED_MESSAGE,
+      QUIZ_DUPLICATE_MESSAGE,
+    ]) {
+      assert.ok(!t.includes(s), `false の間に表示した: ${s}`);
+    }
+    assert.equal(m.reqs.length, 1, "一覧以外を読んだ");
+  });
+});

@@ -1546,3 +1546,182 @@ describe("GET /api/quizzes/[quizId]：retryAfterSeconds（#51、Tec 決定 Q3 b�
     assert.ok(Math.abs(fromGet - fromSubmit) <= 2, `GET ${fromGet} と submit ${fromSubmit} が離れている`);
   });
 });
+
+// ───────────── テスト担当の追加（#51） ─────────────
+
+/** 応答のヘッダーを「名前: 値」の行にする（target が古く Headers をスプレッドできないため forEach を使う） */
+function headersText(res: Response): string {
+  const lines: string[] = [];
+  res.headers.forEach((value, name) => lines.push(`${name}: ${value}`));
+  return lines.join("\n");
+}
+
+describe("POST submit：ロールの扱い（#51 追加）", () => {
+  for (const [label, role] of [
+    ["小文字の instructor", "instructor"],
+    ["前後に空白のある INSTRUCTOR", " INSTRUCTOR "],
+    ["ADMIN", "ADMIN"],
+    ["空文字", ""],
+    ["null", null],
+    ["undefined", undefined],
+  ] as Array<[string, string | null | undefined]>) {
+    it(`role が${label}なら受講生として上限を受ける（429）`, async () => {
+      const send = (answers: number[]) =>
+        HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers, questionIds: serverQuestionIds("fin1") }), ctx("fin1"), {
+          attemptsEnabled: true,
+          role,
+          now: submitNow,
+        });
+      clearMyFin1();
+      assert.equal((await send([1, 0, 2])).status, 200, "1 回目が 200 でない");
+      const res = await send([0, 0, 0]);
+      assert.equal(res.status, 429, `${label} が上限を受けていない`);
+      assert.equal(creates().length, 1, "429 で記録した");
+    });
+  }
+});
+
+describe("GET /api/quizzes/[quizId]：retryAfterSeconds のロール（#51 追加）", () => {
+  const realAgo = (ms: number) => new Date(Date.now() - ms);
+  for (const role of ["instructor", "ADMIN", undefined]) {
+    it(`role が ${String(role)} のセッションは受講生として retryAfterSeconds を返す`, async () => {
+      session = { user: { id: STUDENT, ...(role === undefined ? {} : { role }) } };
+      db.attempts.push({ id: "att_role", userId: STUDENT, quizId: "fin1", score: 0, passed: false, answers: [0, 0, 0], createdAt: realAgo(60_000) });
+      const s = (await (await getOne("fin1")).json()).retryAfterSeconds;
+      assert.ok(typeof s === "number" && s > 0 && s <= 1800, `retryAfterSeconds が数値でない: ${s}`);
+    });
+  }
+
+  it("ロック中のコースの 403 の本文に retryAfterSeconds を含めず、受験記録を読まない", async () => {
+    db.attempts.push({ id: "att_l", userId: STUDENT, quizId: "fin3", score: 0, passed: false, answers: [0], createdAt: realAgo(60_000) });
+    const res = await getOne("fin3");
+    assert.equal(res.status, 403);
+    const text = await res.text();
+    assert.ok(!text.includes("retryAfterSeconds"), `403 に retryAfterSeconds がある: ${text}`);
+    assert.equal(attemptReads().length, 0, "受験記録を読んでいる");
+  });
+
+  it("24 時間に 3 回受けた修了テストは、間隔の外でも上限の待ち時間を返す（GET は記録を全件読む）", async () => {
+    clearMyFin1();
+    for (const h of [3, 5, 7]) {
+      db.attempts.push({ id: `att_g${h}`, userId: STUDENT, quizId: "fin1", score: 0, passed: false, answers: [0, 0, 0], createdAt: realAgo(h * HOUR_MS) });
+    }
+    const s = (await (await getOne("fin1")).json()).retryAfterSeconds;
+    // 7 時間前の記録が期間から出るまで約 17 時間
+    assert.ok(typeof s === "number" && Math.abs(s - 17 * 3600) <= 2, `retryAfterSeconds が約 17 時間でない: ${s}`);
+  });
+
+  it("#51 より前の受験記録（四捨五入の 67 点・不合格）は、点数・合否をそのまま表示する", async () => {
+    const body = await (await getOne("fin1")).json();
+    assert.equal(body.bestScore, 67);
+    assert.equal(body.passed, false);
+    assert.equal(body.attemptCount, 2);
+  });
+});
+
+describe("POST submit：判定の順番・本文とヘッダー（#51 追加）", () => {
+  it("上限にかかっていても、範囲外の回答は 400 で、受験記録を読まない", async () => {
+    await submit("fin1", { answers: [1, 0, 2] });
+    calls = [];
+    const res = await submit("fin1", { answers: [9, 9, 9] });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).reason, "invalid_answers");
+    assert.equal(attemptReads().length, 0, "受験記録を読んでいる");
+  });
+
+  it("409 quiz_unavailable では受験記録を読まない", async () => {
+    await submitExact("badkey", { answers: [0], questionIds: ["bk1"] });
+    assert.equal(attemptReads().length, 0, "受験記録を読んでいる");
+  });
+
+  it("429 のヘッダーは Retry-After が本文の retryAfterSeconds と一致し、ヘッダーにも点数・問題の id を含まない", async () => {
+    clearMyFin1();
+    await submit("fin1", { answers: [1, 0, 2] });
+    submitNow = new Date(BASE + 123_456);
+    const res = await submit("fin1", { answers: [0, 0, 0] });
+    assert.equal(res.status, 429);
+    const body = await res.json();
+    assert.equal(body.retryAfterSeconds, Math.ceil((30 * 60_000 - 123_456) / 1000));
+    assert.equal(res.headers.get("Retry-After"), String(body.retryAfterSeconds));
+    const headers = headersText(res);
+    assertNoQuizContent(headers);
+  });
+
+  it("409 quiz_changed のヘッダーに Retry-After・問題の id を含まない", async () => {
+    const res = await submitExact("fin1", { answers: [1, 0, 2], questionIds: ["qa", "qz", "qb"] });
+    assert.equal(res.status, 409);
+    assert.equal(res.headers.get("Retry-After"), null);
+    assertNoQuizContent(headersText(res));
+  });
+
+  it("ミニテストは 24 時間に 10 回まで（11 回目は 429、Retry-After と本文が一致）", async () => {
+    for (let i = 0; i < 10; i++) {
+      db.attempts.push({ id: `att_m${i}`, userId: STUDENT, quizId: "mini1b", score: 0, passed: false, answers: [0], createdAt: at(10 + i * 60) });
+    }
+    const res = await submit("mini1b", { answers: [1] });
+    assert.equal(res.status, 429);
+    const body = await res.json();
+    // 最も古い 550 分前の記録が期間から出るまで：24 時間 - 550 分 = 890 分
+    assert.equal(body.retryAfterSeconds, 890 * 60);
+    assert.equal(res.headers.get("Retry-After"), String(890 * 60));
+    assert.equal(creates().length, 0);
+  });
+
+  it("未来の日時の記録（時計のずれ）があれば 429 で、待ち時間は間隔（30 分）を超えない", async () => {
+    clearMyFin1();
+    db.attempts.push({ id: "att_future", userId: STUDENT, quizId: "fin1", score: 0, passed: false, answers: [0, 0, 0], createdAt: new Date(BASE + HOUR_MS) });
+    const res = await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal(res.status, 429);
+    assert.equal((await res.json()).retryAfterSeconds, 1800);
+  });
+
+  it("講師は記録が上限を超えていても 200 で、Retry-After を付けない", async () => {
+    session = INSTRUCTOR_SESSION;
+    const ins = INSTRUCTOR_SESSION!.user.id!;
+    for (let i = 0; i < 5; i++) {
+      db.attempts.push({ id: `att_i${i}`, userId: ins, quizId: "fin1", score: 0, passed: false, answers: [0, 0, 0], createdAt: at(i + 1) });
+    }
+    const res = await submit("fin1", { answers: [1, 0, 2] });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Retry-After"), null);
+    assert.equal((await res.json()).duplicate, false);
+  });
+});
+
+describe("POST submit：重複の追加の観点（#51 追加）", () => {
+  it("JSON の 1.0 と -0 で送り直しても、同じ回答として重複になり記録しない", async () => {
+    clearMyFin1();
+    await submit("fin1", { answers: [1, 0, 2] });
+    const raw = `{"answers":[1.0,-0,2.0],"questionIds":${JSON.stringify(serverQuestionIds("fin1"))}}`;
+    const res = await submitExact("fin1", undefined, raw);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.duplicate, true);
+    assert.equal(body.score, 100);
+    assert.equal(creates().length, 1, "重複を記録した");
+  });
+
+  it("body の userId に他人を書いても、他人の同じ回答では重複にならない（findMany の where はセッションの userId）", async () => {
+    clearMyFin1();
+    db.attempts.push({ id: "att_o_dup", userId: OTHER, quizId: "fin1", score: 100, passed: true, answers: [1, 0, 2], createdAt: at(0.1) });
+    const res = await submit("fin1", { answers: [1, 0, 2], userId: OTHER });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).duplicate, false);
+    assert.equal((attemptReads()[0].args.where as Row).userId, STUDENT);
+    assert.equal((creates()[0].args.data as Row).userId, STUDENT);
+  });
+
+  it("重複では quizAttempt.create を呼ばない（呼び出しの記録で確認）", async () => {
+    clearMyFin1();
+    await submit("fin1", { answers: [0, 0, 0] });
+    calls = [];
+    await submit("fin1", { answers: [0, 0, 0] });
+    assert.deepEqual(calls.map((c) => c.method).filter((m) => m.startsWith("quizAttempt")), ["quizAttempt.findMany"]);
+  });
+
+  it("前回と長さが違う回答（問題が足されたあとの送信）は重複にしない", async () => {
+    clearMyFin1();
+    db.attempts.push({ id: "att_short", userId: STUDENT, quizId: "fin1", score: 0, passed: false, answers: [1, 0], createdAt: at(1) });
+    assert.equal((await submit("fin1", { answers: [1, 0, 2] })).status, 429);
+  });
+});
