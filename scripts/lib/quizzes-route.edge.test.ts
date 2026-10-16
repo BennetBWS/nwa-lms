@@ -30,10 +30,10 @@ let HANDLE_SUBMIT: (
   userId: string,
   req: Request,
   ctx: { params: Promise<{ quizId: string }> },
-  opts: { attemptsEnabled: boolean; role: string | null | undefined }
+  opts: { attemptsEnabled: boolean; role: string | null | undefined; now?: Date }
 ) => Promise<Response>;
 
-// ───────────── 偽 prisma（where は値の一致だけ、select は入れ子のリレーションまで） ─────────────
+// ───────────── 偽 prisma（where は値の一致と createdAt の gt だけ、select は入れ子のリレーションまで） ─────────────
 
 type Relation = { model: string; many: boolean; rows: (parent: Row) => Row[] };
 const RELATIONS: Record<string, Record<string, Relation>> = {
@@ -49,7 +49,12 @@ const RELATIONS: Record<string, Record<string, Relation>> = {
 function matchWhere(row: Row, where: unknown): boolean {
   if (!where) return true;
   return Object.entries(where as Row).every(([k, v]) => {
-    if (typeof v === "object" && v !== null) throw new Error(`fake prisma: unsupported where ${k}`);
+    if (typeof v === "object" && v !== null) {
+      // 受験記録の期間（createdAt: { gt: Date }。#51）だけを再現する
+      const gt = (v as { gt?: unknown }).gt;
+      if (Object.keys(v).length !== 1 || !(gt instanceof Date) || !(row[k] instanceof Date)) throw new Error(`fake prisma: unsupported where ${k}`);
+      return (row[k] as Date).getTime() > gt.getTime();
+    }
     return row[k] === v;
   });
 }
@@ -59,8 +64,10 @@ function sortRows(rows: Row[], orderBy: unknown): Row[] {
   return [...rows].sort((a, b) => {
     for (const o of keys) {
       const [k, dir] = Object.entries(o)[0];
-      if (a[k] === b[k]) continue;
-      const cmp = (a[k] as string | number) < (b[k] as string | number) ? -1 : 1;
+      const av = a[k] instanceof Date ? (a[k] as Date).getTime() : (a[k] as string | number);
+      const bv = b[k] instanceof Date ? (b[k] as Date).getTime() : (b[k] as string | number);
+      if (av === bv) continue;
+      const cmp = av < bv ? -1 : 1;
       return dir === "desc" ? -cmp : cmp;
     }
     return 0;
@@ -88,7 +95,8 @@ function project(model: string, row: Row, select: Select | undefined): Row {
 function findMany(model: string, method: string, rows: () => Row[]) {
   return async (args: Row = {}) => {
     calls.push({ method, args });
-    return sortRows(rows().filter((r) => matchWhere(r, args.where)), args.orderBy).map((r) => project(model, r, args.select as Select));
+    const hit = sortRows(rows().filter((r) => matchWhere(r, args.where)), args.orderBy);
+    return (typeof args.take === "number" ? hit.slice(0, args.take) : hit).map((r) => project(model, r, args.select as Select));
   };
 }
 
@@ -125,6 +133,7 @@ before(async () => {
 
 beforeEach(() => {
   session = STUDENT_SESSION;
+  submitNow = new Date(BASE);
   calls = [];
   db = {
     courses: [
@@ -169,9 +178,20 @@ const submitRequest = (quizId: string, raw: string) =>
     headers: { "Content-Type": "application/json" },
     body: raw,
   });
-/** 受験を公開したあとの動き（attemptsEnabled: true）。userId は route と同じくセッションの値 */
-const submit = (quizId: string, raw: string) =>
-  HANDLE_SUBMIT(session!.user!.id as string, submitRequest(quizId, raw), ctx(quizId), { attemptsEnabled: true, role: session!.user!.role });
+/** 送信の時刻（#51 の間隔・回数の判定に使う）。既定はダミーの日時 BASE */
+let submitNow: Date;
+/** いまのダミーのデータで、そのクイズの問題の id を GET と同じ並び（[order, id]）で返す */
+const serverQuestionIds = (quizId: string) =>
+  sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => q.id as string);
+/**
+ * 受験を公開したあとの動き（attemptsEnabled: true）。userId は route と同じくセッションの値。
+ * raw が {"answers": で始まるときは、画面と同じく、いまの問題の id を questionIds として先頭に足す（#51）。
+ * 文字列のまま足すので、answers の書き方（-0・1.0・1e400 など）はそのまま届く
+ */
+const submit = (quizId: string, raw: string) => {
+  const body = raw.startsWith('{"answers":') ? `{"questionIds":${JSON.stringify(serverQuestionIds(quizId))},${raw.slice(1)}` : raw;
+  return HANDLE_SUBMIT(session!.user!.id as string, submitRequest(quizId, body), ctx(quizId), { attemptsEnabled: true, role: session!.user!.role, now: submitNow });
+};
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
 
 function captureLogs() {
@@ -199,8 +219,8 @@ const LIST_KEYS = [
   "courses", "id", "name", "order", "icon", "color", "locked", "finalQuizzes", "miniQuizzes",
   "title", "type", "lessonId", "lessonTitle", "questionCount", "attemptCount", "bestScore", "passed", "lastAttemptAt",
 ];
-const ONE_KEYS = ["id", "title", "type", "questionCount", "questions", "question", "options", "attemptCount", "bestScore", "passed"];
-const SUBMIT_KEYS = ["score", "passed", "total", "correct", "results"];
+const ONE_KEYS = ["id", "title", "type", "questionCount", "questions", "question", "options", "attemptCount", "bestScore", "passed", "retryAfterSeconds"];
+const SUBMIT_KEYS = ["score", "passed", "total", "correct", "results", "duplicate"];
 const LEAK_MARKERS = ["correctIndex", "answers", "userId", OTHER, "att_other_secret", "example.com"];
 
 // ───────────── 応答に出る項目（許可リスト） ─────────────
@@ -237,7 +257,7 @@ describe("応答の項目は許可リストの中だけ（正解・回答・他�
     const text = await res.text();
     const body = JSON.parse(text);
     assert.deepEqual(Object.keys(body).sort(), [...SUBMIT_KEYS].sort());
-    assert.deepEqual(body, { score: 33, passed: false, total: 3, correct: 1, results: [false, true, false] });
+    assert.deepEqual(body, { score: 33, passed: false, total: 3, correct: 1, results: [false, true, false], duplicate: false });
     for (const s of [...LEAK_MARKERS, "SECRET_OPT", "options"]) assert.ok(!text.includes(s), s);
   });
 
@@ -260,6 +280,8 @@ describe("受験記録は本人の分だけ（自分の受験が他人の集計�
   it("STUDENT が受験・保存しても、OTHER の一覧・1 件の集計は OTHER 自身の記録だけ", async () => {
     // STUDENT が mini1 を 2 回（不合格・合格）
     assert.equal((await submit("mini1", '{"answers":[1]}')).status, 200);
+    // ミニテストの間隔（60 秒。#51）をあけてから 2 回目
+    submitNow = new Date(BASE + 10 * 60_000);
     assert.equal((await submit("mini1", '{"answers":[0]}')).status, 200);
     assert.deepEqual(creates().map((c) => (c.args.data as Row).userId), [STUDENT, STUDENT]);
 
@@ -340,7 +362,7 @@ describe("POST submit（公開後）：回答の境界", () => {
   it("-0 と 1.0 は JSON では 0 と 1 なので受け付け、採点も 0・1 として扱う", async () => {
     const res = await submit("fin1", '{"answers":[1.0,-0,2]}');
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { score: 100, passed: true, total: 3, correct: 3, results: [true, true, true] });
+    assert.deepEqual(await res.json(), { score: 100, passed: true, total: 3, correct: 3, results: [true, true, true], duplicate: false });
     const saved = (creates()[0].args.data as Row).answers as number[];
     assert.equal(JSON.stringify(saved), "[1,0,2]");
   });
@@ -363,6 +385,8 @@ describe("POST submit（公開後）：回答の境界", () => {
       [[0, 1, 0], [false, false, false]],
     ];
     for (const [answers, results] of cases) {
+      // 毎回、初めての受験として送る（修了テストの間隔・回数の制限〔#51〕にかからないように）
+      db.attempts = [];
       const body = await (await submit("fin1", JSON.stringify({ answers }))).json();
       assert.deepEqual(body.results, results, JSON.stringify(answers));
       assert.equal(body.correct, results.filter(Boolean).length);

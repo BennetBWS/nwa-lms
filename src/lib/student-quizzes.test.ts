@@ -4,8 +4,18 @@ import {
   PASSING_PERCENT,
   QUIZ_ATTEMPTS_ENABLED,
   buildQuizCourses,
+  QUIZ_CHANGED_MESSAGE,
+  QUIZ_DUPLICATE_MESSAGE,
+  QUIZ_RATE_LIMITED_LEAVE_NOTE,
+  QUIZ_RATE_LIMITED_MESSAGE,
+  QUIZ_WAIT_MESSAGE,
   buildSubmitBody,
-  hasAnswersArray,
+  checkQuestionIds,
+  classifyQuizSubmitResponse,
+  quizAttemptRuleText,
+  quizRateLimitedMessage,
+  quizWaitMessage,
+  hasSubmitShape,
   normalizeOptions,
   parseSubmitAnswers,
   quizResultTitle,
@@ -163,23 +173,83 @@ describe("parseSubmitAnswers", () => {
   });
 });
 
-describe("hasAnswersArray", () => {
-  it("{ answers: 配列 } だけ true", () => {
-    assert.equal(hasAnswersArray({ answers: [] }), true);
-    assert.equal(hasAnswersArray({ answers: "x" }), false);
-    assert.equal(hasAnswersArray([]), false);
-    assert.equal(hasAnswersArray(null), false);
+describe("hasSubmitShape（#51）", () => {
+  it("{ answers: 配列, questionIds: id の配列 } なら ok で、questionIds は新しい配列", () => {
+    const ids = ["q1", "q2"];
+    const r = hasSubmitShape({ answers: [], questionIds: ids });
+    assert.deepEqual(r, { ok: true, value: { questionIds: ["q1", "q2"] } });
+    assert.ok("value" in r && r.value.questionIds !== ids, "受け取った配列をそのまま返している");
+    assert.deepEqual(hasSubmitShape({ answers: [0], questionIds: [] }), { ok: true, value: { questionIds: [] } });
+  });
+
+  for (const [label, body] of [
+    ["null", null],
+    ["配列", []],
+    ["文字列", "x"],
+    ["answers なし", { questionIds: ["q1"] }],
+    ["answers が文字列", { answers: "x", questionIds: ["q1"] }],
+    ["answers が null", { answers: null, questionIds: ["q1"] }],
+    ["answers も questionIds もない", {}],
+  ] as Array<[string, unknown]>) {
+    it(`${label} は invalid_answers（answers を questionIds より先に見る）`, () => {
+      assert.deepEqual(hasSubmitShape(body), { ok: false, reason: "invalid_answers" });
+    });
+  }
+
+  for (const [label, questionIds] of [
+    ["questionIds なし", undefined],
+    ["null", null],
+    ["文字列", "q1,q2"],
+    ["オブジェクト", { 0: "q1" }],
+    ["空文字の id", ["q1", ""]],
+    ["65 文字の id", ["q".repeat(65)]],
+    ["数値の id", ["q1", 2]],
+    ["null の id", [null]],
+    ["入れ子の配列", [["q1"]]],
+  ] as Array<[string, unknown]>) {
+    it(`questionIds が${label}なら invalid_question_ids`, () => {
+      const body: Record<string, unknown> = { answers: [0] };
+      if (questionIds !== undefined) body.questionIds = questionIds;
+      assert.deepEqual(hasSubmitShape(body), { ok: false, reason: "invalid_question_ids" });
+    });
+  }
+
+  it("64 文字の id は受け付ける", () => {
+    assert.equal(hasSubmitShape({ answers: [0], questionIds: ["q".repeat(64)] }).ok, true);
+  });
+});
+
+describe("checkQuestionIds（#51）", () => {
+  const server = ["qz", "qa", "qb"];
+  it("件数・順・中身がすべて同じなら true", () => {
+    assert.equal(checkQuestionIds(["qz", "qa", "qb"], server), true);
+  });
+  for (const [label, sent] of [
+    ["件数が少ない（問題が追加された）", ["qz", "qa"]],
+    ["件数が多い（問題が削除された）", ["qz", "qa", "qb", "qc"]],
+    ["順番が違う", ["qa", "qz", "qb"]],
+    ["中身が違う（入れ替え）", ["qz", "qa", "qx"]],
+    ["同じ id の重複", ["qz", "qz", "qb"]],
+    ["空", []],
+  ] as Array<[string, string[]]>) {
+    it(`${label}なら false`, () => {
+      assert.equal(checkQuestionIds(sent, server), false);
+    });
+  }
+  it("大文字・小文字や前後の空白も別の id として扱う", () => {
+    assert.equal(checkQuestionIds(["QZ", "qa", "qb"], server), false);
+    assert.equal(checkQuestionIds([" qz", "qa", "qb"], server), false);
   });
 });
 
 // ───────────── scoreAttempt ─────────────
 
 describe("scoreAttempt", () => {
-  it("正解数・点数（四捨五入）・問題ごとの正誤", () => {
+  it("正解数・点数（切り捨て。2/3 は 66 点）・問題ごとの正誤", () => {
     assert.deepEqual(scoreAttempt([0, 1, 2], [0, 0, 2]), {
       correct: 2,
       total: 3,
-      score: 67,
+      score: 66,
       passed: false,
       results: [true, false, true],
     });
@@ -191,12 +261,15 @@ describe("scoreAttempt", () => {
     assert.equal(r.passed, true);
   });
 
-  it("四捨五入で 70 になっても、元の正解率が 70% 未満なら不合格（139/200 = 69.5%）", () => {
+  it("70% 未満は切り捨てで 69 点以下・不合格（139/200 = 69.5% は 69 点、16/23 は 69 点）", () => {
     const correctIndexes = new Array(200).fill(0);
     const answers = correctIndexes.map((_, i) => (i < 139 ? 0 : 1));
     const r = scoreAttempt(answers, correctIndexes);
-    assert.equal(r.score, 70);
+    assert.equal(r.score, 69);
     assert.equal(r.passed, false);
+    const k23 = new Array(23).fill(0);
+    const r23 = scoreAttempt(k23.map((_, i) => (i < 16 ? 0 : 1)), k23);
+    assert.deepEqual([r23.score, r23.passed], [69, false], "16/23 が 69 点・不合格でない");
   });
 
   it("2/3（66.7%）は不合格、3/4（75%）は合格", () => {
@@ -640,8 +713,23 @@ describe("toQuizTakeView", () => {
     passed: null,
   };
 
-  it("id・title・questions だけにする", () => {
-    assert.deepEqual(toQuizTakeView(ok), { id: "quiz1", title: "ダミー", questions: ok.questions });
+  it("id・title・type・questions・retryAfterSeconds だけにする", () => {
+    assert.deepEqual(toQuizTakeView(ok), { id: "quiz1", title: "ダミー", type: "MINI", questions: ok.questions, retryAfterSeconds: null });
+  });
+
+  it("FINAL もそのまま。MINI / FINAL 以外・ない type は null（受験はできる。#51）", () => {
+    assert.equal(toQuizTakeView({ ...ok, type: "FINAL" })?.type, "FINAL");
+    for (const type of [undefined, null, "OTHER", "mini", 1]) {
+      assert.equal(toQuizTakeView({ ...ok, type })?.type, null, `type ${String(type)} が null でない`);
+    }
+  });
+
+  it("retryAfterSeconds（#51）：正の数で 24 時間以下ならそのまま、それ以外は null", () => {
+    assert.equal(toQuizTakeView({ ...ok, retryAfterSeconds: 1800 })?.retryAfterSeconds, 1800);
+    assert.equal(toQuizTakeView({ ...ok, retryAfterSeconds: 86400 })?.retryAfterSeconds, 86400);
+    for (const v of [null, undefined, 0, -1, 86401, Number.NaN, Number.POSITIVE_INFINITY, "60", true]) {
+      assert.equal(toQuizTakeView({ ...ok, retryAfterSeconds: v })?.retryAfterSeconds, null, `${String(v)} が null でない`);
+    }
   });
 
   for (const [label, v] of [
@@ -665,14 +753,19 @@ describe("toQuizTakeView", () => {
 });
 
 describe("toQuizResultView", () => {
-  const ok = { score: 67, passed: false, total: 3, correct: 2, results: [true, false, true] };
+  const ok = { score: 66, passed: false, total: 3, correct: 2, results: [true, false, true] };
 
-  it("そのまま使う（画面では採点しない）", () => {
-    assert.deepEqual(toQuizResultView(ok, 3), ok);
+  it("そのまま使う（画面では採点しない）。duplicate がなければ false", () => {
+    assert.deepEqual(toQuizResultView(ok, 3), { ...ok, duplicate: false });
+    assert.deepEqual(toQuizResultView({ ...ok, duplicate: true }, 3), { ...ok, duplicate: true });
   });
 
   it("余計な項目は落とす", () => {
-    assert.deepEqual(toQuizResultView({ ...ok, correctIndexes: [0, 1, 2] }, 3), ok);
+    assert.deepEqual(toQuizResultView({ ...ok, correctIndexes: [0, 1, 2] }, 3), { ...ok, duplicate: false });
+  });
+
+  it("点数と合否の食い違いは画面では確かめない（サーバーを信じる）", () => {
+    assert.equal(toQuizResultView({ ...ok, score: 90, passed: false }, 3)?.score, 90);
   });
 
   for (const [label, v, n] of [
@@ -693,10 +786,10 @@ describe("toQuizResultView", () => {
 });
 
 describe("buildSubmitBody / quizResultTitle", () => {
-  it("全問回答なら { answers }、未回答・空なら null", () => {
-    assert.deepEqual(buildSubmitBody([0, 2, 1]), { answers: [0, 2, 1] });
-    assert.equal(buildSubmitBody([0, null, 1]), null);
-    assert.equal(buildSubmitBody([]), null);
+  it("全問回答なら { answers, questionIds }、未回答・空なら null", () => {
+    assert.deepEqual(buildSubmitBody([0, 2, 1], ["q1", "q2", "q3"]), { answers: [0, 2, 1], questionIds: ["q1", "q2", "q3"] });
+    assert.equal(buildSubmitBody([0, null, 1], ["q1", "q2", "q3"]), null);
+    assert.equal(buildSubmitBody([], []), null);
   });
   it("結果の見出しは文言だけ（絵文字なし）", () => {
     assert.equal(quizResultTitle(true), "合格です");
@@ -724,5 +817,96 @@ describe("quizCourseId（#47 P5。一覧の振り分けと API のロックの�
   it("知らない種類は null", () => {
     const unknownType = { type: "OTHER", courseId: "c1", lesson: lesson("c1") } as unknown as Parameters<typeof quizCourseId>[0];
     assert.equal(quizCourseId(unknownType), null);
+  });
+});
+
+// ───────────── 送信の結果の分類と文言（#51） ─────────────
+
+describe("classifyQuizSubmitResponse（#51）", () => {
+  const ok = { score: 50, passed: false, total: 2, correct: 1, results: [true, false], duplicate: false };
+
+  it("200 で結果として読めれば ok、duplicate: true なら duplicate（どちらも結果を持つ）", () => {
+    assert.deepEqual(classifyQuizSubmitResponse(200, ok, 2), { kind: "ok", result: ok });
+    assert.deepEqual(classifyQuizSubmitResponse(200, { ...ok, duplicate: true }, 2), { kind: "duplicate", result: { ...ok, duplicate: true } });
+  });
+
+  it("200 でも結果として読めなければ failed（問題数と違う・本文なし・reason だけ）", () => {
+    assert.deepEqual(classifyQuizSubmitResponse(200, ok, 3), { kind: "failed" });
+    assert.deepEqual(classifyQuizSubmitResponse(200, null, 2), { kind: "failed" });
+    assert.deepEqual(classifyQuizSubmitResponse(200, { error: "x", reason: "course_locked" }, 2), { kind: "failed" });
+  });
+
+  it("429 は rate_limited。retryAfterSeconds が使えなければ null", () => {
+    assert.deepEqual(classifyQuizSubmitResponse(429, { error: "Too many requests", reason: "rate_limited", retryAfterSeconds: 1800 }, 2), { kind: "rate_limited", retryAfterSeconds: 1800 });
+    for (const body of [null, {}, { retryAfterSeconds: "60" }, { retryAfterSeconds: -1 }, { retryAfterSeconds: 0 }, { retryAfterSeconds: 86401 }]) {
+      assert.deepEqual(classifyQuizSubmitResponse(429, body, 2), { kind: "rate_limited", retryAfterSeconds: null }, JSON.stringify(body));
+    }
+  });
+
+  it("409 quiz_changed は quiz_changed、409 quiz_unavailable・reason なしは failed", () => {
+    assert.deepEqual(classifyQuizSubmitResponse(409, { error: "Conflict", reason: "quiz_changed" }, 2), { kind: "quiz_changed" });
+    assert.deepEqual(classifyQuizSubmitResponse(409, { error: "Quiz unavailable", reason: "quiz_unavailable" }, 2), { kind: "failed" });
+    assert.deepEqual(classifyQuizSubmitResponse(409, null, 2), { kind: "failed" });
+  });
+
+  it("reason quiz_changed でも 409 以外は quiz_changed にしない", () => {
+    for (const status of [200, 400, 403, 500]) {
+      assert.deepEqual(classifyQuizSubmitResponse(status, { reason: "quiz_changed" }, 2), { kind: "failed" }, String(status));
+    }
+  });
+
+  it("403 course_locked は course_locked、ほかの 403 は failed", () => {
+    assert.deepEqual(classifyQuizSubmitResponse(403, { error: "Forbidden", reason: "course_locked" }, 2), { kind: "course_locked" });
+    assert.deepEqual(classifyQuizSubmitResponse(403, { error: "Forbidden" }, 2), { kind: "failed" });
+  });
+
+  it("400・500・503 は failed", () => {
+    for (const [status, body] of [
+      [400, { error: "Invalid request", reason: "invalid_question_ids" }],
+      [500, { error: "Internal server error" }],
+      [503, { error: "Quiz attempts are not available yet", reason: "attempts_disabled" }],
+    ] as Array<[number, unknown]>) {
+      assert.deepEqual(classifyQuizSubmitResponse(status, body, 2), { kind: "failed" }, String(status));
+    }
+  });
+});
+
+describe("受験の文言（#51）", () => {
+  it("429 の文言：設計どおりの本文に、目安（retryAfterHint）を添える。目安が使えなければ添えない", () => {
+    assert.equal(
+      QUIZ_RATE_LIMITED_MESSAGE,
+      "受験の間隔が短いか、1 日に受けられる回数を超えたため、送信できませんでした。回答はそのまま残っています。しばらく時間をおいてから、もう一度送信してください。"
+    );
+    assert.equal(quizRateLimitedMessage(1800), `${QUIZ_RATE_LIMITED_MESSAGE}（目安：約 30 分後）`);
+    assert.equal(quizRateLimitedMessage(45), `${QUIZ_RATE_LIMITED_MESSAGE}（目安：約 45 秒後）`);
+    assert.equal(quizRateLimitedMessage(null), QUIZ_RATE_LIMITED_MESSAGE);
+  });
+
+  it("待ち時間を言い切らない（「後に送信できます」などと書かない）", () => {
+    for (const m of [QUIZ_RATE_LIMITED_MESSAGE, QUIZ_WAIT_MESSAGE, quizRateLimitedMessage(60), quizWaitMessage(60)]) {
+      assert.doesNotMatch(m, /送信できます|受けられます/, m);
+    }
+  });
+
+  it("問題の更新・重複・事前の案内・一覧に戻る注意の文言", () => {
+    assert.equal(QUIZ_CHANGED_MESSAGE, "テストの問題が更新されたため、最新の問題を読み込みました。お手数ですが、もう一度回答してください。");
+    assert.equal(QUIZ_DUPLICATE_MESSAGE, "前回の送信が届いていたため、そのときの結果を表示しています（新しい受験としては記録していません）。");
+    assert.ok(QUIZ_WAIT_MESSAGE.includes("いまは回答を送信できません"), "事前の案内に「いまは回答を送信できません」がない");
+    assert.equal(quizWaitMessage(90), `${QUIZ_WAIT_MESSAGE}（目安：約 2 分後）`);
+    assert.ok(QUIZ_RATE_LIMITED_LEAVE_NOTE.includes("回答は消えます"), "一覧に戻ると回答が消える旨がない");
+  });
+
+  it("受験の規則は定数から作る（ミニ 1 分・10 回、修了 30 分・3 回）", () => {
+    assert.equal(quizAttemptRuleText("FINAL"), "修了テストは前回の受験から 30 分あけて、24 時間に 3 回まで受けられます。");
+    assert.equal(quizAttemptRuleText("MINI"), "ミニテストは前回の受験から 1 分あけて、24 時間に 10 回まで受けられます。");
+    for (const t of [null, undefined, "OTHER", "constructor"]) assert.equal(quizAttemptRuleText(t), "", String(t));
+  });
+
+  it("文言に絵文字・見えない文字を含まない", () => {
+    const all = [QUIZ_RATE_LIMITED_MESSAGE, QUIZ_RATE_LIMITED_LEAVE_NOTE, QUIZ_CHANGED_MESSAGE, QUIZ_DUPLICATE_MESSAGE, QUIZ_WAIT_MESSAGE, quizAttemptRuleText("MINI"), quizAttemptRuleText("FINAL")];
+    for (const m of all) {
+      assert.doesNotMatch(m, new RegExp("\\p{Extended_Pictographic}", "u"), m);
+      assert.doesNotMatch(m, /[\u200b-\u200f\u2028-\u202e\u2060\ufeff]/, m);
+    }
   });
 });
