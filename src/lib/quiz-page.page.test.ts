@@ -134,7 +134,9 @@ describe("QuizPage：表示", () => {
     assert.match(quizPage, /\{!QUIZ_ATTEMPTS_ENABLED && \(\s*<div role="status"[^>]*>\s*受験は準備中です/);
     // openQuiz を呼ぶのは受験ボタンと、受験画面の再読み込みと、409 quiz_changed の読み直し（#51）だけ
     const calls = quizPage.match(/openQuiz\(/g) ?? [];
-    assert.equal(calls.length, 3, "受験ボタン 1 + 受験画面の再読み込み 1 + quiz_changed の読み直し 1");
+    assert.equal(calls.length, 4, "受験ボタン 1 + 受験画面の再読み込み 1 + quiz_changed の読み直し 1 + もう一度受ける 1");
+    // もう一度受けるは問題を読み直す（#51。GET の retryAfterSeconds で事前の案内を出すため）。読み込み中は何もしない
+    assert.match(takeSrc, /const retakeQuiz = \(\) => \{\s*if \(submitInFlight\.current \|\| !takeQuiz \|\| takeLoading\) return;\s*openQuiz\(takeQuiz\.id\);\s*\};/);
     assert.match(takeSrc, /openQuiz\(quizId, true\)/);
   });
 
@@ -386,6 +388,7 @@ function takeHarness(enabled: boolean) {
     "answers",
     "currentQ",
     "submitLocked",
+    "takeLoading",
     "setActiveQuizId",
     "setTakeQuiz",
     "setTakeLoading",
@@ -421,6 +424,7 @@ function takeHarness(enabled: boolean) {
       st.answers,
       st.currentQ,
       st.submitLocked,
+      st.takeLoading,
       set("activeQuizId"),
       set("takeQuiz"),
       set("takeLoading"),
@@ -612,17 +616,24 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(h.st.result, null);
   });
 
-  it("もう一度受ける：回答と結果を消して 1 問目から", async () => {
+  it("もう一度受ける：結果を消して問題を読み直し（GET 1 回）、読み込めたら未回答で 1 問目から", async () => {
     const h = await openLoaded();
     answerAll(h, [1, 2]);
     h.render().submitQuiz();
     h.reqs[1].release(res({ body: RESULT }));
     await settle();
     h.render().retakeQuiz();
+    assert.equal(h.reqs.length, 3, "問題を読み直していない");
+    assert.equal(h.reqs[2].url, "/api/quizzes/quiz%2F1");
+    assert.equal(h.reqs[2].init, undefined);
+    assert.equal(h.st.result, null);
+    assert.equal(h.st.takeLoading, true);
+    h.reqs[2].release(res({ body: QUIZ }));
+    await settle();
     assert.deepEqual(h.st.answers, [null, null]);
     assert.equal(h.st.currentQ, 0);
-    assert.equal(h.st.result, null);
-    assert.equal(h.reqs.length, 2, "問題は読み直さない");
+    assert.equal(h.st.takeLoading, false);
+    assert.equal(h.reqs.length, 3, "GET が 1 回でない");
   });
 
   it("一覧に戻ると受験の状態を消す", async () => {
@@ -1206,5 +1217,78 @@ describe("QUIZ_ATTEMPTS_ENABLED が false（#51 追加）", () => {
     assert.equal(h.st.takeRetryAfter, null);
     assert.equal(h.st.takeChanged, false);
     assert.equal(h.st.submitRateLimited, null);
+  });
+});
+
+describe("受験：もう一度受ける（問題の読み直し。#51）", () => {
+  async function retaken() {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.reqs[1].release(res({ body: RESULT }, SUBMIT_URL));
+    await settle();
+    h.render().retakeQuiz();
+    assert.equal(h.reqs.length, 3, "GET が 1 回走っていない");
+    return h;
+  }
+
+  it("GET の retryAfterSeconds があれば takeRetryAfter に入る（送信開始で消えた案内が戻る）", async () => {
+    const h = await retaken();
+    h.reqs[2].release(res({ body: { ...QUIZ, retryAfterSeconds: 45 } }));
+    await settle();
+    assert.equal(h.st.takeRetryAfter, 45);
+    assert.equal(h.st.takeChanged, false, "問題の更新として知らせた");
+  });
+
+  it("retryAfterSeconds がなければ takeRetryAfter は null", async () => {
+    const h = await retaken();
+    h.reqs[2].release(res({ body: QUIZ }));
+    await settle();
+    assert.equal(h.st.takeRetryAfter, null);
+  });
+
+  it("読み直しに失敗したら takeFailed（結果は消える）", async () => {
+    const h = await retaken();
+    h.reqs[2].release(res({ status: 500, ok: false, body: { error: "Internal server error" } }));
+    await settle();
+    assert.equal(h.st.takeFailed, true);
+    assert.equal(h.st.result, null);
+    assert.equal(h.st.takeLoading, false);
+  });
+
+  it("読み直しが 403 course_locked なら takeLocked、失効なら読み込み中のまま（openQuiz と同じ）", async () => {
+    const h = await retaken();
+    h.reqs[2].release(res(LOCKED_403));
+    await settle();
+    assert.equal(h.st.takeLocked, true);
+    const h2 = await retaken();
+    h2.reqs[2].release(res({ status: 401, ok: false }));
+    await settle();
+    assert.equal(h2.st.takeLoading, true);
+    assert.equal(h2.st.takeFailed, false);
+  });
+
+  it("読み込み中にもう一度押しても GET を増やさない（二重読み込みしない）", async () => {
+    const h = await retaken();
+    h.render().retakeQuiz();
+    h.render().retakeQuiz();
+    assert.equal(h.reqs.length, 3, "読み込み中に GET が増えた");
+  });
+
+  it("読み直しの前に一覧に戻ったら、届いた応答は捨てる", async () => {
+    const h = await retaken();
+    h.render().closeQuiz();
+    h.reqs[2].release(res({ body: { ...QUIZ, retryAfterSeconds: 45 } }));
+    await settle();
+    assert.equal(h.st.takeQuiz, null, "閉じたあとの応答を使った");
+    assert.equal(h.st.takeRetryAfter, null);
+  });
+
+  it("送信中は何もしない", async () => {
+    const h = await openLoaded();
+    answerAll(h, [1, 2]);
+    h.render().submitQuiz();
+    h.render().retakeQuiz();
+    assert.equal(h.reqs.length, 2, "送信中に読み直した");
   });
 });

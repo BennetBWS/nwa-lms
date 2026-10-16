@@ -2413,15 +2413,12 @@ const QuizPage = () => {
     });
   };
 
+  // Loads the quiz again with openQuiz (#51): GET returns the current questions and retryAfterSeconds, so the
+  // "cannot send now" notice is shown right after an attempt. Loading / failure / lock / expiry follow openQuiz,
+  // and openQuiz bumps takeSeq so late responses are dropped. Not while loading (no double load).
   const retakeQuiz = () => {
-    if (submitInFlight.current || !takeQuiz) return;
-    setAnswers(takeQuiz.questions.map(() => null));
-    setCurrentQ(0);
-    setSubmitFailed(false);
-    setSubmitLocked(false);
-    setResult(null);
-    setTakeChanged(false);
-    setSubmitRateLimited(null);
+    if (submitInFlight.current || !takeQuiz || takeLoading) return;
+    openQuiz(takeQuiz.id);
   };
 
   const spinner = (

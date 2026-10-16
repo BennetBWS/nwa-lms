@@ -609,7 +609,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     });
   }
 
-  it("もう一度受ける：回答を消して 1 問目から（問題は読み直さない）", async () => {
+  it("もう一度受ける：問題を読み直し（GET 1 回）、読み込めたら未回答で 1 問目から（#51）", async () => {
     const m = await openTake();
     chooseAll(m, [1, 2]);
     click(button(m.render(), "回答を送信する"));
@@ -617,10 +617,16 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     await settle();
     const before = m.reqs.length;
     click(button(m.render(), "もう一度受ける"));
+    assert.equal(m.reqs.length, before + 1, "GET が 1 回走っていない");
+    assert.equal(m.reqs[before].url, "/api/quizzes/mini2");
+    assert.ok(text(m.render()).includes("Loading..."), "読み込み中でない");
+    m.reqs[before].release(res(TAKE, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
     const tree = m.render();
     assert.ok(text(tree).includes("問題 1 / 2"));
     assert.deepEqual(byRole(tree, "radio").map((r) => r.props["aria-checked"]), [false, false]);
-    assert.equal(m.reqs.length, before);
+    assert.equal(byRole(tree, "status").length, 0, "retryAfterSeconds がないのに案内を出した");
+    assert.equal(m.reqs.length, before + 1);
   });
 
   it("問題の読み込み失敗（409 quiz_unavailable）は role=alert と再読み込み", async () => {
@@ -885,5 +891,61 @@ describe("QuizPage 描画：QUIZ_ATTEMPTS_ENABLED が false の間は #51 の表
       assert.ok(!t.includes(s), `false の間に表示した: ${s}`);
     }
     assert.equal(m.reqs.length, 1, "一覧以外を読んだ");
+  });
+});
+
+describe("QuizPage 描画：もう一度受ける（#51、true の経路）", () => {
+  const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
+  async function toResult() {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    const before = m.reqs.length; // 一覧の読み直しを含む
+    click(button(m.render(), "もう一度受ける"));
+    assert.equal(m.reqs.length, before + 1, "GET が 1 回走っていない");
+    assert.equal(m.reqs[before].url, "/api/quizzes/mini2");
+    return { m, get: m.reqs[before] };
+  }
+
+  it("GET に retryAfterSeconds があれば、冒頭に「いまは送信できません」の案内を出す", async () => {
+    const { m, get } = await toResult();
+    get.release(res({ ...TAKE, retryAfterSeconds: 60 }, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(byRole(tree, "status").map(text), [quizWaitMessage(60)]);
+    assert.ok(text(tree).includes("いまは回答を送信できません"));
+    assert.ok(text(tree).includes("問題 1 / 2"), "回答を始められない");
+  });
+
+  it("GET に retryAfterSeconds がなければ案内を出さない", async () => {
+    const { m, get } = await toResult();
+    get.release(res({ ...TAKE, retryAfterSeconds: null }, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    assert.equal(byRole(m.render(), "status").length, 0);
+  });
+
+  it("読み直しに失敗したら「テストを読み込めませんでした」と再読み込み", async () => {
+    const { m, get } = await toResult();
+    get.release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+    await settle();
+    const tree = m.render();
+    const alerts = byRole(tree, "alert");
+    assert.equal(alerts.length, 1);
+    assert.ok(text(alerts[0]).includes("テストを読み込めませんでした"));
+    assert.ok(!text(tree).includes("50点"), "前の結果が残っている");
+    click(button(tree, "再読み込み"));
+    assert.equal(m.reqs[m.reqs.length - 1].url, "/api/quizzes/mini2");
+  });
+
+  it("読み直しで問題が増えていれば、新しい問題で受ける（quiz_changed の知らせは出さない）", async () => {
+    const { m, get } = await toResult();
+    const v2 = { ...TAKE, questionCount: 3, questions: [...TAKE.questions, { id: "q3", question: "ダミー問3", options: ["選択肢F", "選択肢G"] }] };
+    get.release(res(v2, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    const t = text(m.render());
+    assert.ok(t.includes("問題 1 / 3"));
+    assert.ok(!t.includes(QUIZ_CHANGED_MESSAGE));
   });
 });
