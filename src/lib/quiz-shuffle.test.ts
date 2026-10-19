@@ -293,7 +293,7 @@ describe("issueAttemptToken・verifyAttemptToken", () => {
 
   it("形の違うトークン（文字列でない・版が違う・長さが違う・記号）は null", () => {
     const t = issueAttemptToken(KEYS, ctx, fixedNonce(3));
-    for (const bad of [undefined, null, 1, {}, "", t.replace(/^v1/, "v2"), t + "A", t.slice(0, -1), t.replace(/\.[^.]*$/, ".=" + "A".repeat(42)), ` ${t}`, `${t}\n`, `${t}​`]) {
+    for (const bad of [undefined, null, 1, {}, "", t.replace(/^v1/, "v2"), t + "A", t.slice(0, -1), t.replace(/\.[^.]*$/, ".=" + "A".repeat(42)), ` ${t}`, `${t}\n`, `${t}\u200b`]) {
       assert.equal(verifyAttemptToken(KEYS, bad, ctx), null, JSON.stringify(bad));
       assert.ok(!isAttemptTokenFormat(bad), `形として通った: ${JSON.stringify(bad)}`);
     }
