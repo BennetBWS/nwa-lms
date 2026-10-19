@@ -455,11 +455,45 @@ describe("失敗の応答ではログを出さない", () => {
   });
 });
 
-describe("POST submit（route、いまの本番）：503", () => {
+describe("POST submit（route、本番＝受験は公開済み）", () => {
+  /** route に送る正しい形の body（元の位置の回答を、いまのトークンの表示位置に直す。body の userId は使われない目印） */
+  const routeBody = (quizId: string, answers: number[]) =>
+    JSON.stringify({
+      answers: toDisplayed(quizId, answers),
+      questionIds: serverQuestionIds(quizId),
+      attemptToken: issueAttemptToken(KEYS, { userId: session!.user!.id as string, quizId, questions: serverQuestions(quizId) }, TEST_NONCE),
+      userId: OTHER,
+    });
+
+  it("ログイン済みなら body を読んで採点・保存する（userId はセッションの値）。成功時はログを出さない", async () => {
+    // mini1 は STUDENT の受験記録がない（route は実際の時刻で間隔・回数を判定するため）
+    const req = submitRequest("mini1", routeBody("mini1", [0]));
+    const done = captureLogs();
+    const res = await SUBMIT(req, ctx("mini1"));
+    assert.equal(done(), "");
+    assert.equal(res.status, 200);
+    assert.equal(req.bodyUsed, true);
+    assert.equal((await res.json()).score, 100);
+    assert.equal(creates().length, 1, "受験記録を書いていない");
+    assert.equal((creates()[0].args.data as Row).userId, STUDENT);
+  });
+
+  it("未ログインは 401（body を読まない）", async () => {
+    session = null;
+    const req = submitRequest("fin1", '{"answers":[1,0,2]}');
+    const res = await SUBMIT(req, ctx("fin1"));
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { error: "Unauthorized" });
+    assert.equal(req.bodyUsed, false);
+    assert.equal(calls.length, 0);
+  });
+});
+
+describe("POST submit（本体に attemptsEnabled: false＝受験を止めたとき）：503", () => {
   it("ログイン済みなら body を読まずに 503。ログも出さない", async () => {
     const req = submitRequest("fin1", '{"answers":[1,0,2],"userId":"x"}');
     const done = captureLogs();
-    const res = await SUBMIT(req, ctx("fin1"));
+    const res = await HANDLE_SUBMIT(STUDENT, req, ctx("fin1"), { attemptsEnabled: false, role: "STUDENT" });
     assert.equal(done(), "");
     assert.equal(res.status, 503);
     assert.equal(req.bodyUsed, false);
@@ -467,17 +501,9 @@ describe("POST submit（route、いまの本番）：503", () => {
     assert.equal(db.attempts.length, 1);
   });
 
-  it("講師のセッションでも 503（受験の停止は役割に関係なく効く）", async () => {
-    session = { user: { id: "inst_dummy", role: "INSTRUCTOR" } };
-    const res = await SUBMIT(submitRequest("fin1", '{"answers":[1,0,2]}'), ctx("fin1"));
+  it("講師でも 503（受験の停止は役割に関係なく効く）", async () => {
+    const res = await HANDLE_SUBMIT("inst_dummy", submitRequest("fin1", '{"answers":[1,0,2]}'), ctx("fin1"), { attemptsEnabled: false, role: "INSTRUCTOR" });
     assert.equal(res.status, 503);
     assert.equal(calls.length, 0);
-  });
-
-  it("未ログインは 503 ではなく 401（停止中であることも知らせない）", async () => {
-    session = null;
-    const res = await SUBMIT(submitRequest("fin1", '{"answers":[1,0,2]}'), ctx("fin1"));
-    assert.equal(res.status, 401);
-    assert.deepEqual(await res.json(), { error: "Unauthorized" });
   });
 });

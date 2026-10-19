@@ -133,7 +133,7 @@ describe("QuizPage：表示", () => {
     assert.match(quizPage, /onClick=\{loadQuizzes\} disabled=\{loading\}/);
   });
 
-  it("受験ボタンは QUIZ_ATTEMPTS_ENABLED が true で、ロックされていないコースだけ。false の間は「受験は準備中です」", () => {
+  it("受験ボタンは QUIZ_ATTEMPTS_ENABLED が true で、ロックされていないコースだけ。false（止めたとき）は「受験は準備中です」", () => {
     assert.match(quizPage, /\{QUIZ_ATTEMPTS_ENABLED && !course\.locked && \(\s*<Button[^>]*onClick=\{\(\) => openQuiz\(quiz\.id\)\}/);
     assert.match(quizPage, /\{!QUIZ_ATTEMPTS_ENABLED && \(\s*<div role="status"[^>]*>\s*受験は準備中です/);
     // openQuiz を呼ぶのは受験ボタンと、受験画面の再読み込みと、409 quiz_changed の読み直し（#51）だけ
@@ -464,7 +464,7 @@ function answerAll(h: ReturnType<typeof takeHarness>, picks: number[]) {
   });
 }
 
-describe("QUIZ_ATTEMPTS_ENABLED が false", () => {
+describe("QUIZ_ATTEMPTS_ENABLED が false（受験を止めたとき）", () => {
   it("openQuiz も submitQuiz も何もしない（取得・送信しない）", () => {
     const h = takeHarness(false);
     h.render().openQuiz("quiz1");
@@ -478,7 +478,7 @@ describe("QUIZ_ATTEMPTS_ENABLED が false", () => {
   });
 });
 
-describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true の経路）", () => {
+describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true＝本番）", () => {
   it("GET /api/quizzes/<id>（エンコード済み）を読み、問題と未回答の配列を用意する", async () => {
     const h = await openLoaded();
     assert.equal(h.reqs[0].url, "/api/quizzes/quiz%2F1");
@@ -531,7 +531,7 @@ describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true の経
   });
 });
 
-describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）", () => {
+describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true＝本番）", () => {
   it("1 問ずつ選び、未回答が残っていれば送信しない", async () => {
     const h = await openLoaded();
     answerAll(h, [1]);
@@ -1215,7 +1215,7 @@ describe("受験：429 の追加の観点（#51 追加）", () => {
   });
 });
 
-describe("QUIZ_ATTEMPTS_ENABLED が false（#51 追加）", () => {
+describe("QUIZ_ATTEMPTS_ENABLED が false（受験を止めたとき。#51 追加）", () => {
   it("事前の案内・更新の知らせ・429 の印はどれも付かない（取得・送信しない）", () => {
     const h = takeHarness(false);
     h.render().openQuiz("quiz1");

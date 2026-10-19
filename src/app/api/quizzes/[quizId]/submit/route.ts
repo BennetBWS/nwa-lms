@@ -5,7 +5,7 @@ import { handleQuizSubmit } from "@/lib/quiz-submit";
 import { QUIZ_ATTEMPTS_ENABLED } from "@/lib/student-quizzes";
 
 // 回答の送信と採点（#32）。本体は src/lib/quiz-submit.ts。
-// QUIZ_ATTEMPTS_ENABLED が false の間は、認証のあと DB を読まずに 503 attempts_disabled を返す。
+// 受験は公開済み（#51）。QUIZ_ATTEMPTS_ENABLED を false にして止めたときは、認証のあと DB を読まずに 503 attempts_disabled を返す。
 // userId・role はセッションの値（body の userId は読まない）。受講生のロックの確認は本体が行う（#47 P5）
 export async function POST(
   request: Request,

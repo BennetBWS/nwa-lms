@@ -42,8 +42,8 @@ import {
 const TOKEN = `v1.${"A".repeat(22)}.${"B".repeat(43)}`;
 
 describe("定数", () => {
-  it("受験はまだ公開しない（#8 のあと）", () => {
-    assert.equal(QUIZ_ATTEMPTS_ENABLED, false);
+  it("受験は公開済み（#51。false は緊急時に止めるとき）", () => {
+    assert.equal(QUIZ_ATTEMPTS_ENABLED, true);
   });
   it("合格の基準は 70%", () => {
     assert.equal(PASSING_PERCENT, 70);

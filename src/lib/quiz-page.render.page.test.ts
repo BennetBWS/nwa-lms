@@ -285,8 +285,8 @@ async function loadedList(enabled: boolean, body: unknown = LIST, courseIcons: R
 // ───────────── 一覧 ─────────────
 
 describe("QuizPage 描画：前提", () => {
-  it("本番の QUIZ_ATTEMPTS_ENABLED は false（以下の false の描画が本番と同じ）", () => {
-    assert.equal(QUIZ_ATTEMPTS_ENABLED, false);
+  it("本番の QUIZ_ATTEMPTS_ENABLED は true（以下の true の描画が本番と同じ。false は受験を止めたとき）", () => {
+    assert.equal(QUIZ_ATTEMPTS_ENABLED, true);
   });
 
   it("JSX の変換：診断なしで、import / export を含まない（new Function で評価できる）", () => {
@@ -418,7 +418,7 @@ describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が false＝受験を
   });
 });
 
-describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が true の経路）", () => {
+describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が true＝本番）", () => {
   it("受験ボタンはロックされていないコースの行だけ。受験済みは「もう一度受ける」、未受験は「受験する」", async () => {
     const m = await loadedList(true);
     const tree = m.render();
@@ -483,7 +483,7 @@ describe("QuizPage 描画：コースのアイコン", () => {
   });
 });
 
-// ───────────── 受験（true の経路） ─────────────
+// ───────────── 受験（true＝本番） ─────────────
 
 async function openTake() {
   const m = await loadedList(true);
@@ -504,7 +504,7 @@ function chooseAll(m: ReturnType<typeof mount>, picks: number[]) {
   });
 }
 
-describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）", () => {
+describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true＝本番）", () => {
   it("1 問目：タイトル・進み具合・問題文・選択肢（role=radio、未選択）。次へ・送信は押せない", async () => {
     const m = await openTake();
     const tree = m.render();
@@ -675,7 +675,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
 
 // ───────────── 受験の公開前の修正（#51） ─────────────
 
-describe("QuizPage 描画：受験の制限と問題の入れ替え（#51、true の経路）", () => {
+describe("QuizPage 描画：受験の制限と問題の入れ替え（#51、true＝本番）", () => {
   const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
 
   it("受験画面に、ミニテストの受験の規則（定数から作った文言）を出す。結果の画面には出さない", async () => {
@@ -872,7 +872,7 @@ describe("QuizPage 描画：#51 の追加の観点", () => {
 
 });
 
-describe("QuizPage 描画：QUIZ_ATTEMPTS_ENABLED が false の間は #51 の表示が出ない", () => {
+describe("QuizPage 描画：QUIZ_ATTEMPTS_ENABLED が false（受験を止めたとき）は #51 の表示が出ない", () => {
   it("一覧に規則・事前の案内・429・更新・重複の文言を出さず、受験画面の状態が残っていても出さない", async () => {
     const m = mount(false, {
       activeQuizId: "mini2",
@@ -897,13 +897,13 @@ describe("QuizPage 描画：QUIZ_ATTEMPTS_ENABLED が false の間は #51 の表
       QUIZ_CHANGED_MESSAGE,
       QUIZ_DUPLICATE_MESSAGE,
     ]) {
-      assert.ok(!t.includes(s), `false の間に表示した: ${s}`);
+      assert.ok(!t.includes(s), `false のときに表示した: ${s}`);
     }
     assert.equal(m.reqs.length, 1, "一覧以外を読んだ");
   });
 });
 
-describe("QuizPage 描画：もう一度受ける（#51、true の経路）", () => {
+describe("QuizPage 描画：もう一度受ける（#51、true＝本番）", () => {
   const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
   async function toResult() {
     const m = await openTake();

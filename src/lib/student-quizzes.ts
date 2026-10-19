@@ -5,7 +5,8 @@
  * DB・時計・DOM に触れない純粋関数だけを置く。
  *
  * Tec の決定（#32、2026-10-07）：
- * - 一覧と受験を実装する。受験の開始ボタンは QUIZ_ATTEMPTS_ENABLED で隠し、#8（DB の分離）のあとに公開する
+ * - 一覧と受験を実装する。受験は #8（DB の分離）と #51（受験の制限・選択肢のシャッフル）のあとに公開した。
+ *   QUIZ_ATTEMPTS_ENABLED は緊急時に受験を止めるためのスイッチとして残す
  * - 結果は点数・合否・正解数・問題ごとの正誤。正解そのものは見せない（API も返さない）
  * - 合格判定は四捨五入前の値で行う（正解率 70% 以上）
  * - 点数は正解率の切り捨て（#51、Tec 決定 D。合否と点数が必ず一致する：70 点以上なら合格）
@@ -19,8 +20,12 @@ import { retryAfterHint } from "./comment-form";
 import { isValidId } from "./lesson-comments";
 import { QUIZ_RATE_LIMITS, QUIZ_WINDOW_MS } from "./quiz-rate-limit";
 
-/** 受験（問題の表示・送信）を画面で開けるか。#8 のあとに true にする */
-export const QUIZ_ATTEMPTS_ENABLED = false;
+/**
+ * 受験（問題の表示・送信）を開けるか。#51 で公開した（true）。
+ * 緊急時に受験を止めるスイッチ：false にすると、画面は受験ボタンを隠して「受験は準備中です」を出し、
+ * POST /api/quizzes/[quizId]/submit は入力も DB も見ずに 503 attempts_disabled を返す（GET の一覧・問題の取得は止まらない）
+ */
+export const QUIZ_ATTEMPTS_ENABLED = true;
 
 /** 合格に必要な正解率（%）。丸める前の値で判定する（点数は切り捨てなので、70 点以上と合格は一致する） */
 export const PASSING_PERCENT = 70;

@@ -9,8 +9,9 @@ import { isCourseLocked, type LessonCounts } from "../../src/lib/course-lock";
 import { deriveQuizKeys, issueAttemptToken, optionPermutation } from "../../src/lib/quiz-shuffle";
 
 // #32 確認テストの API：GET /api/quizzes、GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit。
-// submit は QUIZ_ATTEMPTS_ENABLED が false の間 503 を返すので、採点・保存は本体の handleQuizSubmit に
-// attemptsEnabled: true を渡して確かめる（route の POST 経由は 401 / 503 だけ）。
+// submit の採点・保存は、主に本体の handleQuizSubmit に attemptsEnabled: true と now を渡して確かめる
+// （route の POST は実際の時刻を使うので、route 経由は認証・配線・主な分岐だけ）。
+// QUIZ_ATTEMPTS_ENABLED（受験を止めるスイッチ）が false のときの 503 は、本体に attemptsEnabled: false を渡して確かめる。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
 // （受け取った引数を記録し、where（値の一致）・orderBy・select（入れ子のリレーションと _count）を最低限だけ再現する）。
 // NextAuth は installFakeAuth で差し替える。データはすべてダミー（example.com）。
@@ -250,7 +251,7 @@ const submitRequest = (quizId: string, body: unknown, raw?: string) =>
     headers: { "Content-Type": "application/json" },
     body: raw ?? JSON.stringify(body),
   });
-/** route の POST（QUIZ_ATTEMPTS_ENABLED の値のまま） */
+/** route の POST（QUIZ_ATTEMPTS_ENABLED の値のまま。公開後は true。now は渡らず実際の時刻） */
 const submitRoute = (quizId: string, body: unknown, raw?: string) => SUBMIT(submitRequest(quizId, body, raw), ctx(quizId));
 /** いまのダミーのデータで、そのクイズの問題の id を GET と同じ並び（[order, id]）で返す */
 const serverQuestionIds = (quizId: string) =>
@@ -606,9 +607,17 @@ describe("GET /api/quizzes/[quizId]：エラー", () => {
 
 // ───────────── POST /api/quizzes/[quizId]/submit ─────────────
 
-describe("POST submit：route（受験の公開前）", () => {
-  it("前提：QUIZ_ATTEMPTS_ENABLED は false", () => {
-    assert.equal(ATTEMPTS_ENABLED, false);
+describe("POST submit：route（受験の公開後）", () => {
+  /** route に送る正しい形の body（元の位置の回答を、いまのトークンの表示位置に直す） */
+  const routeBody = (quizId: string, answers: number[], extra: Row = {}) => ({
+    answers: toDisplayed(quizId, answers),
+    questionIds: serverQuestionIds(quizId),
+    attemptToken: tokenFor(quizId),
+    ...extra,
+  });
+
+  it("前提：QUIZ_ATTEMPTS_ENABLED は true（受験は公開済み。false にすると止まる）", () => {
+    assert.equal(ATTEMPTS_ENABLED, true);
   });
 
   it("セッションがなければ 401 で、DB を読まない", async () => {
@@ -623,8 +632,52 @@ describe("POST submit：route（受験の公開前）", () => {
     assert.equal(calls.length, 0);
   });
 
-  it("ログイン済みでも 503 attempts_disabled で、DB を読まず・書かない", async () => {
-    const res = await submitRoute("fin1", { answers: [1, 0, 2] });
+  it("ログイン済みなら採点して保存する。userId はセッションの値（body の userId は使わない）", async () => {
+    // fin2 は STUDENT の受験記録がない（route は実際の時刻で間隔・回数を判定するため）
+    const res = await submitRoute("fin2", routeBody("fin2", [0], { userId: OTHER }));
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.score, 100);
+    assert.equal(json.passed, true);
+    assert.equal(json.duplicate, false);
+    assert.equal(creates().length, 1, "受験記録を書いていない");
+    assert.equal((creates()[0].args.data as Row).userId, STUDENT);
+    assert.equal((creates()[0].args.data as Row).quizId, "fin2");
+  });
+
+  for (const [label, quizId, raw, reason] of [
+    ["壊れた JSON", "fin1", "{ answers: [1,", "invalid_json"],
+    ["空の quizId", "", '{"answers":[0]}', undefined],
+    ["questionIds のない body", "fin1", '{"answers":[1,0,2]}', "invalid_question_ids"],
+  ] as Array<[string, string, string, string | undefined]>) {
+    it(`${label}は 400 で、DB を読まない`, async () => {
+      const res = await submitRoute(quizId, undefined, raw);
+      assert.equal(res.status, 400);
+      if (reason !== undefined) assert.equal((await res.json()).reason, reason);
+      assert.equal(calls.length, 0, "DB を読んでいる");
+    });
+  }
+
+  it("存在しないクイズは 404 で、書き込まない", async () => {
+    const res = await submitRoute("missing", { answers: [0], questionIds: ["x"], attemptToken: tokenFor("missing") });
+    assert.equal(res.status, 404);
+    assert.equal(creates().length, 0, "受験記録を書いている");
+  });
+
+  it("route はセッションの role を本体に渡す：受講生はロック中のコースで 403 course_locked、講師は採点・保存する", async () => {
+    const locked = await submitRoute("fin3", routeBody("fin3", [0]));
+    assert.equal(locked.status, 403);
+    assert.equal((await locked.json()).reason, "course_locked");
+    assert.equal(creates().length, 0, "受講生のロック中の受験を書いた");
+    session = INSTRUCTOR_SESSION;
+    const ok = await submitRoute("fin3", routeBody("fin3", [0]));
+    assert.equal(ok.status, 200);
+    assert.equal(creates().length, 1, "講師の受験記録を書いていない");
+    assert.equal((creates()[0].args.data as Row).userId, INSTRUCTOR_SESSION!.user.id);
+  });
+
+  it("本体に attemptsEnabled: false を渡すと 503 attempts_disabled で、DB を読まず・書かない（受験を止めたとき）", async () => {
+    const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers: [1, 0, 2] }), ctx("fin1"), { attemptsEnabled: false, role: "STUDENT" });
     assert.equal(res.status, 503);
     assert.deepEqual(await res.json(), { error: "Quiz attempts are not available yet", reason: "attempts_disabled" });
     assert.equal(calls.length, 0);
@@ -637,20 +690,13 @@ describe("POST submit：route（受験の公開前）", () => {
     ["存在しないクイズ", "missing", '{"answers":[0]}'],
     ["問題 0 件のクイズ", "empty", '{"answers":[0]}'],
   ] as Array<[string, string, string]>) {
-    it(`${label}でも（入力を見ずに）503 で、DB を読まない`, async () => {
-      const res = await submitRoute(quizId, undefined, raw);
+    it(`attemptsEnabled: false なら、${label}でも（入力を見ずに）503 で、DB を読まない`, async () => {
+      const res = await HANDLE_SUBMIT(STUDENT, submitRequest(quizId, undefined, raw), ctx(quizId), { attemptsEnabled: false, role: "STUDENT" });
       assert.equal(res.status, 503);
       assert.equal((await res.json()).reason, "attempts_disabled");
       assert.equal(calls.length, 0);
     });
   }
-
-  it("本体に attemptsEnabled: false を渡しても 503 で、DB を読まない", async () => {
-    const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers: [1, 0, 2] }), ctx("fin1"), { attemptsEnabled: false, role: "STUDENT" });
-    assert.equal(res.status, 503);
-    assert.equal((await res.json()).reason, "attempts_disabled");
-    assert.equal(calls.length, 0);
-  });
 
   it("route はセッションの user.id・user.role と QUIZ_ATTEMPTS_ENABLED を本体に渡す（ソース）", () => {
     const source = readFileSync(join(process.cwd(), "src/app/api/quizzes/[quizId]/submit/route.ts"), "utf8");
@@ -984,10 +1030,12 @@ describe("POST submit：コースのロック（#47 P5、attemptsEnabled: true�
     assert.equal(calls.length, 0, "DB を読んでいる");
   });
 
-  it("route（公開前）は、ロック中のクイズでも 503 で DB を読まない", async () => {
-    const res = await submitRoute("fin3", { answers: [0] });
-    assert.equal(res.status, 503);
-    assert.equal(calls.length, 0, "DB を読んでいる");
+  it("route（公開後）でも、ロック中のクイズは 403 course_locked で、問題を読まず・書かない", async () => {
+    const res = await submitRoute("fin3", { answers: toDisplayed("fin3", [0]), questionIds: serverQuestionIds("fin3"), attemptToken: tokenFor("fin3") });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "course_locked");
+    assert.equal(questionReads().length, 0, "問題を読んでいる");
+    assert.equal(creates().length, 0, "受験記録を書いている");
   });
 
   it("ロックの確認の例外は 500 で書き込まず、ログはエラーの名前だけ", async () => {
@@ -2147,9 +2195,17 @@ describe("選択肢のシャッフル：鍵（AUTH_SECRET）がないとき（#5
     });
   });
 
-  it("route の POST は受験の公開前なので、鍵がなくても 503（今までどおり）", async () => {
+  it("route の POST（公開後）も、鍵がなければ形の確認のあと 500 で、DB を読まず記録しない。ログに値・トークンを出さない", async () => {
+    const token = tokenFor("fin1");
     await withoutSecret(async () => {
-      assert.equal((await submitRoute("fin1", { answers: [1, 0, 2] })).status, 503);
+      const done = captureLogs();
+      const res = await submitRoute("fin1", { answers: [1, 0, 2], questionIds: serverQuestionIds("fin1"), attemptToken: token });
+      const out = done();
+      assert.equal(res.status, 500);
+      assert.equal(calls.length, 0, "DB を読んでいる");
+      for (const k of [DUMMY_AUTH_SECRET, token, token.split(".")[1]]) assert.ok(!out.includes(k), `ログに ${k.slice(0, 8)} が出た`);
+      // 形が違えば鍵より先に 400
+      assert.equal((await submitRoute("fin1", { answers: [1, 0, 2] })).status, 400);
     });
   });
 });
@@ -2514,10 +2570,14 @@ describe("選択肢のシャッフル（補強）：鍵がないときの順番"
     }
   );
 
-  it("route の POST（公開前）は、空文字の AUTH_SECRET でも 503", async () => {
+  it("route の POST（公開後）は、空文字の AUTH_SECRET なら 500 で、DB を読まない", async () => {
+    const token = tokenFor("fin1");
     await withSecret("", async () => {
-      assert.equal((await submitRoute("fin1", { answers: [1, 0, 2] })).status, 503);
-      assert.equal(calls.length, 0);
+      const done = captureLogs();
+      const res = await submitRoute("fin1", { answers: [1, 0, 2], questionIds: serverQuestionIds("fin1"), attemptToken: token });
+      done();
+      assert.equal(res.status, 500);
+      assert.equal(calls.length, 0, "DB を読んでいる");
     });
   });
 });
