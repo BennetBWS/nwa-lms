@@ -506,13 +506,11 @@ describe("toOriginalAnswers：整数でない表示位置", () => {
 // ───────────── 鍵 ─────────────
 
 describe("quizKeys：空白だけの AUTH_SECRET", () => {
-  // 依頼の観点 5「AUTH_SECRET 未設定・空・空白だけで 500」。現在の実装は空文字だけを拒否し、空白だけの値から鍵を作る
-  // （テスト担当の報告事項。本番コードを直すまで todo にして、テストの実行は止めない）
+  // 依頼の観点 5「AUTH_SECRET 未設定・空・空白だけで 500」。空白だけの値からも鍵を作らない
   it(
     "空白・タブ・改行・全角空白だけなら QuizKeyUnavailableError",
-    { todo: "quiz-shuffle-key.ts が空白だけの AUTH_SECRET を拒否しない（報告済み）" },
     () => {
-      for (const s of [" ", "   ", "\t", "\n", "　", " \t\n"]) {
+      for (const s of [" ", "   ", "\t", "\n", "\u3000", " \t\n"]) {
         assert.throws(() => quizKeys({ AUTH_SECRET: s }), QuizKeyUnavailableError, `${JSON.stringify(s)} から鍵を作った`);
       }
     }

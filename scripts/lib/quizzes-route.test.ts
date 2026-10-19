@@ -2497,10 +2497,9 @@ describe("選択肢のシャッフル（補強）：鍵がないときの順番"
 
   it(
     "空白だけの AUTH_SECRET でも GET・submit とも 500 で、DB を読まない",
-    { todo: "quiz-shuffle-key.ts が空白だけの AUTH_SECRET を拒否しない（報告済み）" },
     async () => {
       const token = tokenFor("fin1");
-      for (const s of [" ", "\t\n", "　"]) {
+      for (const s of [" ", "\t\n", "\u3000"]) {
         await withSecret(s, async () => {
           calls = [];
           const done = captureLogs();
