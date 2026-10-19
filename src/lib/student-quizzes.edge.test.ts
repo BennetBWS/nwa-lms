@@ -14,6 +14,9 @@ import {
 
 // #32 student-quizzes の補強（student-quizzes.test.ts の続き）。境界を総当たりで確かめる。データはすべてダミー。
 
+/** 形だけが正しいダミーの受験のトークン（#51 選択肢のシャッフル） */
+const TOKEN = `v1.${"A".repeat(22)}.${"B".repeat(43)}`;
+
 /** 正解率の切り捨て（#51）を、BigInt の整数の割り算で計算した値（実装と別の方法で求める） */
 const exactFloor = (correct: number, total: number) => Number((BigInt(100) * BigInt(correct)) / BigInt(total));
 
@@ -153,12 +156,12 @@ describe("buildSubmitBody：境界", () => {
     ["文字列", ["0"]],
   ] as Array<[string, unknown[]]>) {
     it(`${label} は null（送信しない）`, () => {
-      assert.equal(buildSubmitBody(answers as Array<number | null>, answers.map((_, i) => `q${i}`)), null);
+      assert.equal(buildSubmitBody(answers as Array<number | null>, answers.map((_, i) => `q${i}`), TOKEN), null);
     });
   }
 
-  it("body は answers と questionIds だけ（正解・点数を送らない。#51）", () => {
-    assert.deepEqual(Object.keys(buildSubmitBody([0, 1], ["q1", "q2"])!), ["answers", "questionIds"]);
+  it("body は answers と questionIds と attemptToken だけ（正解・点数を送らない。#51）", () => {
+    assert.deepEqual(Object.keys(buildSubmitBody([0, 1], ["q1", "q2"], TOKEN)!), ["answers", "questionIds", "attemptToken"]);
   });
 
   for (const [label, ids] of [
@@ -169,13 +172,13 @@ describe("buildSubmitBody：境界", () => {
     ["配列でない", "q1,q2"],
   ] as Array<[string, unknown]>) {
     it(`問題の id が${label}なら null（送信しない。#51）`, () => {
-      assert.equal(buildSubmitBody([0, 1], ids as string[]), null);
+      assert.equal(buildSubmitBody([0, 1], ids as string[], TOKEN), null);
     });
   }
 
   it("返す questionIds は受け取った配列と別物", () => {
     const ids = ["q1", "q2"];
-    const body = buildSubmitBody([0, 1], ids)!;
+    const body = buildSubmitBody([0, 1], ids, TOKEN)!;
     ids[0] = "x";
     assert.deepEqual(body.questionIds, ["q1", "q2"]);
   });

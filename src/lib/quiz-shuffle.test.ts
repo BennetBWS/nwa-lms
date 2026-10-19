@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   SHUFFLE_KEY_INFO,
@@ -317,4 +317,22 @@ describe("import の境界（node:crypto をクライアントに入れない）
       }
     });
   }
+
+  it("quiz-shuffle を import するのは GET の route と quiz-submit（と鍵のファイル）だけ", () => {
+    const srcRoot = join(root, "src");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(name) && !/\.test\.ts$/.test(name)) files.push(p);
+      }
+    };
+    walk(srcRoot);
+    const users = files
+      .filter((f) => importsOf(f.slice(root.length + 1)).some((s) => /quiz-shuffle/.test(s)))
+      .map((f) => f.slice(root.length + 1))
+      .sort();
+    assert.deepEqual(users, ["src/app/api/quizzes/[quizId]/route.ts", "src/lib/quiz-shuffle-key.ts", "src/lib/quiz-submit.ts"]);
+  });
 });

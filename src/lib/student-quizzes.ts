@@ -111,19 +111,25 @@ export function isAttemptTokenFormat(value: unknown): value is string {
 
 export type SubmitAnswersReason = "invalid_answers";
 
-export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids";
+export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids" | "invalid_attempt_token";
 
 /**
- * body が { answers: 配列, questionIds: id の配列 } の形か（DB を読む前の確認。#51）。
+ * body が { answers: 配列, questionIds: id の配列, attemptToken: トークン } の形か（DB を読む前の確認。#51）。
  * - オブジェクトでない・answers が配列でない：invalid_answers（answers の中身は parseSubmitAnswers で見る）
  * - questionIds が配列でない・要素が isValidId（1〜64 文字の文字列）でない：invalid_question_ids
- * 成功時の value.questionIds は新しい配列。並びと中身がサーバーの問題と同じかは checkQuestionIds で見る
+ * - attemptToken が文字列でない・ATTEMPT_TOKEN_PATTERN に合わない：invalid_attempt_token（#51 選択肢のシャッフル）
+ * 成功時の value.questionIds は新しい配列。並びと中身がサーバーの問題と同じかは checkQuestionIds で、
+ * トークンの MAC は quiz-shuffle の verifyAttemptToken で見る
  */
-export function hasSubmitShape(body: unknown): ParseResult<{ questionIds: string[] }, SubmitShapeReason> {
+export function hasSubmitShape(
+  body: unknown
+): ParseResult<{ questionIds: string[]; attemptToken: string }, SubmitShapeReason> {
   if (!isPlainObject(body) || !Array.isArray(body.answers)) return { ok: false, reason: "invalid_answers" };
   const ids = body.questionIds;
   if (!Array.isArray(ids) || !ids.every((id) => isValidId(id))) return { ok: false, reason: "invalid_question_ids" };
-  return { ok: true, value: { questionIds: [...ids] as string[] } };
+  const token = body.attemptToken;
+  if (!isAttemptTokenFormat(token)) return { ok: false, reason: "invalid_attempt_token" };
+  return { ok: true, value: { questionIds: [...ids] as string[], attemptToken: token } };
 }
 
 /**
@@ -485,7 +491,10 @@ export type QuizTakeView = {
   title: string;
   /** MINI / FINAL。それ以外・ないときは null（受験の規則の文言を出さない） */
   type: QuizType | null;
+  /** 選択肢は受験ごとに並べ替え済み（#51）。answers はこの並びの位置（表示位置）で持ち、そのまま送る */
   questions: QuestionView[];
+  /** 送信に含めるトークン（#51 選択肢のシャッフル。中身は読まない） */
+  attemptToken: string;
   /** いま送ると 429 になる目安の秒数（#51、GET の retryAfterSeconds）。送れる・不明なら null */
   retryAfterSeconds: number | null;
 };
@@ -497,13 +506,15 @@ function isRetryAfterSeconds(value: unknown): value is number {
 
 /**
  * GET /api/quizzes/[quizId] の応答を受験画面用にする。
- * id・title が文字列でない、問題が 0 件、1 問でも id・question・options が壊れていれば null（受験できない）。
+ * id・title が文字列でない、問題が 0 件、1 問でも id・question・options が壊れている、
+ * attemptToken が形に合わなければ null（受験できない）。
  * type と retryAfterSeconds（#51）は壊れていれば null として扱う（受験はできる）
  */
 export function toQuizTakeView(data: unknown): QuizTakeView | null {
   if (!isPlainObject(data)) return null;
   if (typeof data.id !== "string" || data.id === "" || typeof data.title !== "string") return null;
   if (!Array.isArray(data.questions) || data.questions.length === 0) return null;
+  if (!isAttemptTokenFormat(data.attemptToken)) return null;
   const questions: QuestionView[] = [];
   const seen = new Set<string>();
   for (const q of data.questions) {
@@ -517,7 +528,7 @@ export function toQuizTakeView(data: unknown): QuizTakeView | null {
   }
   const type = data.type === "MINI" || data.type === "FINAL" ? data.type : null;
   const retryAfterSeconds = isRetryAfterSeconds(data.retryAfterSeconds) ? data.retryAfterSeconds : null;
-  return { id: data.id, title: data.title, type, questions, retryAfterSeconds };
+  return { id: data.id, title: data.title, type, questions, attemptToken: data.attemptToken, retryAfterSeconds };
 }
 
 export type QuizResultView = {
@@ -546,13 +557,15 @@ export function toQuizResultView(data: unknown, questionCount: number): QuizResu
 }
 
 /**
- * 受験画面の回答（未回答は null）と問題の id（GET の questions の並び）から submit の body を作る（#51 で questionIds を追加）。
- * 未回答が残っている、問題の id の数が回答と違う、id が空・文字列でなければ null
+ * 受験画面の回答（表示位置。未回答は null）と問題の id（GET の questions の並び）と GET の attemptToken から
+ * submit の body を作る（#51 で questionIds と attemptToken を追加）。
+ * 未回答が残っている、問題の id の数が回答と違う、id が空・文字列でない、トークンが形に合わなければ null
  */
 export function buildSubmitBody(
   answers: ReadonlyArray<number | null>,
-  questionIds: ReadonlyArray<string>
-): { answers: number[]; questionIds: string[] } | null {
+  questionIds: ReadonlyArray<string>,
+  attemptToken: string
+): { answers: number[]; questionIds: string[]; attemptToken: string } | null {
   if (answers.length === 0 || !Array.isArray(questionIds) || questionIds.length !== answers.length) return null;
   const out: number[] = [];
   for (const a of answers) {
@@ -560,7 +573,8 @@ export function buildSubmitBody(
     out.push(a);
   }
   if (!questionIds.every((id) => typeof id === "string" && id !== "")) return null;
-  return { answers: out, questionIds: [...questionIds] };
+  if (!isAttemptTokenFormat(attemptToken)) return null;
+  return { answers: out, questionIds: [...questionIds], attemptToken };
 }
 
 // ───────────── 送信の結果（#51） ─────────────

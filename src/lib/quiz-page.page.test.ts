@@ -110,9 +110,13 @@ describe("QuizPage：データの配線", () => {
     assert.match(quizPage, /classifyQuizSubmitResponse\(res\.status, data, questionCount\)/);
   });
 
-  it("送信の body は画面の問題の並びの id を含む（#51）", () => {
-    assert.match(takeSrc, /buildSubmitBody\(answers, takeQuiz\.questions\.map\(\(x\) => x\.id\)\)/);
-    assert.match(quizPage, /const submitBody = buildSubmitBody\(answers, questions\.map\(\(x\) => x\.id\)\);/);
+  it("送信の body は画面の問題の並びの id と、GET の attemptToken を含む（#51）", () => {
+    assert.match(takeSrc, /buildSubmitBody\(answers, takeQuiz\.questions\.map\(\(x\) => x\.id\), takeQuiz\.attemptToken\)/);
+    assert.match(quizPage, /const submitBody = buildSubmitBody\(answers, questions\.map\(\(x\) => x\.id\), takeQuiz \? takeQuiz\.attemptToken : null\);/);
+  });
+
+  it("選択肢は API の並びのまま出し、画面では並べ替えない（#51 選択肢のシャッフルはサーバーが行う）", () => {
+    assert.doesNotMatch(quizPage, /Math\.random|\.sort\(|shuffleQuestionViews|optionPermutation|toOriginalAnswers/);
   });
 
   it("URL の quizId は encodeURIComponent する", () => {
@@ -334,6 +338,8 @@ const QUIZ = {
     { id: "q1", question: "問1", options: ["a", "b"] },
     { id: "q2", question: "問2", options: ["c", "d", "e"] },
   ],
+  // 形だけが正しいダミーのトークン（#51 選択肢のシャッフル。画面は中身を読まずに送り返す）
+  attemptToken: `v1.${"A".repeat(22)}.${"B".repeat(43)}`,
   attemptCount: 0,
   bestScore: null,
   passed: null,
@@ -478,7 +484,7 @@ describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true の経
     assert.equal(h.reqs[0].url, "/api/quizzes/quiz%2F1");
     assert.equal(h.reqs[0].init, undefined);
     assert.equal(h.st.activeQuizId, QUIZ.id);
-    assert.deepEqual(h.st.takeQuiz, { id: QUIZ.id, title: QUIZ.title, type: "MINI", questions: QUIZ.questions, retryAfterSeconds: null });
+    assert.deepEqual(h.st.takeQuiz, { id: QUIZ.id, title: QUIZ.title, type: "MINI", questions: QUIZ.questions, attemptToken: QUIZ.attemptToken, retryAfterSeconds: null });
     assert.deepEqual(h.st.answers, [null, null]);
     assert.equal(h.st.takeLoading, false);
     assert.equal(h.st.takeFailed, false);
@@ -488,6 +494,7 @@ describe("受験：問題の読み込み（QUIZ_ATTEMPTS_ENABLED が true の経
     ["409", { status: 409, ok: false, body: { error: "Quiz unavailable", reason: "quiz_unavailable" } }],
     ["壊れた応答（問題 0 件）", { body: { ...QUIZ, questions: [] } }],
     ["壊れた応答（選択肢 1 件）", { body: { ...QUIZ, questions: [{ id: "q1", question: "問1", options: ["a"] }] } }],
+    ["壊れた応答（attemptToken なし。#51）", { body: { ...QUIZ, attemptToken: undefined } }],
   ] as Array<[string, Partial<FakeRes> & { body?: unknown }]>) {
     it(`失敗（${label}）：takeFailed`, async () => {
       const h = takeHarness(true);
@@ -544,7 +551,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
     const post = h.reqs[1];
     assert.equal(post.url, "/api/quizzes/quiz%2F1/submit");
     assert.equal(post.init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(post.init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+    assert.deepEqual(JSON.parse(String(post.init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"], attemptToken: QUIZ.attemptToken });
     assert.equal(h.st.submitting, true);
   });
 
@@ -590,7 +597,7 @@ describe("受験：回答と送信（QUIZ_ATTEMPTS_ENABLED が true の経路）
       assert.equal(h.st.reloads, 0);
       h.render().submitQuiz();
       assert.equal(h.reqs.length, 3);
-      assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+      assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"], attemptToken: QUIZ.attemptToken });
       assert.equal(h.st.submitFailed, false);
     });
   }
@@ -866,6 +873,8 @@ const QUIZ_V2 = {
   ...QUIZ,
   questionCount: 3,
   questions: [...QUIZ.questions, { id: "q3", question: "問3", options: ["f", "g"] }],
+  // 読み直すと新しいトークン（新しい並び）になる
+  attemptToken: `v1.${"C".repeat(22)}.${"D".repeat(43)}`,
 };
 
 describe("受験：429（間隔・回数の上限。#51）", () => {
@@ -893,7 +902,7 @@ describe("受験：429（間隔・回数の上限。#51）", () => {
     await settle();
     h.render().submitQuiz();
     assert.equal(h.st.submitRateLimited, null, "再送しても 429 の印が残る");
-    assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+    assert.deepEqual(JSON.parse(String(h.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"], attemptToken: QUIZ.attemptToken });
   });
 
   it("retryAfterSeconds のない 429 も上限として扱う（目安は null）", async () => {
@@ -975,7 +984,7 @@ describe("受験：409 quiz_changed（問題の入れ替え。#51）", () => {
     await settle();
     answerAll(h, [0, 1, 1]);
     h.render().submitQuiz();
-    assert.deepEqual(JSON.parse(String(h.reqs[3].init?.body)), { answers: [0, 1, 1], questionIds: ["q1", "q2", "q3"] });
+    assert.deepEqual(JSON.parse(String(h.reqs[3].init?.body)), { answers: [0, 1, 1], questionIds: ["q1", "q2", "q3"], attemptToken: QUIZ_V2.attemptToken });
     assert.equal(h.st.takeChanged, false, "送信しても知らせが残る");
   });
 

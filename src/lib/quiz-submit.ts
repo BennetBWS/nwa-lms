@@ -4,7 +4,9 @@ import { safeErrorSummary } from "@/lib/safe-error";
 import { isValidId } from "@/lib/lesson-comments";
 import { COURSE_LOCKED_REASON, quizAccessFor } from "@/lib/lesson-access";
 import { QUIZ_RATE_LIMITS, decideQuizAttempt, quizWindowStart } from "@/lib/quiz-rate-limit";
-import { checkQuestionIds, hasSubmitShape, parseSubmitAnswers, scoreAttempt, toAnswerKey } from "@/lib/student-quizzes";
+import { checkQuestionIds, hasSubmitShape, normalizeOptions, parseSubmitAnswers, scoreAttempt, toAnswerKey } from "@/lib/student-quizzes";
+import { toOriginalAnswers, verifyAttemptToken } from "@/lib/quiz-shuffle";
+import { quizKeys } from "@/lib/quiz-shuffle-key";
 
 /**
  * POST /api/quizzes/[quizId]/submit の本体（#32）。採点はサーバーだけで行い、正解は返さない。
@@ -18,15 +20,21 @@ import { checkQuestionIds, hasSubmitShape, parseSubmitAnswers, scoreAttempt, toA
  *   コースのないクイズは 404（#47 P5、Tec 決定 D-a・F-a）。講師はロックを見ない
  * - 受験の公開前の修正（#51、Tec 決定 2026-10-15）。判定の順（DB をなるべく読まない順）：
  *   1. 503 attempts_disabled → 2. quizId（400）→ 3. JSON（400 invalid_json）
- *   → 4. 形（hasSubmitShape。400 invalid_answers / invalid_question_ids。DB は読まない）
+ *   → 4. 形（hasSubmitShape。400 invalid_answers / invalid_question_ids / invalid_attempt_token。DB は読まない）
  *   → 5. 受講生のロック（404 / 403 course_locked）→ 6. クイズ（404）→ 7. 受験できない（409 quiz_unavailable）
  *   → 8. questionIds がサーバーの並びと違う（409 quiz_changed。answers の長さより先に見て、400 と取り違えない）
- *   → 9. answers の中身（400 invalid_answers）→ 10. 直近 24 時間の自分の受験記録で判定（decideQuizAttempt）
+ *   → 8b. attemptToken の MAC が合わない（409 quiz_changed。別のユーザー・クイズのトークン、改ざん、受験中の選択肢の変更）
+ *   → 9. answers の中身（400 invalid_answers。表示位置の範囲）。そのあと表示位置を元の位置に戻す（#51 選択肢のシャッフル）。
+ *      以降の重複判定・採点・保存は元の位置だけを使う（受験記録の answers は元の位置）
+ *   → 10. 直近 24 時間の自分の受験記録で判定（decideQuizAttempt）
  *      - 重複（直近 1 件と同じ回答で間隔の内側）：記録せず、送られた回答を今の正解で採点して 200 duplicate: true
  *      - 間隔・回数の上限：429 rate_limited（retryAfterSeconds と Retry-After）。講師は上限を受けない（重複の判定は受ける。Q2 a）
  *   → 11. 採点して保存し、200 duplicate: false
  *   429・409 の本文には点数・正誤・正解・問題の id を入れない。
  *   同時に送られた受験は、記録を読んでから書くまでの間に並ぶと両方とも通る（Q4 a で許容。CLAUDE.md に記載）
+ * - 選択肢のシャッフル（#51 追加修正、Tec 決定 2026-10-19）：鍵は AUTH_SECRET から作る（quiz-shuffle-key）。
+ *   未設定なら形の確認のあと DB を読まずに 500。トークン・nonce・並べ替え・回答はログにも本文にも出さない。
+ *   トークンに有効期限はない（Q3 a）。講師も同じ手順（Q2 a）
  * - route ファイルは GET / POST など決まった名前以外を export できないので、本体はここに置く。
  *   テストは attemptsEnabled: true を渡して採点・保存を確かめる。now はテスト用（省略時は new Date()）
  */
@@ -62,6 +70,8 @@ export async function handleQuizSubmit(
     if ("reason" in shape) {
       return NextResponse.json({ error: "Invalid request", reason: shape.reason }, { status: 400 });
     }
+
+    const keys = quizKeys();
 
     const isStudent = role !== "INSTRUCTOR";
     if (isStudent) {
@@ -100,11 +110,24 @@ export async function handleQuizSubmit(
       return NextResponse.json({ error: "Conflict", reason: "quiz_changed" }, { status: 409 });
     }
 
+    // toAnswerKey が通っているので options はすべて正しい（null にならない）。GET と同じく元の並びで MAC を確かめる
+    const digestQuestions = quiz.questions.map((q) => ({ id: q.id, options: normalizeOptions(q.options) ?? [] }));
+    const nonce = verifyAttemptToken(keys, shape.value.attemptToken, { userId, quizId: quiz.id, questions: digestQuestions });
+    if (nonce === null) {
+      return NextResponse.json({ error: "Conflict", reason: "quiz_changed" }, { status: 409 });
+    }
+
     const parsed = parseSubmitAnswers(body, key.optionCounts);
     if ("reason" in parsed) {
       return NextResponse.json({ error: "Invalid request", reason: parsed.reason }, { status: 400 });
     }
-    const answers = parsed.value;
+    // 表示位置 → 元の位置。ここから先は元の位置だけを使う
+    const answers = toOriginalAnswers(
+      keys.shuffleKey,
+      { userId, quizId: quiz.id, nonce },
+      quiz.questions.map((q, i) => ({ id: q.id, optionCount: key.optionCounts[i] })),
+      parsed.value
+    );
 
     const at = now ?? new Date();
     const recent = await prisma.quizAttempt.findMany({

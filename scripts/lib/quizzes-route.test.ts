@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 import { isCourseLocked, type LessonCounts } from "../../src/lib/course-lock";
+import { deriveQuizKeys, issueAttemptToken, optionPermutation } from "../../src/lib/quiz-shuffle";
 
 // #32 確認テストの API：GET /api/quizzes、GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit。
 // submit は QUIZ_ATTEMPTS_ENABLED が false の間 503 を返すので、採点・保存は本体の handleQuizSubmit に
@@ -12,6 +13,13 @@ import { isCourseLocked, type LessonCounts } from "../../src/lib/course-lock";
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
 // （受け取った引数を記録し、where（値の一致）・orderBy・select（入れ子のリレーションと _count）を最低限だけ再現する）。
 // NextAuth は installFakeAuth で差し替える。データはすべてダミー（example.com）。
+// 選択肢のシャッフル（#51 追加修正）の鍵は、ダミーの AUTH_SECRET から作る（本物の値は使わない）。
+// submit の helper は、テストが書いた「元の位置」の回答を、同じ鍵で作ったトークンの並びの「表示位置」に直して送る。
+
+const DUMMY_AUTH_SECRET = "dummy-auth-secret-for-quiz-route-tests";
+const KEYS = deriveQuizKeys(DUMMY_AUTH_SECRET);
+/** helper が使う決まった nonce（base64url 22 字）。同じ nonce なら同じトークン・同じ並び */
+const TEST_NONCE = Buffer.alloc(16, 7).toString("base64url");
 
 type Row = Record<string, unknown>;
 type Select = Record<string, unknown>;
@@ -156,6 +164,7 @@ const fakePrisma = {
 };
 
 before(async () => {
+  process.env.AUTH_SECRET = DUMMY_AUTH_SECRET;
   (globalThis as unknown as { prisma: unknown }).prisma = fakePrisma;
   installFakeAuth(() => session);
   ({ GET: LIST } = await import("../../src/app/api/quizzes/route"));
@@ -245,22 +254,63 @@ const submitRoute = (quizId: string, body: unknown, raw?: string) => SUBMIT(subm
 /** いまのダミーのデータで、そのクイズの問題の id を GET と同じ並び（[order, id]）で返す */
 const serverQuestionIds = (quizId: string) =>
   sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => q.id as string);
+/** いまのダミーのデータで、そのクイズの問題（[order, id] の順）の id と選択肢。トークンの MAC が覆う内容 */
+const serverQuestions = (quizId: string) =>
+  sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => ({
+    id: q.id as string,
+    options: (Array.isArray(q.options) ? q.options : []) as string[],
+  }));
+/** いまのデータで、GET と同じ手順のトークンを作る（userId は既定でセッションの値） */
+const tokenFor = (quizId: string, userId: string = session!.user.id!, nonce: string = TEST_NONCE) =>
+  issueAttemptToken(KEYS, { userId, quizId, questions: serverQuestions(quizId) }, nonce);
+/** そのトークン（nonce）で表示される、問題 i の並べ替え（perm[表示位置] = 元の位置） */
+const permFor = (quizId: string, i: number, userId: string = session!.user.id!, nonce: string = TEST_NONCE) => {
+  const q = serverQuestions(quizId)[i];
+  return optionPermutation(KEYS.shuffleKey, { userId, quizId, questionId: q.id, nonce, n: q.options.length });
+};
+/**
+ * 元の位置の回答を表示位置に直す。範囲内の整数でない要素（不正な回答のテスト）と、長さが問題数と違う回答はそのまま
+ */
+const toDisplayed = (quizId: string, answers: unknown, userId: string = session!.user.id!, nonce: string = TEST_NONCE): unknown => {
+  const qs = serverQuestions(quizId);
+  if (!Array.isArray(answers) || answers.length !== qs.length) return answers;
+  return answers.map((a, i) => {
+    if (typeof a !== "number" || !Number.isInteger(a) || a < 0 || a >= qs[i].options.length) return a;
+    return permFor(quizId, i, userId, nonce).indexOf(a);
+  });
+};
 /** 送信の時刻（#51 の間隔・回数の判定に使う）。ダミーの受験記録・偽 create の日時と同じ BASE */
 let submitNow: Date;
 /**
  * 本体に attemptsEnabled: true を渡す（受験を公開したあとの動き）。userId は route と同じくセッションの値。
  * body が questionIds を持たないオブジェクトなら、画面と同じく、いまの問題の id（[order, id] の順）を足して送る（#51）。
- * questionIds の検証そのものは submitExact（足さずにそのまま送る）で確かめる
+ * attemptToken を持たなければ、決まった nonce のトークンを足し、answers（元の位置）をその並びの表示位置に直して送る
+ * （#51 選択肢のシャッフル。採点・保存・重複判定は元の位置で行われるので、テストの期待値は元の位置のまま書ける）。
+ * questionIds の検証そのものは submitExact（questionIds を足さない）で確かめる
  */
 const submit = (quizId: string, body: unknown, raw?: string) => {
-  const withIds =
-    raw === undefined && typeof body === "object" && body !== null && !Array.isArray(body) && !("questionIds" in body)
-      ? { ...(body as Row), questionIds: serverQuestionIds(quizId) }
-      : body;
-  return submitExact(quizId, withIds, raw);
+  if (raw !== undefined || typeof body !== "object" || body === null || Array.isArray(body)) return submitExact(quizId, body, raw);
+  const b = { ...(body as Row) };
+  if (!("questionIds" in b)) b.questionIds = serverQuestionIds(quizId);
+  if (!("attemptToken" in b)) {
+    b.attemptToken = tokenFor(quizId);
+    b.answers = toDisplayed(quizId, b.answers);
+  }
+  return submitRaw(quizId, b);
 };
-/** body をそのまま送る（questionIds を足さない） */
-const submitExact = (quizId: string, body: unknown, raw?: string) =>
+/**
+ * questionIds を足さずに送る。attemptToken がなければ、いまのデータのトークンだけを足す（answers は直さない）。
+ * トークンの検証そのものは submitRaw（何も足さない）で確かめる
+ */
+const submitExact = (quizId: string, body: unknown, raw?: string) => {
+  const b =
+    raw === undefined && typeof body === "object" && body !== null && !Array.isArray(body) && !("attemptToken" in body)
+      ? { ...(body as Row), attemptToken: tokenFor(quizId) }
+      : body;
+  return submitRaw(quizId, b, raw);
+};
+/** body をそのまま送る（何も足さない） */
+const submitRaw = (quizId: string, body: unknown, raw?: string) =>
   HANDLE_SUBMIT(session!.user.id!, submitRequest(quizId, body, raw), ctx(quizId), { attemptsEnabled: true, role: session!.user.role, now: submitNow });
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
 /** 問題を読んだ quiz.findUnique（ロックの確認で読む quiz.findUnique は questions を select しない。#47 P5） */
@@ -477,24 +527,32 @@ describe("GET /api/quizzes/[quizId]：認証・入力", () => {
     for (const s of ["correctIndex", "questions", "options", "範囲外", "bk1"]) assert.ok(!text.includes(s), s);
     const list = await (await LIST()).text();
     assert.ok(!list.includes("badkey"));
-    assert.equal((await HANDLE_SUBMIT(STUDENT, submitRequest("badkey", { answers: [0], questionIds: ["bk1"] }), ctx("badkey"), { attemptsEnabled: true, role: "STUDENT" })).status, 409);
+    assert.equal((await HANDLE_SUBMIT(STUDENT, submitRequest("badkey", { answers: [0], questionIds: ["bk1"], attemptToken: tokenFor("badkey", STUDENT) }), ctx("badkey"), { attemptsEnabled: true, role: "STUDENT" })).status, 409);
   });
 });
 
 describe("GET /api/quizzes/[quizId]：応答", () => {
-  it("問題は [order, id] の順で、id・question・options だけ。受験記録は自分の分の集計値だけ", async () => {
+  it("問題は [order, id] の順で、id・question・options（トークンの並びに並べ替え済み）と attemptToken だけ。受験記録は自分の分の集計値だけ", async () => {
     const res = await getOne("fin1");
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), {
+    assert.equal(res.headers.get("Cache-Control"), "no-store");
+    const body = await res.json();
+    assert.match(body.attemptToken, /^v1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
+    const nonce = body.attemptToken.split(".")[1];
+    // トークンは GET と同じ手順で作ったものと一致する（MAC は元の並びの選択肢を覆う）
+    assert.equal(body.attemptToken, tokenFor("fin1", STUDENT, nonce));
+    const shuffled = (i: number, options: string[]) => permFor("fin1", i, STUDENT, nonce).map((o) => options[o]);
+    assert.deepEqual(body, {
       id: "fin1",
       title: "STEP1 修了テスト",
       type: "FINAL",
       questionCount: 3,
       questions: [
-        { id: "qz", question: "問Z", options: ["z0", "z1"] },
-        { id: "qa", question: "問A", options: ["a0", "a1", "a2", "a3"] },
-        { id: "qb", question: "問B", options: ["b0", "b1", "b2"] },
+        { id: "qz", question: "問Z", options: shuffled(0, ["z0", "z1"]) },
+        { id: "qa", question: "問A", options: shuffled(1, ["a0", "a1", "a2", "a3"]) },
+        { id: "qb", question: "問B", options: shuffled(2, ["b0", "b1", "b2"]) },
       ],
+      attemptToken: body.attemptToken,
       attemptCount: 2,
       bestScore: 67,
       passed: false,
@@ -913,7 +971,7 @@ describe("POST submit：コースのロック（#47 P5、attemptsEnabled: true�
 
   it("本体に role を渡さない（undefined・null）ときも受講生として扱う", async () => {
     for (const role of [undefined, null]) {
-      const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin3", { answers: [0], questionIds: ["f3q"] }), ctx("fin3"), { attemptsEnabled: true, role });
+      const res = await HANDLE_SUBMIT(STUDENT, submitRequest("fin3", { answers: [0], questionIds: ["f3q"], attemptToken: tokenFor("fin3", STUDENT) }), ctx("fin3"), { attemptsEnabled: true, role });
       assert.equal(res.status, 403, `role ${String(role)} が 403 でない`);
     }
     assert.equal(creates().length, 0, "受験記録を書いている");
@@ -1567,7 +1625,7 @@ describe("POST submit：ロールの扱い（#51 追加）", () => {
   ] as Array<[string, string | null | undefined]>) {
     it(`role が${label}なら受講生として上限を受ける（429）`, async () => {
       const send = (answers: number[]) =>
-        HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers, questionIds: serverQuestionIds("fin1") }), ctx("fin1"), {
+        HANDLE_SUBMIT(STUDENT, submitRequest("fin1", { answers: toDisplayed("fin1", answers, STUDENT), questionIds: serverQuestionIds("fin1"), attemptToken: tokenFor("fin1", STUDENT) }), ctx("fin1"), {
           attemptsEnabled: true,
           role,
           now: submitNow,
@@ -1692,8 +1750,16 @@ describe("POST submit：重複の追加の観点（#51 追加）", () => {
   it("JSON の 1.0 と -0 で送り直しても、同じ回答として重複になり記録しない", async () => {
     clearMyFin1();
     await submit("fin1", { answers: [1, 0, 2] });
-    const raw = `{"answers":[1.0,-0,2.0],"questionIds":${JSON.stringify(serverQuestionIds("fin1"))}}`;
-    const res = await submitExact("fin1", undefined, raw);
+    // 表示位置で 0 になる問題があるトークンを選び、その位置を -0、ほかを 1.0 のように書く（#51 選択肢のシャッフル）
+    let nonce = TEST_NONCE;
+    for (let i = 0; !(toDisplayed("fin1", [1, 0, 2], STUDENT, nonce) as number[]).includes(0); i++) {
+      nonce = Buffer.alloc(16, i).toString("base64url");
+    }
+    const displayed = toDisplayed("fin1", [1, 0, 2], STUDENT, nonce) as number[];
+    const rawAnswers = displayed.map((d) => (d === 0 ? "-0" : `${d}.0`)).join(",");
+    assert.ok(rawAnswers.includes("-0") && rawAnswers.includes(".0"), "-0 と 1.0 の形を両方含んでいない");
+    const raw = `{"answers":[${rawAnswers}],"questionIds":${JSON.stringify(serverQuestionIds("fin1"))},"attemptToken":"${tokenFor("fin1", STUDENT, nonce)}"}`;
+    const res = await submitRaw("fin1", undefined, raw);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.duplicate, true);
@@ -1725,3 +1791,4 @@ describe("POST submit：重複の追加の観点（#51 追加）", () => {
     assert.equal((await submit("fin1", { answers: [1, 0, 2] })).status, 429);
   });
 });
+
