@@ -564,7 +564,7 @@ export function toQuizResultView(data: unknown, questionCount: number): QuizResu
 export function buildSubmitBody(
   answers: ReadonlyArray<number | null>,
   questionIds: ReadonlyArray<string>,
-  attemptToken: string
+  attemptToken: string | null
 ): { answers: number[]; questionIds: string[]; attemptToken: string } | null {
   if (answers.length === 0 || !Array.isArray(questionIds) || questionIds.length !== answers.length) return null;
   const out: number[] = [];
