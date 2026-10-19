@@ -302,101 +302,108 @@ describe("QuizPage 描画：前提", () => {
   });
 });
 
-describe("QuizPage 描画：一覧の読み込み", () => {
-  it("最初は読み込み中で、/api/quizzes を 1 回だけ読む（オプションなし）", () => {
-    const m = mount(false);
-    const tree = m.render();
-    assert.ok(text(tree).includes("Loading..."));
-    assert.equal(m.reqs.length, 1);
-    assert.equal(m.reqs[0].url, "/api/quizzes");
-    assert.equal(m.reqs[0].init, undefined);
-    // 再描画しても取得し直さない
-    m.render();
-    assert.equal(m.reqs.length, 1);
+// 一覧の読み込みと一覧の中身は、受験の開閉（QUIZ_ATTEMPTS_ENABLED）によらない。true（本番）と false（止めたとき）の両方で確かめる
+for (const enabled of [true, false]) {
+  describe(`QuizPage 描画：一覧の読み込み（QUIZ_ATTEMPTS_ENABLED が ${enabled}）`, () => {
+    it("最初は読み込み中で、/api/quizzes を 1 回だけ読む（オプションなし）", () => {
+      const m = mount(enabled);
+      const tree = m.render();
+      assert.ok(text(tree).includes("Loading..."), "読み込み中の表示がない");
+      assert.equal(m.reqs.length, 1);
+      assert.equal(m.reqs[0].url, "/api/quizzes");
+      assert.equal(m.reqs[0].init, undefined);
+      // 再描画しても取得し直さない
+      m.render();
+      assert.equal(m.reqs.length, 1);
+    });
+
+    it("失敗（500）は role=alert と再読み込みボタン。押すともう一度読み、成功すれば一覧を出す", async () => {
+      const m = mount(enabled);
+      m.render();
+      m.reqs[0].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
+      await settle();
+      let tree = m.render();
+      const alerts = byRole(tree, "alert");
+      assert.equal(alerts.length, 1);
+      assert.ok(text(alerts[0]).includes("確認テストを読み込めませんでした"), "失敗の文言がない");
+      click(button(tree, "再読み込み"));
+      assert.equal(m.reqs.length, 2);
+      tree = m.render();
+      assert.ok(text(tree).includes("Loading..."), "再読み込み中の表示がない");
+      m.reqs[1].release(res(LIST));
+      await settle();
+      tree = m.render();
+      assert.equal(byRole(tree, "alert").length, 0);
+      assert.ok(text(tree).includes("STEP1 ダミー"), "一覧が出ていない");
+    });
+
+    it("courses が空なら「受けられる確認テストはまだありません」で、準備中の案内も受験ボタンも出さない", async () => {
+      const m = await loadedList(enabled, { courses: [] });
+      const tree = m.render();
+      const t = text(tree);
+      assert.ok(t.includes("受けられる確認テストはまだありません"), "空の文言がない");
+      assert.ok(!t.includes("受験は準備中です"), "空の一覧に準備中の案内を出した");
+      assert.deepEqual(buttonLabels(tree), []);
+    });
+
+    it(`見出しと合格基準（${PASSING_PERCENT}%）を出し、見本の文言は出さない`, async () => {
+      const m = await loadedList(enabled);
+      const t = text(m.render());
+      assert.ok(t.includes("確認テスト受講"), "見出しがない");
+      assert.ok(t.includes(`${PASSING_PERCENT}%以上の正解で合格です。`), "合格基準がない");
+      for (const s of ["15分", "20分", "Flexbox", "PC基本操作", "STEP1〜3のみ", "合格！"]) assert.ok(!t.includes(s), s);
+    });
   });
 
-  it("失敗（500）は role=alert と再読み込みボタン。押すともう一度読み、成功すれば一覧を出す", async () => {
-    const m = mount(false);
-    m.render();
-    m.reqs[0].release(res({ error: "Internal server error" }, { status: 500, ok: false }));
-    await settle();
-    let tree = m.render();
-    const alerts = byRole(tree, "alert");
-    assert.equal(alerts.length, 1);
-    assert.ok(text(alerts[0]).includes("確認テストを読み込めませんでした"));
-    click(button(tree, "再読み込み"));
-    assert.equal(m.reqs.length, 2);
-    tree = m.render();
-    assert.ok(text(tree).includes("Loading..."));
-    m.reqs[1].release(res(LIST));
-    await settle();
-    tree = m.render();
-    assert.equal(byRole(tree, "alert").length, 0);
-    assert.ok(text(tree).includes("STEP1 ダミー"));
-  });
+  describe(`QuizPage 描画：一覧の中身（QUIZ_ATTEMPTS_ENABLED が ${enabled}）`, () => {
+    it("コース名・件数・修了テスト／ミニテストの見出し・問題数・受験回数・最高点・合否", async () => {
+      const m = await loadedList(enabled);
+      const t = text(m.render());
+      for (const s of [
+        "STEP1 ダミー",
+        "修了テスト 1件 · ミニテスト 2件",
+        "STEP2 ダミー",
+        "修了テスト 1件 · ミニテスト 0件",
+        "STEP1 修了テスト",
+        "3問 · 受験 2回",
+        "最高 67点",
+        "不合格",
+        "レッスン1 · 1問 · 受験 1回",
+        "最高 100点",
+        "合格",
+        "レッスン2 · 2問",
+        "未受験",
+      ]) {
+        assert.ok(t.includes(s), s);
+      }
+      // 未受験の行には最高点・受験回数を出さない
+      assert.ok(!t.includes("レッスン2 · 2問 · 受験"), "未受験の行に受験回数を出した");
+      assert.equal((t.match(/最高 /g) ?? []).length, 2);
+    });
 
-  it("courses が空なら「受けられる確認テストはまだありません」で、準備中の案内も出さない", async () => {
-    const m = await loadedList(false, { courses: [] });
-    const t = text(m.render());
-    assert.ok(t.includes("受けられる確認テストはまだありません"));
-    assert.ok(!t.includes("受験は準備中です"));
-  });
+    it("ロックの表示はロックされたコース（STEP2）だけ", async () => {
+      const m = await loadedList(enabled);
+      const t = text(m.render());
+      assert.equal((t.match(/前のコースを終えると受けられます/g) ?? []).length, 1);
+      assert.ok(t.indexOf("前のコースを終えると受けられます") > t.indexOf("STEP2 ダミー"), "ロックの表示が STEP2 の行にない");
+    });
 
-  it(`見出しと合格基準（${PASSING_PERCENT}%）を出し、見本の文言は出さない`, async () => {
-    const m = await loadedList(false);
-    const t = text(m.render());
-    assert.ok(t.includes("確認テスト受講"));
-    assert.ok(t.includes(`${PASSING_PERCENT}%以上の正解で合格です。`));
-    for (const s of ["15分", "20分", "Flexbox", "PC基本操作", "STEP1〜3のみ", "合格！"]) assert.ok(!t.includes(s), s);
+    it("画面に出す文言に、正解・回答・受験日時・ID を含まない", async () => {
+      const m = await loadedList(enabled);
+      const t = text(m.render());
+      for (const s of ["correctIndex", "answers", "lastAttemptAt", "2026-10-07", "fin1", "mini2"]) assert.ok(!t.includes(s), s);
+    });
   });
-});
+}
 
-describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が false＝いまの本番）", () => {
+describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が false＝受験を止めたとき）", () => {
   it("受験ボタンを 1 つも出さず、「受験は準備中です」を role=status で出す", async () => {
     const m = await loadedList(false);
     const tree = m.render();
     assert.deepEqual(buttonLabels(tree), []);
     const status = byRole(tree, "status");
     assert.equal(status.length, 1);
-    assert.ok(text(status[0]).includes("受験は準備中です"));
-  });
-
-  it("コース名・件数・修了テスト／ミニテストの見出し・問題数・受験回数・最高点・合否", async () => {
-    const m = await loadedList(false);
-    const t = text(m.render());
-    for (const s of [
-      "STEP1 ダミー",
-      "修了テスト 1件 · ミニテスト 2件",
-      "STEP2 ダミー",
-      "修了テスト 1件 · ミニテスト 0件",
-      "STEP1 修了テスト",
-      "3問 · 受験 2回",
-      "最高 67点",
-      "不合格",
-      "レッスン1 · 1問 · 受験 1回",
-      "最高 100点",
-      "合格",
-      "レッスン2 · 2問",
-      "未受験",
-    ]) {
-      assert.ok(t.includes(s), s);
-    }
-    // 未受験の行には最高点・受験回数を出さない
-    assert.ok(!t.includes("レッスン2 · 2問 · 受験"));
-    assert.equal((t.match(/最高 /g) ?? []).length, 2);
-  });
-
-  it("ロックの表示はロックされたコース（STEP2）だけ", async () => {
-    const m = await loadedList(false);
-    const t = text(m.render());
-    assert.equal((t.match(/前のコースを終えると受けられます/g) ?? []).length, 1);
-    assert.ok(t.indexOf("前のコースを終えると受けられます") > t.indexOf("STEP2 ダミー"));
-  });
-
-  it("画面に出す文言に、正解・回答・受験日時・ID を含まない", async () => {
-    const m = await loadedList(false);
-    const t = text(m.render());
-    for (const s of ["correctIndex", "answers", "lastAttemptAt", "2026-10-07", "fin1", "mini2"]) assert.ok(!t.includes(s), s);
+    assert.ok(text(status[0]).includes("受験は準備中です"), "準備中の案内がない");
   });
 
   it("受験中の状態が残っていても（activeQuizId があっても）受験画面は開かず、一覧を出す", async () => {
@@ -405,9 +412,9 @@ describe("QuizPage 描画：一覧（QUIZ_ATTEMPTS_ENABLED が false＝いまの
     m.reqs[0].release(res(LIST));
     await settle();
     const t = text(m.render());
-    assert.ok(t.includes("STEP1 ダミー"));
-    assert.ok(!t.includes("ダミー問1"));
-    assert.ok(!t.includes("回答を送信する"));
+    assert.ok(t.includes("STEP1 ダミー"), "一覧が出ていない");
+    assert.ok(!t.includes("ダミー問1"), "受験画面の問題を出した");
+    assert.ok(!t.includes("回答を送信する"), "送信ボタンを出した");
   });
 });
 
@@ -448,7 +455,7 @@ describe("QuizPage 描画：コースのアイコン", () => {
   const iconCount = (tree: El, type: unknown) => findAll(tree, (e) => e.type === type).length;
 
   it("登録されたアイコン（it）はその部品を出す", async () => {
-    const m = await loadedList(false, withIcons(["it"]), ICONS);
+    const m = await loadedList(true, withIcons(["it"]), ICONS);
     const tree = m.render();
     assertRenderable(tree);
     assert.equal(iconCount(tree, IconIt), 1);
@@ -456,7 +463,7 @@ describe("QuizPage 描画：コースのアイコン", () => {
 
   for (const icon of BUILTINS) {
     it(`icon が ${icon} のコースでも例外を出さず、Object の組み込みを使わずに既定のアイコン（BookOpen）を出す`, async () => {
-      const m = await loadedList(false, withIcons([icon, "it"]), ICONS);
+      const m = await loadedList(true, withIcons([icon, "it"]), ICONS);
       let tree: El | undefined;
       assert.doesNotThrow(() => {
         tree = m.render();
@@ -469,7 +476,7 @@ describe("QuizPage 描画：コースのアイコン", () => {
   }
 
   it("CourseIcons が空のときも icon が constructor のコースで例外を出さない", async () => {
-    const m = await loadedList(false, withIcons(["constructor"]));
+    const m = await loadedList(true, withIcons(["constructor"]));
     const tree = m.render();
     assertRenderable(tree);
     assert.equal(iconCount(tree, COMPONENTS.BookOpen), 1);
