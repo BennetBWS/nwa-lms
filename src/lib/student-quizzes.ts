@@ -98,6 +98,17 @@ export function toAnswerKey(rows: ReadonlyArray<AnswerKeyRow>): AnswerKey | null
 
 // ───────────── POST /api/quizzes/[quizId]/submit の入力 ─────────────
 
+/**
+ * 受験のトークン（#51 選択肢のシャッフル）の形：`v1.<nonce: base64url 22 字>.<mac: base64url 43 字>`。
+ * 発行と MAC の検証はサーバー専用の quiz-shuffle.ts が行う。ここは形だけを見る（画面からも使うので node:crypto を使わない）
+ */
+export const ATTEMPT_TOKEN_PATTERN = /^v1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/;
+
+/** 受験のトークンの形か（中身が正しいか＝MAC はサーバーが確かめる） */
+export function isAttemptTokenFormat(value: unknown): value is string {
+  return typeof value === "string" && ATTEMPT_TOKEN_PATTERN.test(value);
+}
+
 export type SubmitAnswersReason = "invalid_answers";
 
 export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids";
