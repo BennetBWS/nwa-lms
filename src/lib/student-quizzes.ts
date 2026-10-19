@@ -8,16 +8,21 @@
  * - 一覧と受験を実装する。受験の開始ボタンは QUIZ_ATTEMPTS_ENABLED で隠し、#8（DB の分離）のあとに公開する
  * - 結果は点数・合否・正解数・問題ごとの正誤。正解そのものは見せない（API も返さない）
  * - 合格判定は四捨五入前の値で行う（正解率 70% 以上）
+ * - 点数は正解率の切り捨て（#51、Tec 決定 D。合否と点数が必ず一致する：70 点以上なら合格）
  * - レッスンの種類 QUIZ とはつながない（#50）
  */
 
 import type { Prisma } from "@prisma/client";
 import { isCourseLocked, type LessonCounts } from "./course-lock";
+import { isCourseLockedResponse } from "./course-locked";
+import { retryAfterHint } from "./comment-form";
+import { isValidId } from "./lesson-comments";
+import { QUIZ_RATE_LIMITS, QUIZ_WINDOW_MS } from "./quiz-rate-limit";
 
 /** 受験（問題の表示・送信）を画面で開けるか。#8 のあとに true にする */
 export const QUIZ_ATTEMPTS_ENABLED = false;
 
-/** 合格に必要な正解率（%）。四捨五入前の値で判定する */
+/** 合格に必要な正解率（%）。丸める前の値で判定する（点数は切り捨てなので、70 点以上と合格は一致する） */
 export const PASSING_PERCENT = 70;
 
 /** 1 問あたりの最小の選択肢数 */
@@ -95,9 +100,28 @@ export function toAnswerKey(rows: ReadonlyArray<AnswerKeyRow>): AnswerKey | null
 
 export type SubmitAnswersReason = "invalid_answers";
 
-/** body が { answers: 配列 } の形か（DB を読む前の確認。中身は parseSubmitAnswers で見る） */
-export function hasAnswersArray(body: unknown): boolean {
-  return isPlainObject(body) && Array.isArray(body.answers);
+export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids";
+
+/**
+ * body が { answers: 配列, questionIds: id の配列 } の形か（DB を読む前の確認。#51）。
+ * - オブジェクトでない・answers が配列でない：invalid_answers（answers の中身は parseSubmitAnswers で見る）
+ * - questionIds が配列でない・要素が isValidId（1〜64 文字の文字列）でない：invalid_question_ids
+ * 成功時の value.questionIds は新しい配列。並びと中身がサーバーの問題と同じかは checkQuestionIds で見る
+ */
+export function hasSubmitShape(body: unknown): ParseResult<{ questionIds: string[] }, SubmitShapeReason> {
+  if (!isPlainObject(body) || !Array.isArray(body.answers)) return { ok: false, reason: "invalid_answers" };
+  const ids = body.questionIds;
+  if (!Array.isArray(ids) || !ids.every((id) => isValidId(id))) return { ok: false, reason: "invalid_question_ids" };
+  return { ok: true, value: { questionIds: [...ids] as string[] } };
+}
+
+/**
+ * 送られた questionIds が、サーバーの問題の並び（[order, id] の順）と件数・順・中身まで完全に同じか（#51）。
+ * 違えば受験画面を開いたあとに問題が入れ替わった（409 quiz_changed）
+ */
+export function checkQuestionIds(sent: ReadonlyArray<string>, serverIds: ReadonlyArray<string>): boolean {
+  if (sent.length !== serverIds.length) return false;
+  return serverIds.every((id, i) => sent[i] === id);
 }
 
 /**
@@ -130,9 +154,9 @@ export function parseSubmitAnswers(
 export type AttemptScore = {
   correct: number;
   total: number;
-  /** 正解率（%）を四捨五入した整数 */
+  /** 正解率（%）を切り捨てた整数（#51） */
   score: number;
-  /** 四捨五入前の正解率が PASSING_PERCENT 以上 */
+  /** 丸める前の正解率が PASSING_PERCENT 以上（score >= PASSING_PERCENT と同じ） */
   passed: boolean;
   /** 問題ごとの正誤（並びは問題の順） */
   results: boolean[];
@@ -150,8 +174,9 @@ export function scoreAttempt(answers: ReadonlyArray<number>, correctIndexes: Rea
   return {
     correct,
     total,
-    // 浮動小数の誤差を避けるため整数だけで四捨五入する（ちょうど .5 は切り上げ。23/40 = 57.5% → 58）
-    score: Math.floor((200 * correct + total) / (2 * total)),
+    // 整数だけで切り捨てる（浮動小数の誤差なし。#51 で四捨五入から変更。23/40 = 57.5% → 57、2/3 → 66）。
+    // PASSING_PERCENT は整数なので、floor(100c/t) >= 70 と 100c >= 70t は同じ条件になる
+    score: (100 * correct - ((100 * correct) % total)) / total,
     passed: correct * 100 >= PASSING_PERCENT * total,
     results,
   };
@@ -173,7 +198,7 @@ export type AttemptStats = {
 
 /**
  * 受験記録をまとめる。渡されたものをすべて数える（他人の記録を除くのは route の where userId の役目）。
- * 合否は記録の passed をそのまま使う（四捨五入後の点数からは判定しない）
+ * 合否は記録の passed をそのまま使う（点数からは判定しない。#51 より前の記録は四捨五入の点数のため）
  */
 export function summarizeAttempts(rows: ReadonlyArray<AttemptRow>): AttemptStats {
   if (rows.length === 0) return { attemptCount: 0, bestScore: null, passed: null, lastAttemptAt: null };
@@ -444,11 +469,25 @@ export function toQuizCourseItems(data: unknown): QuizCourseItem[] {
   return out;
 }
 
-export type QuizTakeView = { id: string; title: string; questions: QuestionView[] };
+export type QuizTakeView = {
+  id: string;
+  title: string;
+  /** MINI / FINAL。それ以外・ないときは null（受験の規則の文言を出さない） */
+  type: QuizType | null;
+  questions: QuestionView[];
+  /** いま送ると 429 になる目安の秒数（#51、GET の retryAfterSeconds）。送れる・不明なら null */
+  retryAfterSeconds: number | null;
+};
+
+/** retryAfterSeconds として使える値か（正の有限な数で、24 時間以下） */
+function isRetryAfterSeconds(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= QUIZ_WINDOW_MS / 1000;
+}
 
 /**
  * GET /api/quizzes/[quizId] の応答を受験画面用にする。
- * id・title が文字列でない、問題が 0 件、1 問でも id・question・options が壊れていれば null（受験できない）
+ * id・title が文字列でない、問題が 0 件、1 問でも id・question・options が壊れていれば null（受験できない）。
+ * type と retryAfterSeconds（#51）は壊れていれば null として扱う（受験はできる）
  */
 export function toQuizTakeView(data: unknown): QuizTakeView | null {
   if (!isPlainObject(data)) return null;
@@ -465,14 +504,25 @@ export function toQuizTakeView(data: unknown): QuizTakeView | null {
     seen.add(q.id);
     questions.push({ id: q.id, question: q.question, options });
   }
-  return { id: data.id, title: data.title, questions };
+  const type = data.type === "MINI" || data.type === "FINAL" ? data.type : null;
+  const retryAfterSeconds = isRetryAfterSeconds(data.retryAfterSeconds) ? data.retryAfterSeconds : null;
+  return { id: data.id, title: data.title, type, questions, retryAfterSeconds };
 }
 
-export type QuizResultView = { score: number; passed: boolean; total: number; correct: number; results: boolean[] };
+export type QuizResultView = {
+  score: number;
+  passed: boolean;
+  total: number;
+  correct: number;
+  results: boolean[];
+  /** 前回の送信が届いていた再送で、記録していない（#51）。項目がない・真偽値でなければ false */
+  duplicate: boolean;
+};
 
 /**
  * submit の応答を結果画面用にする（画面では採点しない。サーバーの値をそのまま使う）。
- * 項目の型が違う、total が問題数と違う、results の長さが total と違う、correct が範囲外なら null
+ * 項目の型が違う、total が問題数と違う、results の長さが total と違う、correct が範囲外なら null。
+ * 点数と合否の一致（score >= 70 と passed）はサーバーを信じ、ここでは確かめない
  */
 export function toQuizResultView(data: unknown, questionCount: number): QuizResultView | null {
   if (!isPlainObject(data)) return null;
@@ -481,18 +531,105 @@ export function toQuizResultView(data: unknown, questionCount: number): QuizResu
   if (!isNonNegativeInt(total) || total === 0 || total !== questionCount) return null;
   if (!isNonNegativeInt(correct) || correct > total) return null;
   if (!Array.isArray(results) || results.length !== total || !results.every((r) => typeof r === "boolean")) return null;
-  return { score, passed, total, correct, results: [...results] };
+  return { score, passed, total, correct, results: [...results], duplicate: data.duplicate === true };
 }
 
-/** 受験画面の回答（未回答は null）から submit の body を作る。未回答が残っていれば null */
-export function buildSubmitBody(answers: ReadonlyArray<number | null>): { answers: number[] } | null {
-  if (answers.length === 0) return null;
+/**
+ * 受験画面の回答（未回答は null）と問題の id（GET の questions の並び）から submit の body を作る（#51 で questionIds を追加）。
+ * 未回答が残っている、問題の id の数が回答と違う、id が空・文字列でなければ null
+ */
+export function buildSubmitBody(
+  answers: ReadonlyArray<number | null>,
+  questionIds: ReadonlyArray<string>
+): { answers: number[]; questionIds: string[] } | null {
+  if (answers.length === 0 || !Array.isArray(questionIds) || questionIds.length !== answers.length) return null;
   const out: number[] = [];
   for (const a of answers) {
     if (!isNonNegativeInt(a)) return null;
     out.push(a);
   }
-  return { answers: out };
+  if (!questionIds.every((id) => typeof id === "string" && id !== "")) return null;
+  return { answers: out, questionIds: [...questionIds] };
+}
+
+// ───────────── 送信の結果（#51） ─────────────
+
+export type QuizSubmitOutcome =
+  | { kind: "ok"; result: QuizResultView }
+  | { kind: "duplicate"; result: QuizResultView }
+  | { kind: "rate_limited"; retryAfterSeconds: number | null }
+  | { kind: "quiz_changed" }
+  | { kind: "course_locked" }
+  | { kind: "failed" };
+
+/**
+ * submit の応答（状態コードと本文）を分類する。本文が読めなければ body は null で渡す。
+ * - 200 で結果として読める：duplicate が true なら "duplicate"、それ以外は "ok"
+ * - 429："rate_limited"（retryAfterSeconds が使えなければ null。待ち時間の目安を出さない）
+ * - 409 reason quiz_changed："quiz_changed"（409 quiz_unavailable は "failed"）
+ * - 403 reason course_locked："course_locked"
+ * - それ以外（壊れた 200・500・503・400 など）："failed"
+ * リダイレクト・失効（401）は呼び出す前に扱う
+ */
+export function classifyQuizSubmitResponse(status: number, body: unknown, questionCount: number): QuizSubmitOutcome {
+  if (status === 200) {
+    const result = toQuizResultView(body, questionCount);
+    if (!result) return { kind: "failed" };
+    return result.duplicate ? { kind: "duplicate", result } : { kind: "ok", result };
+  }
+  if (status === 429) {
+    const seconds = isPlainObject(body) && isRetryAfterSeconds(body.retryAfterSeconds) ? body.retryAfterSeconds : null;
+    return { kind: "rate_limited", retryAfterSeconds: seconds };
+  }
+  if (status === 409 && isPlainObject(body) && body.reason === "quiz_changed") return { kind: "quiz_changed" };
+  if (isCourseLockedResponse(status, body)) return { kind: "course_locked" };
+  return { kind: "failed" };
+}
+
+/** 429 の文言（#51）。待ち時間は言い切らず、目安は retryAfterHint で添える */
+export const QUIZ_RATE_LIMITED_MESSAGE =
+  "受験の間隔が短いか、1 日に受けられる回数を超えたため、送信できませんでした。回答はそのまま残っています。しばらく時間をおいてから、もう一度送信してください。";
+
+/** 429 のときに添える注意（一覧に戻ると回答が消える） */
+export const QUIZ_RATE_LIMITED_LEAVE_NOTE = "テスト一覧に戻ると、回答は消えます。";
+
+/** 409 quiz_changed で問題を読み直せたとき */
+export const QUIZ_CHANGED_MESSAGE = "テストの問題が更新されたため、最新の問題を読み込みました。お手数ですが、もう一度回答してください。";
+
+/** 200 duplicate: true のとき（結果の上に出す） */
+export const QUIZ_DUPLICATE_MESSAGE = "前回の送信が届いていたため、そのときの結果を表示しています（新しい受験としては記録していません）。";
+
+/** GET の retryAfterSeconds があるとき（受験画面の冒頭。回答は始められる） */
+export const QUIZ_WAIT_MESSAGE =
+  "前回の受験から間もないか、24 時間に受けられる回数に達しているため、いまは回答を送信できません。回答は始められますが、送信は時間をおいてからにしてください。";
+
+/** 429 の文言に、待ち時間の目安を添える */
+export function quizRateLimitedMessage(retryAfterSeconds: unknown): string {
+  return QUIZ_RATE_LIMITED_MESSAGE + retryAfterHint(retryAfterSeconds);
+}
+
+/** 受験画面の冒頭の案内に、待ち時間の目安を添える */
+export function quizWaitMessage(retryAfterSeconds: unknown): string {
+  return QUIZ_WAIT_MESSAGE + retryAfterHint(retryAfterSeconds);
+}
+
+/** ミリ秒を「N 秒」「N 分」「N 時間」にする（割り切れる大きい単位を使う） */
+function durationLabel(ms: number): string {
+  if (ms >= 3_600_000 && ms % 3_600_000 === 0) return `${ms / 3_600_000} 時間`;
+  if (ms >= 60_000 && ms % 60_000 === 0) return `${ms / 60_000} 分`;
+  return `${Math.ceil(ms / 1000)} 秒`;
+}
+
+const QUIZ_TYPE_LABELS: Readonly<Record<QuizType, string>> = { MINI: "ミニテスト", FINAL: "修了テスト" };
+
+/**
+ * 受験画面に出す受験の規則（#51、Tec 決定 Q6 a）。数値は QUIZ_RATE_LIMITS から作る。
+ * 例「修了テストは前回の受験から 30 分あけて、24 時間に 3 回まで受けられます。」。type が不明なら空文字
+ */
+export function quizAttemptRuleText(type: unknown): string {
+  if (type !== "MINI" && type !== "FINAL") return "";
+  const { intervalMs, dailyLimit } = QUIZ_RATE_LIMITS[type];
+  return `${QUIZ_TYPE_LABELS[type]}は前回の受験から ${durationLabel(intervalMs)}あけて、${durationLabel(QUIZ_WINDOW_MS)}に ${dailyLimit} 回まで受けられます。`;
 }
 
 /** 結果の見出し（絵文字は使わない） */

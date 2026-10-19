@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { safeErrorSummary } from "@/lib/safe-error";
 import { isValidId } from "@/lib/lesson-comments";
 import { COURSE_LOCKED_REASON, quizAccessFor } from "@/lib/lesson-access";
+import { quizRetryAfterSeconds } from "@/lib/quiz-rate-limit";
 import { summarizeAttempts, toAnswerKey, toQuestionViews } from "@/lib/student-quizzes";
 
 // 受験画面の問題（#32）。受験記録は自分の分の集計値だけ（行そのものは返さない）。
@@ -11,6 +12,8 @@ import { summarizeAttempts, toAnswerKey, toQuestionViews } from "@/lib/student-q
 // 応答の questions は toQuestionViews（id・question・options だけ）で作る。
 // 受講生（講師以外）は、クイズのコースがロック中なら 403 { reason: "course_locked" } で、問題・受験記録を読まない。
 // コースのないクイズ（一覧に出ないもの）は 404（#47 P5、Tec 決定 D-a）。講師はロックを見ない
+// retryAfterSeconds（#51、Tec 決定 Q3 b）：受講生がいま別の回答を送ったら 429 になるなら待つ秒数、ならなければ null。
+// 受験画面の冒頭で知らせるため。すでに読んでいる受験記録の createdAt だけで判定する（追加の読み取りなし）。講師は上限を受けないので null
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ quizId: string }> }
@@ -67,6 +70,7 @@ export async function GET(
     }
 
     const stats = summarizeAttempts(attempts);
+    const retryAfterSeconds = session.user.role !== "INSTRUCTOR" ? quizRetryAfterSeconds(attempts, quiz.type, new Date()) : null;
     return NextResponse.json({
       id: quiz.id,
       title: quiz.title,
@@ -76,6 +80,7 @@ export async function GET(
       attemptCount: stats.attemptCount,
       bestScore: stats.bestScore,
       passed: stats.passed,
+      retryAfterSeconds,
     });
   } catch (error) {
     console.error("GET /api/quizzes/[quizId] error:", safeErrorSummary(error).name);
