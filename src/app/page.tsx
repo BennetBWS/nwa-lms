@@ -2363,9 +2363,11 @@ const QuizPage = () => {
 
   // Sends all answers once, with the question ids in the order shown (#51). Scoring is done by the server only;
   // the page shows its result. On failure the answers are kept so that the same answers can be sent again.
+  // The options come shuffled for each attempt (#51): answers are the positions shown, sent with GET's attemptToken
+  // (the server maps them back). Opening the quiz again gives a new token and a new order.
   const submitQuiz = () => {
     if (!QUIZ_ATTEMPTS_ENABLED || submitInFlight.current || !takeQuiz || submitLocked) return;
-    const body = buildSubmitBody(answers, takeQuiz.questions.map((x) => x.id));
+    const body = buildSubmitBody(answers, takeQuiz.questions.map((x) => x.id), takeQuiz.attemptToken);
     if (!body) return;
     submitInFlight.current = true;
     const seq = takeSeq.current;
@@ -2434,7 +2436,7 @@ const QuizPage = () => {
     const q = questions[currentQ];
     const isLast = currentQ === questions.length - 1;
     const selectedAnswer = answers[currentQ] ?? null;
-    const submitBody = buildSubmitBody(answers, questions.map((x) => x.id));
+    const submitBody = buildSubmitBody(answers, questions.map((x) => x.id), takeQuiz ? takeQuiz.attemptToken : null);
 
     let takeBody;
     if (takeLoading) {

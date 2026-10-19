@@ -2,6 +2,7 @@ import { before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
+import { deriveQuizKeys, issueAttemptToken, optionPermutation } from "../../src/lib/quiz-shuffle";
 
 // #32 確認テストの API の補強（quizzes-route.test.ts の続き）：
 // - 応答 JSON に出てよい項目を「許可リスト」で検査する（正解・回答・他人の記録が混ざらない）
@@ -9,6 +10,11 @@ import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession 
 // - 回答の検証の境界（-0・Infinity・入れ子・__proto__・length を持つオブジェクト・真偽値）
 // - 失敗の応答（400 / 404 / 409 / 503）でログを出さない、503 は body を読まない
 // DB・ネットワークなし。prisma は globalThis.prisma に置く小さな偽物。データはすべてダミー（example.com）。
+// 選択肢のシャッフル（#51 追加修正）の鍵はダミーの AUTH_SECRET から作る（本物の値は使わない）。
+
+const DUMMY_AUTH_SECRET = "dummy-auth-secret-for-quiz-edge-tests";
+const KEYS = deriveQuizKeys(DUMMY_AUTH_SECRET);
+const TEST_NONCE = Buffer.alloc(16, 9).toString("base64url");
 
 type Row = Record<string, unknown>;
 type Select = Record<string, unknown>;
@@ -123,6 +129,7 @@ const fakePrisma = {
 };
 
 before(async () => {
+  process.env.AUTH_SECRET = DUMMY_AUTH_SECRET;
   (globalThis as unknown as { prisma: unknown }).prisma = fakePrisma;
   installFakeAuth(() => session);
   ({ GET: LIST } = await import("../../src/app/api/quizzes/route"));
@@ -183,13 +190,37 @@ let submitNow: Date;
 /** いまのダミーのデータで、そのクイズの問題の id を GET と同じ並び（[order, id]）で返す */
 const serverQuestionIds = (quizId: string) =>
   sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => q.id as string);
+/** いまのダミーのデータで、そのクイズの問題（[order, id] の順）の id と選択肢 */
+const serverQuestions = (quizId: string) =>
+  sortRows(db.questions.filter((q) => q.quizId === quizId), [{ order: "asc" }, { id: "asc" }]).map((q) => ({
+    id: q.id as string,
+    options: (Array.isArray(q.options) ? q.options : []) as string[],
+  }));
+/** 元の位置の回答を、そのトークン（nonce）の並びの表示位置に直す。長さ・範囲が合わなければそのまま */
+const toDisplayed = (quizId: string, answers: number[], nonce: string = TEST_NONCE): number[] => {
+  const qs = serverQuestions(quizId);
+  if (answers.length !== qs.length) return answers;
+  const userId = session!.user!.id as string;
+  return answers.map((a, i) => {
+    if (a >= qs[i].options.length) return a;
+    return optionPermutation(KEYS.shuffleKey, { userId, quizId, questionId: qs[i].id, nonce, n: qs[i].options.length }).indexOf(a);
+  });
+};
 /**
  * 受験を公開したあとの動き（attemptsEnabled: true）。userId は route と同じくセッションの値。
- * raw が {"answers": で始まるときは、画面と同じく、いまの問題の id を questionIds として先頭に足す（#51）。
- * 文字列のまま足すので、answers の書き方（-0・1.0・1e400 など）はそのまま届く
+ * raw が {"answers": で始まるときは、画面と同じく、いまの問題の id を questionIds として、
+ * GET と同じ手順のトークン（決まった nonce）を attemptToken として先頭に足す（#51）。
+ * answers が 0 以上の整数だけを書いた配列なら、元の位置として扱い、トークンの並びの表示位置に直す（#51 選択肢のシャッフル）。
+ * それ以外は文字列のまま届く（-0・1.0・1e400 などの書き方を確かめるため）
  */
-const submit = (quizId: string, raw: string) => {
-  const body = raw.startsWith('{"answers":') ? `{"questionIds":${JSON.stringify(serverQuestionIds(quizId))},${raw.slice(1)}` : raw;
+const submit = (quizId: string, raw: string, nonce: string = TEST_NONCE) => {
+  let body = raw;
+  if (raw.startsWith('{"answers":')) {
+    const m = /^\{"answers":\[([0-9]+(?:,[0-9]+)*)\]/.exec(raw);
+    if (m) body = `{"answers":[${toDisplayed(quizId, m[1].split(",").map(Number), nonce).join(",")}]${raw.slice(m[0].length)}`;
+    const token = issueAttemptToken(KEYS, { userId: session!.user!.id as string, quizId, questions: serverQuestions(quizId) }, nonce);
+    body = `{"questionIds":${JSON.stringify(serverQuestionIds(quizId))},"attemptToken":"${token}",${body.slice(1)}`;
+  }
   return HANDLE_SUBMIT(session!.user!.id as string, submitRequest(quizId, body), ctx(quizId), { attemptsEnabled: true, role: session!.user!.role, now: submitNow });
 };
 const creates = () => calls.filter((c) => c.method === "quizAttempt.create");
@@ -219,7 +250,7 @@ const LIST_KEYS = [
   "courses", "id", "name", "order", "icon", "color", "locked", "finalQuizzes", "miniQuizzes",
   "title", "type", "lessonId", "lessonTitle", "questionCount", "attemptCount", "bestScore", "passed", "lastAttemptAt",
 ];
-const ONE_KEYS = ["id", "title", "type", "questionCount", "questions", "question", "options", "attemptCount", "bestScore", "passed", "retryAfterSeconds"];
+const ONE_KEYS = ["id", "title", "type", "questionCount", "questions", "question", "options", "attemptToken", "attemptCount", "bestScore", "passed", "retryAfterSeconds"];
 const SUBMIT_KEYS = ["score", "passed", "total", "correct", "results", "duplicate"];
 const LEAK_MARKERS = ["correctIndex", "answers", "userId", OTHER, "att_other_secret", "example.com"];
 
@@ -360,7 +391,15 @@ describe("POST submit（公開後）：回答の境界", () => {
   });
 
   it("-0 と 1.0 は JSON では 0 と 1 なので受け付け、採点も 0・1 として扱う", async () => {
-    const res = await submit("fin1", '{"answers":[1.0,-0,2]}');
+    // 正解 [1, 0, 2] の表示位置に 0 と 0 以外の両方が出るトークンを選び、0 を -0、ほかを 1.0 のように書く（#51 選択肢のシャッフル）
+    let nonce = TEST_NONCE;
+    for (let i = 0; ; i++) {
+      const d = toDisplayed("fin1", [1, 0, 2], nonce);
+      if (d.includes(0) && d.some((x) => x > 0)) break;
+      nonce = Buffer.alloc(16, i).toString("base64url");
+    }
+    const literal = toDisplayed("fin1", [1, 0, 2], nonce).map((d) => (d === 0 ? "-0" : `${d}.0`)).join(",");
+    const res = await submit("fin1", `{"answers":[${literal}]}`, nonce);
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { score: 100, passed: true, total: 3, correct: 3, results: [true, true, true], duplicate: false });
     const saved = (creates()[0].args.data as Row).answers as number[];

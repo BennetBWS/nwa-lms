@@ -6,6 +6,8 @@ import { isValidId } from "@/lib/lesson-comments";
 import { COURSE_LOCKED_REASON, quizAccessFor } from "@/lib/lesson-access";
 import { quizRetryAfterSeconds } from "@/lib/quiz-rate-limit";
 import { summarizeAttempts, toAnswerKey, toQuestionViews } from "@/lib/student-quizzes";
+import { issueAttemptToken, newNonce, shuffleQuestionViews } from "@/lib/quiz-shuffle";
+import { quizKeys } from "@/lib/quiz-shuffle-key";
 
 // 受験画面の問題（#32）。受験記録は自分の分の集計値だけ（行そのものは返さない）。
 // correctIndex は「受験できるか」の判定（toAnswerKey。一覧の除外・submit の 409 と同じ基準）にだけ使い、応答には含めない。
@@ -14,6 +16,10 @@ import { summarizeAttempts, toAnswerKey, toQuestionViews } from "@/lib/student-q
 // コースのないクイズ（一覧に出ないもの）は 404（#47 P5、Tec 決定 D-a）。講師はロックを見ない
 // retryAfterSeconds（#51、Tec 決定 Q3 b）：受講生がいま別の回答を送ったら 429 になるなら待つ秒数、ならなければ null。
 // 受験画面の冒頭で知らせるため。すでに読んでいる受験記録の createdAt だけで判定する（追加の読み取りなし）。講師は上限を受けないので null
+// 選択肢のシャッフル（#51 追加修正、Tec 決定 2026-10-19）：GET のたびに新しい nonce を作り、問題ごとに選択肢を並べ替えて返す
+// （講師も同じ。Q2 a）。attemptToken（v1.<nonce>.<mac>）を submit に送ってもらい、表示位置を元の位置に戻す。
+// 並べ替えの表・元の位置・内容のダイジェストは返さない。応答は Cache-Control: no-store。
+// 鍵は AUTH_SECRET から作る（quiz-shuffle-key）。未設定なら DB を読まずに 500（ログはエラー名だけ）
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ quizId: string }> }
@@ -30,6 +36,7 @@ export async function GET(
     }
 
     const userId = session.user.id;
+    const keys = quizKeys();
 
     if (session.user.role !== "INSTRUCTOR") {
       const access = await quizAccessFor(prisma, userId, quizId);
@@ -69,6 +76,11 @@ export async function GET(
       return NextResponse.json({ error: "Quiz unavailable", reason: "quiz_unavailable" }, { status: 409 });
     }
 
+    const nonce = newNonce();
+    const shuffled = shuffleQuestionViews(keys.shuffleKey, { userId, quizId: quiz.id, nonce }, questions);
+    // MAC は元の並びの選択肢を覆う（submit も元の並びで検証する）
+    const attemptToken = issueAttemptToken(keys, { userId, quizId: quiz.id, questions }, nonce);
+
     const stats = summarizeAttempts(attempts);
     const retryAfterSeconds = session.user.role !== "INSTRUCTOR" ? quizRetryAfterSeconds(attempts, quiz.type, new Date()) : null;
     return NextResponse.json({
@@ -76,12 +88,13 @@ export async function GET(
       title: quiz.title,
       type: quiz.type,
       questionCount: questions.length,
-      questions,
+      questions: shuffled,
+      attemptToken,
       attemptCount: stats.attemptCount,
       bestScore: stats.bestScore,
       passed: stats.passed,
       retryAfterSeconds,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("GET /api/quizzes/[quizId] error:", safeErrorSummary(error).name);
     return NextResponse.json(

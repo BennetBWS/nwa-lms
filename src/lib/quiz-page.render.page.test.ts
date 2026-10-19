@@ -266,6 +266,8 @@ const TAKE = {
     { id: "q1", question: "ダミー問1", options: ["選択肢A", "選択肢B"] },
     { id: "q2", question: "ダミー問2", options: ["選択肢C", "選択肢D", "選択肢E"] },
   ],
+  // 形だけが正しいダミーのトークン（#51 選択肢のシャッフル）
+  attemptToken: `v1.${"A".repeat(22)}.${"B".repeat(43)}`,
   attemptCount: 0,
   bestScore: null,
   passed: null,
@@ -531,7 +533,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.deepEqual(byRole(tree, "radio").map((r) => r.props["aria-checked"]), [false, true]);
   });
 
-  it("送信は 1 回だけ（連打しても）。body は { answers, questionIds } だけで、送信中はボタンが「送信中...」で押せず、一覧にも戻れない", async () => {
+  it("送信は 1 回だけ（連打しても）。body は { answers, questionIds, attemptToken } だけで、送信中はボタンが「送信中...」で押せず、一覧にも戻れない", async () => {
     const m = await openTake();
     chooseAll(m, [1, 2]);
     let tree = m.render();
@@ -541,7 +543,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
     assert.equal(m.reqs.length, 3);
     assert.equal(m.reqs[2].url, "/api/quizzes/mini2/submit");
     assert.equal(m.reqs[2].init?.method, "POST");
-    assert.deepEqual(JSON.parse(String(m.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+    assert.deepEqual(JSON.parse(String(m.reqs[2].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"], attemptToken: TAKE.attemptToken });
     tree = m.render();
     assert.equal(button(tree, "送信中...").props.disabled, true);
     assert.equal(button(tree, "テスト一覧に戻る").props.disabled, true);
@@ -603,7 +605,7 @@ describe("QuizPage 描画：受験（QUIZ_ATTEMPTS_ENABLED が true の経路）
       assert.ok(!text(tree).includes("点（"));
       click(button(tree, "もう一度送信する"));
       assert.equal(m.reqs.length, 4);
-      assert.deepEqual(JSON.parse(String(m.reqs[3].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"] });
+      assert.deepEqual(JSON.parse(String(m.reqs[3].init?.body)), { answers: [1, 2], questionIds: ["q1", "q2"], attemptToken: TAKE.attemptToken });
       tree = m.render();
       assert.equal(byRole(tree, "alert").length, 0);
     });
@@ -947,5 +949,79 @@ describe("QuizPage 描画：もう一度受ける（#51、true の経路）", ()
     const t = text(m.render());
     assert.ok(t.includes("問題 1 / 3"));
     assert.ok(!t.includes(QUIZ_CHANGED_MESSAGE));
+  });
+
+  it("読み直すと選択肢は新しい並びで出て、送信は表示位置と新しいトークン（#51 選択肢のシャッフル）", async () => {
+    const { m, get } = await toResult();
+    const v2 = {
+      ...TAKE,
+      questions: [
+        { ...TAKE.questions[0], options: ["選択肢B", "選択肢A"] },
+        { ...TAKE.questions[1], options: ["選択肢E", "選択肢C", "選択肢D"] },
+      ],
+      attemptToken: `v1.${"C".repeat(22)}.${"D".repeat(43)}`,
+    };
+    get.release(res(v2, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    assert.deepEqual(byRole(m.render(), "radio").map(text), ["選択肢B", "選択肢A"]);
+    chooseAll(m, [1, 0]);
+    const before = m.reqs.length;
+    click(button(m.render(), "回答を送信する"));
+    assert.equal(m.reqs.length, before + 1, "送信していない");
+    assert.deepEqual(JSON.parse(String(m.reqs[before].init?.body)), { answers: [1, 0], questionIds: ["q1", "q2"], attemptToken: v2.attemptToken });
+  });
+});
+
+describe("QuizPage 描画：選択肢のシャッフルの補強（#51、テスト担当が追加）", () => {
+  const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
+  const tokenParts = (t: string) => [t, t.split(".")[1], t.split(".")[2]];
+
+  it("attemptToken は受験・結果の画面のどこにも（文言にも props にも）出さない", async () => {
+    const m = await openTake();
+    const dump = (tree: Node) => inspect(tree, { depth: null, maxArrayLength: null, maxStringLength: null });
+    for (const p of tokenParts(TAKE.attemptToken)) assert.ok(!dump(m.render()).includes(p), "受験画面にトークンが出た");
+    chooseAll(m, [1, 2]);
+    for (const p of tokenParts(TAKE.attemptToken)) assert.ok(!dump(m.render()).includes(p), "回答後の画面にトークンが出た");
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [false, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    for (const p of tokenParts(TAKE.attemptToken)) assert.ok(!dump(m.render()).includes(p), "結果の画面にトークンが出た");
+  });
+
+  it("409 quiz_changed で読み直すと、新しい並びで出し、送信は新しい並びの表示位置と新しいトークン", async () => {
+    const m = await openTake();
+    chooseAll(m, [1, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ error: "Conflict", reason: "quiz_changed" }, { status: 409, ok: false, url: SUBMIT }));
+    await settle();
+    const v2 = {
+      ...TAKE,
+      questions: [
+        { ...TAKE.questions[0], options: ["選択肢B", "選択肢A"] },
+        { ...TAKE.questions[1], options: ["選択肢D", "選択肢E", "選択肢C"] },
+      ],
+      attemptToken: `v1.${"E".repeat(22)}.${"F".repeat(43)}`,
+    };
+    m.reqs[3].release(res(v2, { url: `${ORIGIN}/api/quizzes/mini2` }));
+    await settle();
+    assert.deepEqual(byRole(m.render(), "radio").map(text), ["選択肢B", "選択肢A"]);
+    assert.deepEqual(byRole(m.render(), "radio").map((x) => x.props["aria-checked"]), [false, false], "前の並びの回答が残っている");
+    // 前回と同じ文（選択肢B・選択肢E）を選ぶ：新しい並びでは表示位置 0・1
+    chooseAll(m, [0, 1]);
+    const before = m.reqs.length;
+    click(button(m.render(), "回答を送信する"));
+    assert.equal(m.reqs.length, before + 1, "送信していない");
+    assert.deepEqual(JSON.parse(String(m.reqs[before].init?.body)), { answers: [0, 1], questionIds: ["q1", "q2"], attemptToken: v2.attemptToken });
+  });
+
+  it("結果の正誤は問題の順に出し、どの選択肢を選んだか（並び）は出さない", async () => {
+    const m = await openTake();
+    chooseAll(m, [0, 2]);
+    click(button(m.render(), "回答を送信する"));
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [true, false], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    const tree = m.render();
+    assert.deepEqual(findAll(tree, (e) => e.type === "li").map(text), ["問題 1ダミー問1正解", "問題 2ダミー問2不正解"]);
+    assert.equal(byRole(tree, "radio").length, 0, "結果の画面に選択肢を出している");
   });
 });

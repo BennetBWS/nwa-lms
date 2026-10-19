@@ -16,6 +16,7 @@ import {
   quizRateLimitedMessage,
   quizWaitMessage,
   hasSubmitShape,
+  isAttemptTokenFormat,
   normalizeOptions,
   parseSubmitAnswers,
   quizResultTitle,
@@ -36,6 +37,9 @@ import {
 } from "./student-quizzes";
 
 // #32 確認テストの純粋関数。DB・ネットワークなし。データはすべてダミー。
+
+/** 形だけが正しいダミーの受験のトークン（#51 選択肢のシャッフル。MAC は検証しない） */
+const TOKEN = `v1.${"A".repeat(22)}.${"B".repeat(43)}`;
 
 describe("定数", () => {
   it("受験はまだ公開しない（#8 のあと）", () => {
@@ -174,12 +178,12 @@ describe("parseSubmitAnswers", () => {
 });
 
 describe("hasSubmitShape（#51）", () => {
-  it("{ answers: 配列, questionIds: id の配列 } なら ok で、questionIds は新しい配列", () => {
+  it("{ answers: 配列, questionIds: id の配列, attemptToken } なら ok で、questionIds は新しい配列", () => {
     const ids = ["q1", "q2"];
-    const r = hasSubmitShape({ answers: [], questionIds: ids });
-    assert.deepEqual(r, { ok: true, value: { questionIds: ["q1", "q2"] } });
+    const r = hasSubmitShape({ answers: [], questionIds: ids, attemptToken: TOKEN });
+    assert.deepEqual(r, { ok: true, value: { questionIds: ["q1", "q2"], attemptToken: TOKEN } });
     assert.ok("value" in r && r.value.questionIds !== ids, "受け取った配列をそのまま返している");
-    assert.deepEqual(hasSubmitShape({ answers: [0], questionIds: [] }), { ok: true, value: { questionIds: [] } });
+    assert.deepEqual(hasSubmitShape({ answers: [0], questionIds: [], attemptToken: TOKEN }), { ok: true, value: { questionIds: [], attemptToken: TOKEN } });
   });
 
   for (const [label, body] of [
@@ -215,7 +219,32 @@ describe("hasSubmitShape（#51）", () => {
   }
 
   it("64 文字の id は受け付ける", () => {
-    assert.equal(hasSubmitShape({ answers: [0], questionIds: ["q".repeat(64)] }).ok, true);
+    assert.equal(hasSubmitShape({ answers: [0], questionIds: ["q".repeat(64)], attemptToken: TOKEN }).ok, true);
+  });
+
+  for (const [label, token] of [
+    ["なし", undefined],
+    ["null", null],
+    ["数値", 1],
+    ["空文字", ""],
+    ["版が違う", TOKEN.replace(/^v1/, "v2")],
+    ["nonce が短い", `v1.${"A".repeat(21)}.${"B".repeat(43)}`],
+    ["MAC が長い", `${TOKEN}B`],
+    ["base64url でない文字", `v1.${"A".repeat(21)}+.${"B".repeat(43)}`],
+    ["区切りが多い", `${TOKEN}.x`],
+    ["末尾に改行", `${TOKEN}\n`],
+    ["ゼロ幅スペース", `${TOKEN}\u200b`],
+  ] as Array<[string, unknown]>) {
+    it(`attemptToken が${label}なら invalid_attempt_token（#51 選択肢のシャッフル）`, () => {
+      const body: Record<string, unknown> = { answers: [0], questionIds: ["q1"] };
+      if (token !== undefined) body.attemptToken = token;
+      assert.deepEqual(hasSubmitShape(body), { ok: false, reason: "invalid_attempt_token" });
+      assert.equal(isAttemptTokenFormat(token), false);
+    });
+  }
+
+  it("questionIds が壊れていれば、トークンより先に invalid_question_ids", () => {
+    assert.deepEqual(hasSubmitShape({ answers: [0], questionIds: [1] }), { ok: false, reason: "invalid_question_ids" });
   });
 });
 
@@ -708,13 +737,14 @@ describe("toQuizTakeView", () => {
       { id: "q1", question: "問1", options: ["a", "b"] },
       { id: "q2", question: "問2", options: ["c", "d", "e"] },
     ],
+    attemptToken: TOKEN,
     attemptCount: 0,
     bestScore: null,
     passed: null,
   };
 
-  it("id・title・type・questions・retryAfterSeconds だけにする", () => {
-    assert.deepEqual(toQuizTakeView(ok), { id: "quiz1", title: "ダミー", type: "MINI", questions: ok.questions, retryAfterSeconds: null });
+  it("id・title・type・questions・attemptToken・retryAfterSeconds だけにする（選択肢は API の並びのまま）", () => {
+    assert.deepEqual(toQuizTakeView(ok), { id: "quiz1", title: "ダミー", type: "MINI", questions: ok.questions, attemptToken: TOKEN, retryAfterSeconds: null });
   });
 
   it("FINAL もそのまま。MINI / FINAL 以外・ない type は null（受験はできる。#51）", () => {
@@ -745,6 +775,9 @@ describe("toQuizTakeView", () => {
     ["question が数値", { ...ok, questions: [{ ...ok.questions[0], question: 1 }] }],
     ["options が 1 件", { ...ok, questions: [{ ...ok.questions[0], options: ["a"] }] }],
     ["options に数値", { ...ok, questions: [{ ...ok.questions[0], options: ["a", 1] }] }],
+    ["attemptToken なし", { ...ok, attemptToken: undefined }],
+    ["attemptToken が形に合わない", { ...ok, attemptToken: "v1.short.mac" }],
+    ["attemptToken が数値", { ...ok, attemptToken: 1 }],
   ] as Array<[string, unknown]>) {
     it(`${label} は null`, () => {
       assert.equal(toQuizTakeView(v), null);
@@ -786,10 +819,13 @@ describe("toQuizResultView", () => {
 });
 
 describe("buildSubmitBody / quizResultTitle", () => {
-  it("全問回答なら { answers, questionIds }、未回答・空なら null", () => {
-    assert.deepEqual(buildSubmitBody([0, 2, 1], ["q1", "q2", "q3"]), { answers: [0, 2, 1], questionIds: ["q1", "q2", "q3"] });
-    assert.equal(buildSubmitBody([0, null, 1], ["q1", "q2", "q3"]), null);
-    assert.equal(buildSubmitBody([], []), null);
+  it("全問回答なら { answers, questionIds, attemptToken }、未回答・空・トークンが形に合わなければ null", () => {
+    assert.deepEqual(buildSubmitBody([0, 2, 1], ["q1", "q2", "q3"], TOKEN), { answers: [0, 2, 1], questionIds: ["q1", "q2", "q3"], attemptToken: TOKEN });
+    assert.equal(buildSubmitBody([0, null, 1], ["q1", "q2", "q3"], TOKEN), null);
+    assert.equal(buildSubmitBody([], [], TOKEN), null);
+    for (const t of [undefined, null, "", "v1.x.y"]) {
+      assert.equal(buildSubmitBody([0, 2, 1], ["q1", "q2", "q3"], t as string), null, `トークン ${String(t)} で body を作った`);
+    }
   });
   it("結果の見出しは文言だけ（絵文字なし）", () => {
     assert.equal(quizResultTitle(true), "合格です");
