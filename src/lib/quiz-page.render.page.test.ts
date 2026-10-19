@@ -1032,3 +1032,101 @@ describe("QuizPage 描画：選択肢のシャッフルの補強（#51、テス�
     assert.equal(byRole(tree, "radio").length, 0, "結果の画面に選択肢を出している");
   });
 });
+
+describe("QuizPage 描画：受験の通しの流れ（#51 PR 2、true＝本番。テスト担当が追加）", () => {
+  const SUBMIT = `${ORIGIN}/api/quizzes/mini2/submit`;
+  const GET = `${ORIGIN}/api/quizzes/mini2`;
+  /** 一覧の mini2 の行だけを差し替えた応答 */
+  const listWithMini2 = (p: Record<string, unknown>) => ({
+    courses: LIST.courses.map((c) => ({ ...c, miniQuizzes: c.miniQuizzes.map((q) => (q.id === "mini2" ? { ...q, ...p } : q)) })),
+  });
+
+  it("一覧 → 受験する → 並べ替えた選択肢 → 送信 → 結果 → 一覧の最高点の更新 → もう一度受ける（新しい並びとトークン）→ 合格 → 一覧", async () => {
+    // 1. 一覧：mini2 は未受験
+    const m = await loadedList(true);
+    let t = text(m.render());
+    assert.ok(t.includes("レッスン2 · 2問"), "mini2 の行がない");
+    assert.equal((t.match(/未受験/g) ?? []).length, 2, "未受験が mini2 と STEP2 の修了テストの 2 つでない");
+    assert.deepEqual(buttonLabels(m.render()), ["もう一度受ける", "もう一度受ける", "受験する"]);
+
+    // 2. 受験する → GET。並べ替えられた選択肢をそのまま出す
+    click(buttons(m.render())[2]);
+    assert.equal(m.reqs[1].url, "/api/quizzes/mini2");
+    const v1 = {
+      ...TAKE,
+      questions: [
+        { ...TAKE.questions[0], options: ["選択肢B", "選択肢A"] },
+        { ...TAKE.questions[1], options: ["選択肢E", "選択肢C", "選択肢D"] },
+      ],
+      attemptToken: `v1.${"G".repeat(22)}.${"H".repeat(43)}`,
+      retryAfterSeconds: null,
+    };
+    m.reqs[1].release(res(v1, { url: GET }));
+    await settle();
+    assert.deepEqual(byRole(m.render(), "radio").map(text), ["選択肢B", "選択肢A"], "1 問目の並びがサーバーの並びと違う");
+
+    // 3. 送信：表示位置とそのトークン
+    chooseAll(m, [1, 0]);
+    click(button(m.render(), "回答を送信する"));
+    assert.equal(m.reqs.length, 3, "送信していない");
+    assert.deepEqual(JSON.parse(String(m.reqs[2].init?.body)), { answers: [1, 0], questionIds: ["q1", "q2"], attemptToken: v1.attemptToken });
+    m.reqs[2].release(res({ score: 50, passed: false, total: 2, correct: 1, results: [true, false], duplicate: false }, { url: SUBMIT }));
+    await settle();
+
+    // 4. 結果と一覧の読み直し
+    t = text(m.render());
+    assert.ok(t.includes(quizResultTitle(false)), "不合格の結果がない");
+    assert.ok(t.includes("50点（2問中 1問正解）"), "点数がない");
+    assert.equal(m.reqs.length, 4, "一覧を読み直していない");
+    assert.equal(m.reqs[3].url, "/api/quizzes");
+    m.reqs[3].release(res(listWithMini2({ attemptCount: 1, bestScore: 50, passed: false, lastAttemptAt: "2026-10-07T12:00:00.000Z" })));
+    await settle();
+
+    // 5. もう一度受ける：新しい並びとトークン。回答は空
+    click(button(m.render(), "もう一度受ける"));
+    assert.equal(m.reqs.length, 5, "問題を読み直していない");
+    assert.equal(m.reqs[4].url, "/api/quizzes/mini2");
+    const v2 = {
+      ...TAKE,
+      questions: [
+        { ...TAKE.questions[0], options: ["選択肢A", "選択肢B"] },
+        { ...TAKE.questions[1], options: ["選択肢D", "選択肢E", "選択肢C"] },
+      ],
+      attemptToken: `v1.${"J".repeat(22)}.${"K".repeat(43)}`,
+      retryAfterSeconds: null,
+    };
+    m.reqs[4].release(res(v2, { url: GET }));
+    await settle();
+    let tree = m.render();
+    assert.deepEqual(byRole(tree, "radio").map(text), ["選択肢A", "選択肢B"], "新しい並びで出ていない");
+    assert.deepEqual(byRole(tree, "radio").map((r) => r.props["aria-checked"]), [false, false], "前の回答が残っている");
+    chooseAll(m, [0, 2]);
+    click(button(m.render(), "回答を送信する"));
+    assert.equal(m.reqs.length, 6, "2 回目を送信していない");
+    assert.deepEqual(JSON.parse(String(m.reqs[5].init?.body)), { answers: [0, 2], questionIds: ["q1", "q2"], attemptToken: v2.attemptToken });
+    m.reqs[5].release(res({ score: 100, passed: true, total: 2, correct: 2, results: [true, true], duplicate: false }, { url: SUBMIT }));
+    await settle();
+    t = text(m.render());
+    assert.ok(t.includes(quizResultTitle(true)), "合格の結果がない");
+    assert.ok(t.includes("100点（2問中 2問正解）"), "点数がない");
+
+    // 6. 一覧の読み直し：最高点 100・合格・受験 2 回
+    assert.equal(m.reqs.length, 7, "2 回目のあとに一覧を読み直していない");
+    assert.equal(m.reqs[6].url, "/api/quizzes");
+    m.reqs[6].release(res(listWithMini2({ attemptCount: 2, bestScore: 100, passed: true, lastAttemptAt: "2026-10-07T12:01:00.000Z" })));
+    await settle();
+    // 結果の画面には「テスト一覧に戻る」が上下に 2 つある。どちらも同じ動き（最初のものを押す）
+    const backs = buttons(m.render()).filter((b) => text(b).trim() === "テスト一覧に戻る");
+    assert.ok(backs.length >= 1, "テスト一覧に戻るボタンがない");
+    click(backs[0]);
+    assert.equal(m.reqs.length, 7, "一覧に戻るときに余計な取得をした");
+    tree = m.render();
+    t = text(tree);
+    assert.ok(t.includes("レッスン2 · 2問 · 受験 2回"), "受験回数が更新されていない");
+    assert.equal((t.match(/最高 100点/g) ?? []).length, 2, "mini2 の最高点が 100 点になっていない");
+    // 未受験は STEP2 の修了テスト（ロック中）だけになる
+    assert.equal((t.match(/未受験/g) ?? []).length, 1, "mini2 が未受験のまま");
+    assert.deepEqual(buttonLabels(tree), ["もう一度受ける", "もう一度受ける", "もう一度受ける"]);
+    assert.equal(m.state("activeQuizId"), null);
+  });
+});
