@@ -1,7 +1,9 @@
 /**
- * コースのロック表示（#32、Tec 決定）。
+ * コースのロック表示（#32、Tec 決定）の旧来の規則。
  *
- * 受講生ダッシュボードのカリキュラム欄と、コース一覧（CourseList）の両方で使う。
+ * #78 PR A で、ロックの判定はサーバーの course-gate.ts（computeCourseGates）だけで行うようにした。
+ * 画面（page.tsx）はこのファイルを使わず、API の locked を表示するだけ（student-dashboard.page.edge.test.ts で固定）。
+ * ここは「今の規則」の基準としてテスト（course-gate.test.ts などの照合）だけが使う。アプリのコードから import しない。
  * 丸めた % ではなく、レッスンの件数で判定する純粋関数だけを置く。
  */
 

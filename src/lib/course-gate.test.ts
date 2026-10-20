@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { computeCourseGates, unlockedCourseIdsOf, type CourseGateCourse } from "./course-gate";
 import { isCourseLocked, type LessonCounts } from "./course-lock";
 
@@ -119,5 +121,17 @@ describe("computeCourseGates と isCourseLocked の照合（乱数）", () => {
     assert.ok(coursesChecked > 3000, `照合したコースが少ない: ${coursesChecked}`);
     assert.ok(lockedSeen > 0 && lockedSeen < coursesChecked, `locked と ok の両方を照合できていない: ${lockedSeen}/${coursesChecked}`);
     assert.ok(zeroLessonPrevSeen > 0, "前のコースのレッスンが 0 件の場面を照合できていない");
+  });
+});
+
+describe("ロックの判定はサーバーの course-gate.ts だけ（#78 PR A）", () => {
+  it("アプリのコード（src の .test.ts 以外）は course-lock を import しない（今の規則の基準としてテストだけが使う）", () => {
+    const root = path.join(__dirname, "..");
+    const files = (fs.readdirSync(root, { recursive: true }) as string[])
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.ts$/.test(f))
+      .map((f) => path.join(root, f));
+    assert.ok(files.length > 20, `src のファイルが読めていない: ${files.length}`);
+    const offenders = files.filter((f) => /from "(\.\/|\.\.\/|@\/lib\/)(lib\/)?course-lock"/.test(fs.readFileSync(f, "utf8")));
+    assert.deepEqual(offenders.map((f) => path.relative(root, f)), [], "course-lock を import しているアプリのコードがある");
   });
 });

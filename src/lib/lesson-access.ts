@@ -113,7 +113,7 @@ export async function quizAccessFor(db: QuizAccessDb, userId: string, quizId: st
 
 /**
  * ロック中のコースのレッスンに残す項目（#47 P4、reviewer 指摘で除外リストから許可リストに変更）。
- * 画面（page.tsx の CourseList・LessonView）がロック中のコースで使うのは、ロック計算（course-lock の countCourseLessons）と
+ * 画面（page.tsx の CourseList・LessonView）がロック中のコースで使うのは、API の locked（#78 PR A で画面のロック計算はなくなった）と
  * 一覧表示に要るレッスンの数・completed だけ。id・sectionId・title・type・duration・order は表示用の見出しとして残す。
  * ここにない項目（videoUrl・content・pdfUrl や、将来 Lesson に足す列）は出さない。
  * Lesson に列を足したら lesson-access.schema.test.ts が落ちるので、ロック中に出すかを決めてどちらかの一覧に入れる。
