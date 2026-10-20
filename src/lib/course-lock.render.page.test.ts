@@ -16,6 +16,9 @@ import { countCourseLessons, isCourseLocked, type LessonCounts } from "./course-
 // あわせて、いまの page.tsx は API の locked だけを表示する（件数から計算し直さない）ことを確かめる。
 // 要素の props の関数は名前だけを比べ、onClick / onMouseEnter は実際に呼んで、画面の移動と先読みの記録を比べる。
 // DOM・DB・ネットワークなし。データはすべてダミー。乱数はシード固定。
+// 寿命：このテストは page.tsx の決まった行（`const locked = c.locked === true;` や、目印のコメントの行）を replaceOnce で main の行に戻して比べるため、
+// CourseList・StudentDashboard の該当の行やコメントを変えると「置き換える箇所がちょうど 1 つでない」で落ちる。
+// #78 PR E（受講生の画面）でこの部分を変えるときに、削除するか書き直す（main との比較は PR A の移行の確認のためのもの）。
 
 const src = readFileSync(join(__dirname, "..", "app", "page.tsx"), "utf8");
 
