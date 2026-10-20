@@ -61,6 +61,8 @@ export type CourseSummary = {
   progress: number;
   totalLessons: number;
   completedLessons: number;
+  /** ロック中（lockedCourseIds に含まれる。規則は course-gate.ts。#78 PR A） */
+  locked: boolean;
 };
 
 export type CoursesSummary = {
@@ -75,8 +77,17 @@ function percent(done: number, total: number): number {
   return total > 0 ? Math.round((done / total) * 100) : 0;
 }
 
-/** コースごとの進捗と、全体の件数・進度をまとめる。コースの並びは受け取った順のまま */
-export function summarizeCourses(courses: CourseNode[], completedLessonIds: ReadonlySet<string>): CoursesSummary {
+const NO_LOCKS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * コースごとの進捗と、全体の件数・進度をまとめる。コースの並びは受け取った順のまま。
+ * locked は lockedCourseIds に含まれるか（route が lesson-access の loadCourseGates の結果から作る。省略時はロックなし）
+ */
+export function summarizeCourses(
+  courses: CourseNode[],
+  completedLessonIds: ReadonlySet<string>,
+  lockedCourseIds: ReadonlySet<string> = NO_LOCKS
+): CoursesSummary {
   let totalLessons = 0;
   let completedLessons = 0;
   let activeCourses = 0;
@@ -102,6 +113,7 @@ export function summarizeCourses(courses: CourseNode[], completedLessonIds: Read
       progress: percent(done, total),
       totalLessons: total,
       completedLessons: done,
+      locked: lockedCourseIds.has(course.id),
     };
   });
 
@@ -132,10 +144,12 @@ function isUnfinished(c: Counts): boolean {
 /**
  * 「学習を続ける」と Next Up の対象コース（#32、Tec 決定）：
  * 受講中のコース → なければ最初の未完了コース（STEP1 完了・STEP2 未着手なら STEP2）→
- * すべて完了なら最初のコース。コースが 0 件なら null
+ * すべて完了なら最初のコース。コースが 0 件なら null。
+ * ロック中（locked が true）のコースは選ばない（#78 PR A。押すと 403 になるため）。どれも選べなければ null
  */
-export function pickActiveCourse<C extends Counts>(courses: readonly C[]): C | null {
-  return courses.find(isInProgress) ?? courses.find(isUnfinished) ?? courses[0] ?? null;
+export function pickActiveCourse<C extends Counts & { locked?: boolean }>(courses: readonly C[]): C | null {
+  const open = courses.filter((c) => c.locked !== true);
+  return open.find(isInProgress) ?? open.find(isUnfinished) ?? open[0] ?? null;
 }
 
 export type NextLesson = { lessonId: string; title: string; courseId: string; courseName: string };
@@ -146,13 +160,15 @@ const byOrderThenId = (a: { order: number; id: string }, b: { order: number; id:
 /**
  * Next Up：pickActiveCourse で選んだコースの未完了レッスンを、
  * セクション順・レッスン順（order、同順は id）に最大 `limit` 件。
+ * lockedCourseIds のコースは選ばない（summarizeCourses と同じ。省略時はロックなし）
  */
 export function pickNextLessons(
   courses: CourseNode[],
   completedLessonIds: ReadonlySet<string>,
-  limit: number = NEXT_LESSONS_LIMIT
+  limit: number = NEXT_LESSONS_LIMIT,
+  lockedCourseIds: ReadonlySet<string> = NO_LOCKS
 ): NextLesson[] {
-  const summaries = summarizeCourses(courses, completedLessonIds).courses;
+  const summaries = summarizeCourses(courses, completedLessonIds, lockedCourseIds).courses;
   const active = pickActiveCourse(summaries);
   if (!active || limit <= 0) return [];
 

@@ -116,6 +116,10 @@ describe("summarizeCourses", () => {
     assert.equal(s.courses[0].progress, 100);
     assert.equal(s.activeCourses, 0);
   });
+  it("locked は lockedCourseIds に含まれるか（省略時はすべて false。#78 PR A）", () => {
+    assert.deepEqual(summarizeCourses([C1, C2], new Set()).courses.map((c) => c.locked), [false, false]);
+    assert.deepEqual(summarizeCourses([C1, C2], new Set(), new Set(["c2", "zzz"])).courses.map((c) => c.locked), [false, true]);
+  });
 });
 
 describe("pickActiveCourse", () => {
@@ -133,6 +137,22 @@ describe("pickActiveCourse", () => {
     // すべて完了なら最初のコース
     assert.equal(pickActiveCourse([done, done2]), done);
     assert.equal(pickActiveCourse([]), null);
+  });
+
+  it("ロック中（locked: true）のコースは選ばない（#78 PR A）", () => {
+    const done = { id: "d", completedLessons: 3, totalLessons: 3 };
+    const empty = { id: "e", completedLessons: 0, totalLessons: 0 };
+    const lockedA = { id: "a", completedLessons: 0, totalLessons: 3, locked: true };
+    const b = { id: "b", completedLessons: 0, totalLessons: 2, locked: false };
+    // レッスン 0 件のコースの次のコース（未着手でロック中）は飛ばす。ほかに未完了がなければ最初の開いているコース
+    assert.equal(pickActiveCourse([done, empty, lockedA]), done);
+    assert.equal(pickActiveCourse([done, lockedA, b]), b);
+    // 受講中でもロック中なら選ばない（今の規則では起きないが、判定は locked に従う）
+    assert.equal(pickActiveCourse([done, { id: "x", completedLessons: 1, totalLessons: 3, locked: true }]), done);
+    // すべてロック中なら null
+    assert.equal(pickActiveCourse([lockedA]), null);
+    // locked が true 以外（未定義・文字列）は開いているとみなす
+    assert.equal(pickActiveCourse([done, { id: "s", completedLessons: 0, totalLessons: 1, locked: "true" as unknown as boolean }])?.id, "s");
   });
 
   it("丸めで 0% / 100% と表示されても件数で受講中と判定する", () => {
@@ -200,6 +220,18 @@ describe("pickNextLessons", () => {
     assert.deepEqual(pickNextLessons([], new Set()), []);
     assert.deepEqual(pickNextLessons([EMPTY], new Set()), []);
     assert.deepEqual(pickNextLessons([C1], new Set(), 0), []);
+  });
+
+  it("lockedCourseIds のコースは選ばない（#78 PR A）", () => {
+    const c1done = new Set(["c1_a1", "c1_a2", "c1_b1", "c1_b2"]);
+    // C1 完了・C2 未着手で C2 がロック中：C2 を指さず、最初の開いているコース（C1。未完了なし）なので空
+    assert.deepEqual(pickNextLessons([C1, C2], c1done, 3, new Set(["c2"])), []);
+    // ロックがなければ今までどおり C2
+    assert.deepEqual(pickNextLessons([C1, C2], c1done, 3, new Set()).map((n) => n.courseId), ["c2", "c2", "c2"]);
+    // 先頭のコースがロック中なら次の開いているコース
+    assert.deepEqual(pickNextLessons([C1, C2], new Set(), 2, new Set(["c1"])).map((n) => n.lessonId), ["c2_a1", "c2_a2"]);
+    // すべてロック中なら空
+    assert.deepEqual(pickNextLessons([C1, C2], new Set(), 3, new Set(["c1", "c2"])), []);
   });
 
   it("入力の配列を並べ替えない", () => {

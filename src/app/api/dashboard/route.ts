@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "@/lib/course-order";
-import { countCompletedSince, pickNextLessons, summarizeCourses } from "@/lib/student-dashboard";
+import { unlockedCourseIdsOf } from "@/lib/course-gate";
+import { loadCourseGates } from "@/lib/lesson-access";
+import { NEXT_LESSONS_LIMIT, countCompletedSince, pickNextLessons, summarizeCourses } from "@/lib/student-dashboard";
+
+// 受講生ダッシュボード（#32）。courses の各コースに locked を付ける（#78 PR A）。
+// ロックは lesson-access の loadCourseGates（course-gate.ts の規則）で、/api/courses と同じく講師は常に locked: false。
+// loadCourseGates が知らないコース（読み込みの間に足されたもの）はロックとして扱う。
+// 「学習を続ける」・Next Up（pickNextLessons）はロック中のコースを選ばない
 
 export async function GET() {
   try {
@@ -13,8 +20,9 @@ export async function GET() {
 
     const userId = session.user.id;
     const now = new Date();
+    const isInstructor = session.user.role === "INSTRUCTOR";
 
-    const [courses, userProgress, recentActivity, notifications, unreadNotifications] =
+    const [courses, userProgress, recentActivity, notifications, unreadNotifications, gates] =
       await Promise.all([
         prisma.course.findMany({
           orderBy: COURSE_ORDER_BY,
@@ -69,10 +77,13 @@ export async function GET() {
         prisma.notification.count({
           where: { userId, read: false },
         }),
+        isInstructor ? null : loadCourseGates(prisma, userId),
       ]);
 
     const completedLessonIds = new Set(userProgress.map((p) => p.lessonId));
-    const summary = summarizeCourses(courses, completedLessonIds);
+    const unlocked = gates === null ? null : new Set(unlockedCourseIdsOf(gates));
+    const lockedCourseIds = new Set(unlocked === null ? [] : courses.filter((c) => !unlocked.has(c.id)).map((c) => c.id));
+    const summary = summarizeCourses(courses, completedLessonIds, lockedCourseIds);
 
     const recentActivityData = recentActivity.map((p) => ({
       lessonTitle: p.lesson.title,
@@ -87,7 +98,7 @@ export async function GET() {
       overallProgress: summary.overallProgress,
       completedLast7Days: countCompletedSince(userProgress, now),
       courses: summary.courses,
-      nextLessons: pickNextLessons(courses, completedLessonIds),
+      nextLessons: pickNextLessons(courses, completedLessonIds, NEXT_LESSONS_LIMIT, lockedCourseIds),
       recentActivity: recentActivityData,
       unreadNotifications,
       notifications,
