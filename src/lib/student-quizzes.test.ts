@@ -345,8 +345,8 @@ describe("summarizeAttempts", () => {
 
 // ───────────── buildQuizCourses ─────────────
 
-function course(id: string, order: number, lessonIds: string[]): QuizCourseInput {
-  return { id, name: `コース${id}`, order, icon: "html", color: "#000000", sections: [{ lessons: lessonIds.map((x) => ({ id: x })) }] };
+function course(id: string, order: number): QuizCourseInput {
+  return { id, name: `コース${id}`, order, icon: "html", color: "#000000" };
 }
 
 /** 受験できる問題（2 択・正解は 0）を n 件 */
@@ -380,7 +380,7 @@ const NONE = new Set<string>();
 describe("buildQuizCourses：振り分け", () => {
   it("修了テストは quiz.courseId、ミニテストは lesson.section.courseId のコースへ", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, ["l1"]), course("c2", 2, ["l2"])],
+      [course("c1", 1), course("c2", 2)],
       NONE,
       [
         finalQuiz("f2", "c2"),
@@ -401,7 +401,7 @@ describe("buildQuizCourses：振り分け", () => {
 
   it("FINAL に lesson があっても lessonId / lessonTitle は null、MINI はレッスンの id とタイトル", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, ["l1"])],
+      [course("c1", 1)],
       NONE,
       [
         { ...finalQuiz("f1", "c1"), lessonId: "l1", lesson: { id: "l1", title: "レッスンl1", order: 1, section: { id: "s1", order: 1, courseId: "c1" } } },
@@ -417,7 +417,7 @@ describe("buildQuizCourses：振り分け", () => {
 
   it("問題 0 件のクイズ、コースに属さないクイズ（courseId なし・存在しないコース・レッスンなしの MINI）は除く", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, ["l1"])],
+      [course("c1", 1)],
       NONE,
       [
         finalQuiz("empty", "c1", 0),
@@ -437,7 +437,7 @@ describe("buildQuizCourses：振り分け", () => {
     const withQuestions = (q: QuizInput, questions: AnswerKeyRow[]): QuizInput => ({ ...q, questions });
     const mini = miniQuiz("m_ok", { id: "l1", order: 1, section: { id: "s1", order: 1, courseId: "c1" } });
     const out = buildQuizCourses(
-      [course("c1", 1, ["l1"])],
+      [course("c1", 1)],
       NONE,
       [
         withQuestions(finalQuiz("one_option", "c1"), [...validQuestions(2), { options: ["only"], correctIndex: 0 }]),
@@ -457,24 +457,24 @@ describe("buildQuizCourses：振り分け", () => {
 
   it("壊れたクイズしかないコースは返さない。壊れたクイズの受験記録は数えない", () => {
     const broken: QuizInput = { ...finalQuiz("broken", "c1"), questions: [{ options: ["only"], correctIndex: 0 }] };
-    assert.deepEqual(buildQuizCourses([course("c1", 1, [])], NONE, [broken], [{ quizId: "broken", score: 100, passed: true, createdAt: new Date("2026-10-01T00:00:00.000Z") }]), []);
+    assert.deepEqual(buildQuizCourses([course("c1", 1)], NONE, [broken], [{ quizId: "broken", score: 100, passed: true, createdAt: new Date("2026-10-01T00:00:00.000Z") }]), []);
   });
 
   it("questionCount は問題の件数で、応答に選択肢・正解は出さない", () => {
-    const out = buildQuizCourses([course("c1", 1, [])], NONE, [finalQuiz("f1", "c1", 4)], []);
+    const out = buildQuizCourses([course("c1", 1)], NONE, [finalQuiz("f1", "c1", 4)], []);
     assert.equal(out[0].finalQuizzes[0].questionCount, 4);
     assert.doesNotMatch(JSON.stringify(out), /correctIndex|options|questions"/);
   });
 
   it("クイズのないコースは返さない。全部なければ空配列", () => {
-    assert.deepEqual(buildQuizCourses([course("c1", 1, ["l1"])], NONE, [], []), []);
-    assert.deepEqual(buildQuizCourses([course("c1", 1, ["l1"])], NONE, [finalQuiz("empty", "c1", 0)], []), []);
-    const out = buildQuizCourses([course("c1", 1, []), course("c2", 2, [])], NONE, [finalQuiz("f2", "c2")], []);
+    assert.deepEqual(buildQuizCourses([course("c1", 1)], NONE, [], []), []);
+    assert.deepEqual(buildQuizCourses([course("c1", 1)], NONE, [finalQuiz("empty", "c1", 0)], []), []);
+    const out = buildQuizCourses([course("c1", 1), course("c2", 2)], NONE, [finalQuiz("f2", "c2")], []);
     assert.deepEqual(out.map((c) => c.id), ["c2"]);
   });
 
   it("コースの並びは受け取った順で、応答の項目は id / name / order / icon / color / locked / finalQuizzes / miniQuizzes", () => {
-    const out = buildQuizCourses([course("b", 2, []), course("a", 1, [])], NONE, [finalQuiz("fa", "a"), finalQuiz("fb", "b")], []);
+    const out = buildQuizCourses([course("b", 2), course("a", 1)], NONE, [finalQuiz("fa", "a"), finalQuiz("fb", "b")], []);
     assert.deepEqual(out.map((c) => c.id), ["b", "a"]);
     assert.deepEqual(Object.keys(out[0]).sort(), ["color", "finalQuizzes", "icon", "id", "locked", "miniQuizzes", "name", "order"]);
     assert.deepEqual(Object.keys(out[0].finalQuizzes[0]).sort(), [
@@ -497,7 +497,7 @@ describe("buildQuizCourses：並び順", () => {
     const s1 = { id: "s1", order: 1, courseId: "c1" };
     const s2 = { id: "s2", order: 2, courseId: "c1" };
     const out = buildQuizCourses(
-      [course("c1", 1, [])],
+      [course("c1", 1)],
       NONE,
       [
         miniQuiz("m_s2_l1", { id: "l9", order: 1, section: s2 }),
@@ -514,7 +514,7 @@ describe("buildQuizCourses：並び順", () => {
 
   it("同じ order のセクションは id 順", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, [])],
+      [course("c1", 1)],
       NONE,
       [
         miniQuiz("mb", { id: "l1", order: 1, section: { id: "sb", order: 1, courseId: "c1" } }),
@@ -527,7 +527,7 @@ describe("buildQuizCourses：並び順", () => {
 
   it("修了テストはタイトル順、同じなら id 順", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, [])],
+      [course("c1", 1)],
       NONE,
       [finalQuiz("f3", "c1", 3, "B"), finalQuiz("f2", "c1", 3, "A"), finalQuiz("f1", "c1", 3, "B")],
       []
@@ -536,31 +536,22 @@ describe("buildQuizCourses：並び順", () => {
   });
 });
 
-describe("buildQuizCourses：ロック（course-lock と同じ規則）", () => {
-  const courses = [course("c1", 1, ["a1", "a2"]), course("c2", 2, ["b1"]), course("c3", 3, ["x1"]), course("c4", 4, ["d1"])];
+describe("buildQuizCourses：ロック（lockedCourseIds のとおり。規則は course-gate.ts。#78 PR A）", () => {
+  const courses = [course("c1", 1), course("c2", 2), course("c3", 3), course("c4", 4)];
   const quizzes = [finalQuiz("f1", "c1"), finalQuiz("f2", "c2"), finalQuiz("f4", "c4")];
 
-  it("何も完了していなければ最初のコースだけ開く", () => {
-    const out = buildQuizCourses(courses, NONE, quizzes, []);
+  it("lockedCourseIds に含まれるコースだけ locked: true", () => {
+    const out = buildQuizCourses(courses, new Set(["c2", "c4"]), quizzes, []);
     assert.deepEqual(out.map((c) => [c.id, c.locked]), [["c1", false], ["c2", true], ["c4", true]]);
   });
 
-  it("前のコースを全部終えれば開く。クイズのないコース（c3）も前のコースとして数える", () => {
-    const out = buildQuizCourses(courses, new Set(["a1", "a2", "b1"]), quizzes, []);
-    // c3 は未完了なので c4 はロック
-    assert.deepEqual(out.map((c) => [c.id, c.locked]), [["c1", false], ["c2", false], ["c4", true]]);
-    const done = buildQuizCourses(courses, new Set(["a1", "a2", "b1", "x1"]), quizzes, []);
-    assert.deepEqual(done.map((c) => [c.id, c.locked]), [["c1", false], ["c2", false], ["c4", false]]);
+  it("空なら全部開いている。クイズのないコース（c3）を含めても一覧には出ない", () => {
+    assert.deepEqual(buildQuizCourses(courses, NONE, quizzes, []).map((c) => [c.id, c.locked]), [["c1", false], ["c2", false], ["c4", false]]);
+    assert.deepEqual(buildQuizCourses(courses, new Set(["c3"]), quizzes, []).map((c) => [c.id, c.locked]), [["c1", false], ["c2", false], ["c4", false]]);
   });
 
-  it("前のコースが途中でも、自分のコースに 1 件でも完了があれば開く", () => {
-    const out = buildQuizCourses(courses, new Set(["a1", "b1"]), quizzes, []);
-    assert.equal(out.find((c) => c.id === "c2")?.locked, false);
-  });
-
-  it("前のコースにレッスンがない場合はロック", () => {
-    const out = buildQuizCourses([course("c1", 1, []), course("c2", 2, ["b1"])], NONE, [finalQuiz("f2", "c2")], []);
-    assert.equal(out[0].locked, true);
+  it("どのコースにもない id は無視する", () => {
+    assert.deepEqual(buildQuizCourses(courses, new Set(["zzz"]), quizzes, []).map((c) => c.locked), [false, false, false]);
   });
 });
 
@@ -570,7 +561,7 @@ describe("buildQuizCourses：受験記録", () => {
 
   it("クイズごとに回数・最高点・合否・最後の日時。未受験は 0 / null", () => {
     const out = buildQuizCourses(
-      [course("c1", 1, [])],
+      [course("c1", 1)],
       NONE,
       [finalQuiz("f1", "c1"), finalQuiz("f2", "c1")],
       [attempt("f1", 50, false, "2026-10-01T00:00:00.000Z"), attempt("f1", 90, true, "2026-10-02T00:00:00.000Z")]
@@ -588,7 +579,7 @@ describe("buildQuizCourses：受験記録", () => {
 
   it("前提：渡された受験記録はすべて数える（他人の記録を除くのは route の where userId）", () => {
     // attempts に userId はない。route が自分の分だけを読むので、ここに他人の記録が来ないことが前提
-    const out = buildQuizCourses([course("c1", 1, [])], NONE, [finalQuiz("f1", "c1")], [
+    const out = buildQuizCourses([course("c1", 1)], NONE, [finalQuiz("f1", "c1")], [
       attempt("f1", 10, false, "2026-10-01T00:00:00.000Z"),
       attempt("f1", 20, false, "2026-10-01T00:00:00.000Z"),
     ]);
@@ -596,7 +587,7 @@ describe("buildQuizCourses：受験記録", () => {
   });
 
   it("除いたクイズ・存在しないクイズの受験記録は数に入らない", () => {
-    const out = buildQuizCourses([course("c1", 1, [])], NONE, [finalQuiz("f1", "c1"), finalQuiz("empty", "c1", 0)], [
+    const out = buildQuizCourses([course("c1", 1)], NONE, [finalQuiz("f1", "c1"), finalQuiz("empty", "c1", 0)], [
       attempt("empty", 100, true, "2026-10-01T00:00:00.000Z"),
       attempt("unknown", 100, true, "2026-10-01T00:00:00.000Z"),
     ]);
