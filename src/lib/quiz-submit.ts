@@ -13,7 +13,7 @@ import { quizKeys } from "@/lib/quiz-shuffle-key";
  *
  * - 認証は route（src/app/api/quizzes/[quizId]/submit/route.ts）が行い、セッションの userId を渡す。
  *   body の userId は読まない。応答・ログに回答・正解を含めない
- * - attemptsEnabled が false の間（QUIZ_ATTEMPTS_ENABLED、#8 のあとに公開）は、
+ * - attemptsEnabled が false のとき（QUIZ_ATTEMPTS_ENABLED。#51 で公開し、いまは緊急時に止めるためのスイッチ）は、
  *   入力も DB も見ずに 503 attempts_disabled を返す（Tec 決定、2026-10-07）
  * - 受講生（role が INSTRUCTOR 以外。role がなくても受講生として扱う）は、入力の形を確かめたあと、
  *   問題を読む前にクイズのコースのロックを確かめる。ロック中なら 403 course_locked で、正解を読まず・採点も保存もしない。

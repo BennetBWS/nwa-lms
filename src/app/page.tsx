@@ -2267,7 +2267,7 @@ const QuizPage = () => {
 
   useEffect(() => { loadQuizzes(); }, []);
 
-  // ── 受験（QUIZ_ATTEMPTS_ENABLED が false の間は開けない。#8 のあとに公開） ──
+  // ── 受験（#51 で公開。QUIZ_ATTEMPTS_ENABLED を false にして止めたときは開けない） ──
   const [activeQuizId, setActiveQuizId] = useState(null);
   const [takeQuiz, setTakeQuiz] = useState(null);
   const [takeLoading, setTakeLoading] = useState(false);
