@@ -1,7 +1,6 @@
 import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
-import { countCourseLessons, isCourseLocked, type CourseWithLessons } from "../../src/lib/course-lock";
 import { pickInitialLesson } from "../../src/lib/initial-lesson";
 import { NEXT_LESSONS_LIMIT, pickNextLessons } from "../../src/lib/student-dashboard";
 
@@ -360,7 +359,7 @@ function oracleNextLessons(ordered: CourseRow[], done: Set<string>, locks: boole
 }
 
 type ApiLesson = { id: string; completed: boolean };
-type ApiCourse = { id: string; sections: Array<{ id: string; lessons: ApiLesson[] }> } & CourseWithLessons;
+type ApiCourse = { id: string; sections: Array<{ id: string; lessons: ApiLesson[] }> };
 
 const tree = (cs: Array<{ id: string; sections: Array<{ id: string; lessons: Array<{ id: string }> }> }>) =>
   cs.map((c) => ({ id: c.id, sections: c.sections.map((s) => ({ id: s.id, lessons: s.lessons.map((l) => l.id) })) }));
@@ -382,11 +381,7 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       session = STUDENT_SESSION;
       const list = await json<ApiCourse[]>(R.courseList(), `${ctx} /api/courses`);
       assert.deepEqual(tree(list), tree(ordered), `${ctx}: /api/courses の並び（コース・セクション・レッスン）が [order, id] でない`);
-      // コース一覧（page.tsx の CourseList と同じ式）
-      const listLocks = list.map((c, i) => isCourseLocked(i > 0 ? countCourseLessons(list[i - 1]) : null, countCourseLessons(c)));
-      assert.deepEqual(listLocks, expectedLocks, `${ctx}: コース一覧のロック表示が正解と違う`);
-
-      // /api/courses の locked（#47 P4）も正解と一致する
+      // /api/courses の locked（#47 P4）が正解と一致する（画面の CourseList はこれを表示するだけ。#78 PR A）
       assert.deepEqual(
         (list as Array<{ locked?: unknown }>).map((c) => c.locked),
         expectedLocks,
