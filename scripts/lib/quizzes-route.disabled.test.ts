@@ -140,7 +140,8 @@ before(async () => {
   Object.defineProperty(swapped, "__esModule", { value: true });
   restoreSwap = () => {
     // 差し替えを戻し、false を読み込んだ route もキャッシュから外す
-    // （tsx --test はファイルごとに別プロセスなので本来は漏れないが、同じプロセスで動かす設定にしても漏れないように）
+    // （tsx --test はファイルごとに別プロセスなので漏れない。戻せるのは require のキャッシュだけで、import() の ESM 側の
+    //  キャッシュは戻せないので、テストを同じプロセスで動かす設定にはしない）
     entry.exports = entry_original;
     for (const rel of ["src/app/api/quizzes/route.ts", "src/app/api/quizzes/[quizId]/route.ts", "src/app/api/quizzes/[quizId]/submit/route.ts"]) {
       delete cache[join(process.cwd(), rel)];
