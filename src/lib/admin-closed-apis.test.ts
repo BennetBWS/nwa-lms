@@ -32,7 +32,12 @@ const UNKNOWN = "*";
 
 /**
  * コメントと文字列・テンプレートリテラルの中身を空白に置き換える（長さと改行は保つ）。
- * テンプレートの ${ ... } の中はコードとして残す。正規表現リテラルは扱わない（route ファイルでは使っていない前提）。
+ * テンプレートの ${ ... } の中はコードとして残す。
+ *
+ * 既知の穴：正規表現リテラルは扱わない（いまの route ファイルでは使っていない前提）。
+ * 正規表現の中の引用符・バッククォート・コメント記号（例 /"/、/`/、/a\/*b/）を文字列やコメントの始まりと読み違え、
+ * そのあとの本物のコードまで空白にしうる。この場合は export を見落とす方向（閉じたメソッドが戻っても検査が通る方向）に失敗する。
+ * route ファイルに正規表現リテラルを書くときは、この関数を直すか、正規表現を別のファイルに置く。
  */
 function blankCommentsAndStrings(source: string): string {
   const out = source.split("");
@@ -209,6 +214,36 @@ function routeServes(route: Seg[], closed: Seg[]): boolean {
   return false;
 }
 
+/**
+ * 管理用のクイズ・問題の API への参照（文字列として書かれた URL。行ごとに照合する）。
+ * 既知の穴：URL を分けて組み立てた場合（"/api/admin/" + "quizzes" など）は拾わない（見落とす方向に失敗する）。
+ */
+const ADMIN_QUIZ_API_REF = /api\/admin\/(?:quizzes|questions)\b/;
+
+/** 参照の走査から外す route ファイルの置き場所（リポジトリからの相対、区切りは /） */
+const OWN_ROUTE_DIRS = ["src/app/api/admin/quizzes/", "src/app/api/admin/questions/"];
+
+/**
+ * 管理用のクイズ・問題の API 自身の route ファイルか。
+ * これらの route はログ・コメントに自分のパス（例 "PATCH /api/admin/questions/[id]"）を書く慣習があるため、参照の走査から外す。
+ * 外すのはこの 2 つのディレクトリの下の route ファイルだけで、同じ場所のほかのファイル（helpers.ts など）や、
+ * ほかの API の route ファイル・src/components などは走査する。
+ */
+function isOwnAdminQuizRoute(rel: string): boolean {
+  const name = rel.split("/").pop() ?? "";
+  return ROUTE_FILES.includes(name) && OWN_ROUTE_DIRS.some((d) => rel.startsWith(d));
+}
+
+/** 1 つのファイル（rel はリポジトリからの相対、区切りは /）の中の参照の位置（"rel:行"） */
+function adminQuizApiRefs(rel: string, source: string): string[] {
+  if (isOwnAdminQuizRoute(rel)) return [];
+  const hits: string[] = [];
+  source.split("\n").forEach((text, i) => {
+    if (ADMIN_QUIZ_API_REF.test(text)) hits.push(`${rel}:${i + 1}`);
+  });
+  return hits;
+}
+
 function routesServing(url: string): Array<{ rel: string; path: string }> {
   const closed = toSegments(url);
   return listRouteFiles(APP_DIR)
@@ -310,17 +345,15 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
 
   for (const { dir, url, methods } of CLOSED) {
     for (const method of methods) {
-      it(`${method} ${url} は export されていない`, () => {
+      // 元の場所（api/<dir>/route.*）は routesServing(url) に含まれる（下の前提の確認）ので、別の検査は置かない
+      it(`${method} ${url} は、元の場所と別の場所（ルートグループ・動的セグメント名の違い・catch-all・route.tsx など）の route ファイルから export されていない`, () => {
+        const served = routesServing(url);
         for (const file of ROUTE_FILES) {
           const path = join(API_DIR, dir, file);
           if (!existsSync(path)) continue;
-          const exported = exportedMethods(readFileSync(path, "utf8"));
-          assert.equal(exported.has(method), false, `${dir}/${file} が ${method} を export している（#81 Q3 で閉じた API）`);
+          assert.ok(served.some((r) => r.path === path), `${dir}/${file} が URL の走査に含まれていない（走査の前提）`);
         }
-      });
-
-      it(`${method} ${url} は、別の場所（ルートグループ・動的セグメント名の違い・catch-all・route.tsx など）の route ファイルからも export されていない`, () => {
-        for (const { rel, path } of routesServing(url)) {
+        for (const { rel, path } of served) {
           const exported = exportedMethods(readFileSync(path, "utf8"));
           assert.equal(exported.has(method), false, `${rel} が ${method} を export している（${url} として受ける。#81 Q3 で閉じた API）`);
           assert.equal(exported.has(UNKNOWN), false, `${rel} が export * / module.exports = を使っていて、${method} を出していないことを確かめられない`);
@@ -349,16 +382,41 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.ok(exportedMethods(readFileSync(path, "utf8")).has("GET"), "admin/quizzes/route.ts に GET がない");
   });
 
+  // Q2 で画面から管理用のクイズ・問題の API（GET / PATCH）を呼ぶときは、閉じたメソッド（POST / PUT / DELETE）を
+  // 使っていないことを確かめてから、この検査と下の「テスト以外のコード」の検査の両方を更新する
   it("画面（page.tsx）は管理用のクイズ・問題の API を呼んでいない", () => {
     const source = readFileSync(PAGE, "utf8");
     const hits = source
       .split("\n")
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
       .filter(({ text }) => /\/api\/admin\/(quizzes|questions)\b/.test(text));
-    // Q2 で画面から呼ぶときは、閉じたメソッドを使っていないことを確かめてからこの検査を更新する
     assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API を参照している：${JSON.stringify(hits)}`);
   });
 
+  it("参照の走査は、外した route ファイル以外の参照を拾う（検査の前提）", () => {
+    const ref = 'await fetch(`/api/admin/questions/${id}`, { method: "PUT" });';
+    const log = 'console.error("PATCH /api/admin/questions/[id] failed");';
+    // 外すのは管理用のクイズ・問題の API 自身の route ファイルだけ
+    assert.deepEqual(adminQuizApiRefs("src/app/api/admin/questions/[id]/route.ts", log), [], "questions/[id]/route.ts のログを参照とみなした");
+    assert.deepEqual(adminQuizApiRefs("src/app/api/admin/quizzes/route.ts", log), [], "quizzes/route.ts のログを参照とみなした");
+    assert.deepEqual(adminQuizApiRefs("src/app/api/admin/quizzes/[id]/questions/route.tsx", log), [], "quizzes/[id]/questions/route.tsx のログを参照とみなした");
+    // それ以外は拾う
+    const mustHit: string[] = [
+      "src/components/FakeQuizEditor.tsx",
+      "src/app/page.tsx",
+      "src/lib/admin-api.ts",
+      "src/app/api/admin/students/route.ts",
+      "src/app/api/admin/quizzes/helpers.ts",
+      "src/app/api/admin/quizzesx/route.ts",
+      "src/app/(admin)/api/admin/questions/[id]/route.ts",
+      "scripts/fake.ts",
+    ];
+    for (const rel of mustHit) {
+      assert.deepEqual(adminQuizApiRefs(rel, `const a = 1;\n${ref}`), [`${rel}:2`], `${rel} の参照を見落とした`);
+    }
+  });
+
+  // Q2 で呼び出し元を足すときは、閉じたメソッドを使っていないことを確かめてから、この検査と上の page.tsx の検査の両方を更新する
   it("テスト以外のコード（src・scripts・prisma）は管理用のクイズ・問題の API を参照していない", () => {
     const CODE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
     const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$|\.test-helpers\.ts$/;
@@ -376,13 +434,11 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.ok(files.length >= 50, `走査したファイルが ${files.length} 件しかない（走査の前提）`);
     const hits: string[] = [];
     for (const f of files) {
-      // route ファイルの中のパスはディレクトリで決まるので、文字列として出てくるのは呼び出し元だけ
-      const lines = readFileSync(f, "utf8").split("\n");
-      lines.forEach((text, i) => {
-        if (/api\/admin\/(?:quizzes|questions)\b/.test(text)) hits.push(`${relative(ROOT, f)}:${i + 1}`);
-      });
+      // 管理用のクイズ・問題の API 自身の route ファイル（src/app/api/admin/quizzes/・questions/ の下）は外す。
+      // ログ・コメントに自分のパスを書く慣習があり、Q1 で PATCH /api/admin/questions/[id] を足すと落ちるため。
+      // そのほかのファイルに出てくるパスは呼び出し元とみなす（外す範囲は isOwnAdminQuizRoute と上の前提の検査を参照）
+      hits.push(...adminQuizApiRefs(relative(ROOT, f).split(sep).join("/"), readFileSync(f, "utf8")));
     }
-    // Q2 で呼び出し元を足すときは、閉じたメソッドを使っていないことを確かめてからこの検査を更新する
     assert.deepEqual(hits, [], `管理用のクイズ・問題の API の参照が残っている：${JSON.stringify(hits)}`);
   });
 });
