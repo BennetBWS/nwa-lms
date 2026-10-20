@@ -1,4 +1,4 @@
-import { before, beforeEach, describe, it, mock } from "node:test";
+import { after, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import Module from "node:module";
 import { readFileSync } from "node:fs";
@@ -118,6 +118,12 @@ const fakePrisma = {
   },
 };
 
+let restoreSwap: (() => void) | null = null;
+
+after(() => {
+  restoreSwap?.();
+});
+
 before(async () => {
   process.env.AUTH_SECRET = DUMMY_AUTH_SECRET;
   (globalThis as unknown as { prisma: unknown }).prisma = fakePrisma;
@@ -132,6 +138,15 @@ before(async () => {
   if (!entry) throw new Error("student-quizzes がモジュールキャッシュにない（差し替えられない）");
   const swapped: Row = { ...real, QUIZ_ATTEMPTS_ENABLED: false };
   Object.defineProperty(swapped, "__esModule", { value: true });
+  restoreSwap = () => {
+    // 差し替えを戻し、false を読み込んだ route もキャッシュから外す
+    // （tsx --test はファイルごとに別プロセスなので本来は漏れないが、同じプロセスで動かす設定にしても漏れないように）
+    entry.exports = entry_original;
+    for (const rel of ["src/app/api/quizzes/route.ts", "src/app/api/quizzes/[quizId]/route.ts", "src/app/api/quizzes/[quizId]/submit/route.ts"]) {
+      delete cache[join(process.cwd(), rel)];
+    }
+  };
+  const entry_original = entry.exports;
   entry.exports = swapped;
 
   ({ GET: LIST } = await import("../../src/app/api/quizzes/route"));
