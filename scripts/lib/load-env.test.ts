@@ -83,7 +83,7 @@ describe("loadRootEnv", () => {
 // The DB scripts must load .env by path before the guard, not through `new PrismaClient()`.
 describe("DB scripts load <repo>/.env explicitly", () => {
   const ROOT = path.resolve(__dirname, "..", "..");
-  const SCRIPTS = ["scripts/db-local.ts", "prisma/seed.ts", "scripts/seed-step1.ts"];
+  const SCRIPTS = ["scripts/db-local.ts", "prisma/seed.ts", "scripts/seed-step1.ts", "scripts/verify-quiz-admin-db.ts"];
 
   for (const rel of SCRIPTS) {
     it(`${rel} calls loadRootEnv(<repo root>) before PrismaClient and the guard`, () => {
