@@ -129,8 +129,8 @@ describe("CourseList：ロック中のコースを先読みしない", () => {
     assert.match(courseList, /onClick=\{\(\) => !c\.locked && setCurrentPage\("lesson", \{ courseId: c\.id \}\)\}/);
   });
 
-  it("c.locked は API の一覧から画面と同じ規則（isCourseLocked）で計算した値", () => {
-    assert.match(courseList, /const locked = isCourseLocked\(i > 0 \? countCourseLessons\(apiCourses\[i - 1\]\) : null, countCourseLessons\(c\)\);/);
+  it("c.locked は /api/courses の locked そのもの（画面では計算しない。#78 PR A）", () => {
+    assert.match(courseList, /const locked = c\.locked === true;/);
     assert.match(courseList, /students: 0, locked,/);
   });
 });

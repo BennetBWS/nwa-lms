@@ -224,12 +224,16 @@ describe("GET /api/dashboard：他人のデータを返さない", () => {
   it("where の userId はセッションの id そのもの（クエリ等から受け取らない）", async () => {
     await getAt();
     const scoped = calls.filter((c) => c.method !== "course.findMany");
-    assert.equal(scoped.length, 4);
+    // progress 2 件（集計・最近の完了）＋ notification 2 件 ＋ ロックの判定（#78 PR A。lesson-access の loadCourseGates）の progress 1 件
+    assert.equal(scoped.length, 5);
     for (const c of scoped) assert.equal((c.args.where as { userId: unknown }).userId, ALICE);
-    // コース一覧は全員共通（userId で絞らない・ユーザーに関するものを select しない）
-    const [course] = callsOf("course.findMany");
-    assert.equal(course.args.where, undefined);
-    assert.doesNotMatch(JSON.stringify(course.args), /user|password|email/i);
+    // コース一覧は全員共通（userId で絞らない・ユーザーに関するものを select しない）。表示用とロックの判定用の 2 回
+    const courseCalls = callsOf("course.findMany");
+    assert.equal(courseCalls.length, 2);
+    for (const course of courseCalls) {
+      assert.equal(course.args.where, undefined);
+      assert.doesNotMatch(JSON.stringify(course.args), /user|password|email/i);
+    }
   });
 });
 
@@ -246,7 +250,10 @@ describe("GET /api/dashboard：completedLast7Days", () => {
 
   it("集計用の progress.findMany は自分の完了済みだけ・件数制限なし・必要な列だけ", async () => {
     await getAt();
-    const all = callsOf("progress.findMany").filter((c) => c.args.take === undefined);
+    // ロックの判定（loadCourseGates）の progress.findMany は select が lessonId だけなので除く
+    const all = callsOf("progress.findMany").filter(
+      (c) => c.args.take === undefined && (c.args.select as { completedAt?: unknown } | undefined)?.completedAt !== undefined
+    );
     assert.equal(all.length, 1);
     assert.deepEqual(all[0].args.where, { userId: ALICE, completed: true });
     assert.deepEqual(all[0].args.select, { lessonId: true, completed: true, completedAt: true });
@@ -303,6 +310,7 @@ describe("GET /api/dashboard：応答に余計な情報を含めない", () => {
         "completedLessons",
         "icon",
         "id",
+        "locked",
         "name",
         "order",
         "progress",

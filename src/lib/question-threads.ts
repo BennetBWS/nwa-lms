@@ -6,6 +6,7 @@
  *
  * Tec の決定（#32、2026-10-08）：
  * - 受講生には全受講生の質問を見せる。ただし自分にとってロック中のコースの質問はサーバー側で除く（自分の質問は常に出す）。
+ *   ロックの判定は lesson-access の loadCourseGates（course-gate.ts。#78 PR A）で、route が行う。
  *   講師はロックなしで全コース
  * - 状態のバッジは、講師の返信があれば「回答済み」、なければ「未回答」
  * - スレッドを押したら、この画面で全文と返信を展開する
@@ -13,7 +14,6 @@
  * - 名前の出し方はレッスン画面（lesson-comments の commentAuthorView / toCommentThreadView）と同じ
  */
 
-import { isCourseLocked, type LessonCounts } from "./course-lock";
 import {
   isValidId,
   toCommentThreadView,
@@ -112,39 +112,6 @@ export function parseThreadListQuery(params: URLSearchParams): ParseResult<Threa
   }
 
   return { ok: true, value: { mine, status, courseId, cursor } };
-}
-
-// ───────────── コースのロック ─────────────
-
-export type LockCourseInput = {
-  id: string;
-  sections: ReadonlyArray<{ lessons: ReadonlyArray<{ id: string }> }>;
-};
-
-/**
- * 解放済み（ロックされていない）コースの id。courses は表示順（route が [order, id] で並べる）。
- * ロックの規則は course-lock の isCourseLocked と同じ（確認テストの一覧 buildQuizCourses と同じ考え方）
- */
-export function unlockedCourseIds(
-  courses: ReadonlyArray<LockCourseInput>,
-  completedLessonIds: ReadonlySet<string>
-): string[] {
-  const out: string[] = [];
-  let prev: LessonCounts | null = null;
-  for (const c of courses) {
-    let totalLessons = 0;
-    let completedLessons = 0;
-    for (const s of c.sections) {
-      for (const l of s.lessons) {
-        totalLessons++;
-        if (completedLessonIds.has(l.id)) completedLessons++;
-      }
-    }
-    const counts = { completedLessons, totalLessons };
-    if (!isCourseLocked(prev, counts)) out.push(c.id);
-    prev = counts;
-  }
-  return out;
 }
 
 // ───────────── API の応答 ─────────────

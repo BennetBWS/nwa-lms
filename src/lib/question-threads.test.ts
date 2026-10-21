@@ -20,7 +20,6 @@ import {
   threadsMoreHint,
   toQuestionThreadItems,
   toQuestionThreadView,
-  unlockedCourseIds,
   type QuestionThreadRow,
 } from "./question-threads";
 
@@ -149,34 +148,6 @@ describe("parseThreadListQuery", () => {
     assert.equal(r.value.status, "unanswered");
     assert.equal(r.value.courseId, "course_1");
     assert.equal(r.value.cursor?.id, "c");
-  });
-});
-
-describe("unlockedCourseIds（course-lock の isCourseLocked と同じ規則）", () => {
-  const course = (id: string, lessonIds: string[][]) => ({
-    id,
-    sections: lessonIds.map((ls) => ({ lessons: ls.map((l) => ({ id: l })) })),
-  });
-  const courses = [course("c1", [["l1", "l2"]]), course("c2", [["l3"], ["l4"]]), course("c3", [["l5"]])];
-
-  it("何も終えていなければ最初のコースだけ", () => {
-    assert.deepEqual(unlockedCourseIds(courses, new Set()), ["c1"]);
-  });
-
-  it("前のコースを全部終えれば次が解放される", () => {
-    assert.deepEqual(unlockedCourseIds(courses, new Set(["l1", "l2"])), ["c1", "c2"]);
-  });
-
-  it("前のコースが途中でも、このコースを 1 件でも終えていれば解放", () => {
-    assert.deepEqual(unlockedCourseIds(courses, new Set(["l1", "l5"])), ["c1", "c3"]);
-  });
-
-  it("レッスンのない前のコースは終えたことにならない", () => {
-    assert.deepEqual(unlockedCourseIds([course("c1", []), course("c2", [["l1"]])], new Set()), ["c1"]);
-  });
-
-  it("コースがなければ空", () => {
-    assert.deepEqual(unlockedCourseIds([], new Set(["l1"])), []);
   });
 });
 

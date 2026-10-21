@@ -306,24 +306,28 @@ describe("StudentDashboard：空の状態の分岐", () => {
   });
 });
 
-describe("ロック表示（カリキュラム欄・コース一覧で同じ規則）", () => {
-  it("course-lock から isCourseLocked と countCourseLessons を import している", () => {
-    assert.match(src, /^import \{ countCourseLessons, isCourseLocked \} from "@\/lib\/course-lock";$/m);
+describe("ロック表示（カリキュラム欄・コース一覧は API の locked を表示するだけ。#78 PR A）", () => {
+  it("page.tsx は course-lock を import せず、isCourseLocked・countCourseLessons を使わない（ロックの判定はサーバーの course-gate.ts だけ）", () => {
+    assert.doesNotMatch(src, /from "@\/lib\/course-lock"/);
+    assert.doesNotMatch(src, /\bisCourseLocked\(|\bcountCourseLessons\(/);
+    assert.doesNotMatch(src, /from "@\/lib\/course-gate"/);
   });
 
-  it("カリキュラム欄は前のコースと自分の件数で isCourseLocked を呼ぶ（i > 4 の固定規則を使わない）", () => {
-    assert.match(dashboard, /const isLock = isCourseLocked\(i > 0 \? courses\[i - 1\] : null, c\);/);
+  it("カリキュラム欄は /api/dashboard の locked を表示する（i > 4 の固定規則を使わない）", () => {
+    assert.match(dashboard, /locked: c\.locked === true,/);
+    assert.match(dashboard, /const isLock = c\.locked;/);
     assert.doesNotMatch(dashboard, /i > 4/);
-    // courses は件数を持つ（isCourseLocked が読む completedLessons / totalLessons）
+    // 受講中・完了の表示は件数で判定する（completedLessons / totalLessons）
     assert.match(dashboard, /completedLessons: c\.completedLessons, totalLessons: c\.totalLessons,/);
   });
 
-  it("コース一覧は /api/courses の lessons の completed から数えて isCourseLocked を呼ぶ（% で判定しない）", () => {
+  it("「学習を続ける」の pickActiveCourse には locked を持つ courses を渡す（ロック中のコースを選ばない）", () => {
+    assert.match(dashboard, /const activeCourse = pickActiveCourse\(courses\);/);
+  });
+
+  it("コース一覧は /api/courses の locked を表示する（true のときだけロック）", () => {
     const list = component("CourseList");
-    assert.match(
-      list,
-      /const locked = isCourseLocked\(i > 0 \? countCourseLessons\(apiCourses\[i - 1\]\) : null, countCourseLessons\(c\)\);/
-    );
+    assert.match(list, /const locked = c\.locked === true;/);
     assert.doesNotMatch(list, /prevProgress/);
     // 表示の % はこれまでどおり API の progress
     assert.match(list, /progress: c\.progress \|\| 0,/);

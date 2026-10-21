@@ -225,8 +225,8 @@ describe("toQuizResultView：境界", () => {
 
 describe("buildQuizCourses：境界", () => {
   const courses: QuizCourseInput[] = [
-    { id: "c1", name: "STEP1", order: 1, icon: "it", color: "#000", sections: [{ lessons: [{ id: "l1" }] }] },
-    { id: "c2", name: "STEP2", order: 2, icon: "html", color: "#111", sections: [{ lessons: [{ id: "l2" }] }] },
+    { id: "c1", name: "STEP1", order: 1, icon: "it", color: "#000" },
+    { id: "c2", name: "STEP2", order: 2, icon: "html", color: "#111" },
   ];
   const good = [{ options: ["a", "b"], correctIndex: 0 }];
   const quiz = (p: Partial<QuizInput> & { id: string }): QuizInput => ({

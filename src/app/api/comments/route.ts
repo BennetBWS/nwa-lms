@@ -1,19 +1,17 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { COURSE_ORDER_BY } from "@/lib/course-order";
 import { safeErrorSummary } from "@/lib/safe-error";
 import type { Prisma } from "@prisma/client";
 import { parseCreateComment, toCommentThreadView, type CommentPostRejectReason } from "@/lib/lesson-comments";
 import { COMMENT_DAILY_LIMIT, commentWindowStart, decideCommentRate } from "@/lib/comment-rate-limit";
-import { lessonAccessFor } from "@/lib/lesson-access";
+import { lessonAccessFor, unlockedCourseIdsFor } from "@/lib/lesson-access";
 import {
   THREADS_PAGE_SIZE,
   encodeThreadCursor,
   isAnswered,
   parseThreadListQuery,
   toQuestionThreadView,
-  unlockedCourseIds,
 } from "@/lib/question-threads";
 
 // 1 件ごとに読む項目。user は name・role・deactivatedAt だけ（応答には含めない。#32）
@@ -47,17 +45,8 @@ export async function GET(request: Request) {
 
     const and: Prisma.CommentWhereInput[] = [];
     if (session.user.role !== "INSTRUCTOR") {
-      const [courses, progress] = await Promise.all([
-        prisma.course.findMany({
-          orderBy: COURSE_ORDER_BY,
-          select: { id: true, sections: { select: { lessons: { select: { id: true } } } } },
-        }),
-        prisma.progress.findMany({
-          where: { userId, completed: true },
-          select: { lessonId: true },
-        }),
-      ]);
-      const unlocked = unlockedCourseIds(courses, new Set(progress.map((p) => p.lessonId)));
+      // ロックは lesson-access の loadCourseGates（course-gate.ts の規則。#78 PR A）
+      const unlocked = await unlockedCourseIdsFor(prisma, userId);
       and.push({ OR: [{ userId }, { lesson: { section: { courseId: { in: unlocked } } } }] });
     }
     if (mine) and.push({ userId });

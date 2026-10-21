@@ -2,7 +2,6 @@ import { before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 import { COURSE_ORDER_BY, LESSON_ORDER_BY, SECTION_ORDER_BY } from "../../src/lib/course-order";
-import { countCourseLessons, isCourseLocked, type CourseWithLessons } from "../../src/lib/course-lock";
 
 // #47 P3 コース・セクション・レッスンの並び順を [order, id] に統一する（Tec 決定 G-a）。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
@@ -332,18 +331,15 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
   it("/api/courses・/api/dashboard から画面と同じ式で計算したロックと、/api/comments・/api/quizzes の判定が一致する", async () => {
     session = STUDENT_SESSION;
 
-    // コース一覧の画面（page.tsx の CourseList と同じ式）
-    const list = (await (await ROUTES[0].call()).json()) as Array<{ id: string } & CourseWithLessons>;
-    const screenList = list.map((c, i) => ({
-      id: c.id,
-      locked: isCourseLocked(i > 0 ? countCourseLessons(list[i - 1]) : null, countCourseLessons(c)),
-    }));
+    // コース一覧の画面（page.tsx の CourseList は /api/courses の locked を表示するだけ。#78 PR A）
+    const list = (await (await ROUTES[0].call()).json()) as Array<{ id: string; locked?: unknown }>;
+    const screenList = list.map((c) => ({ id: c.id, locked: c.locked }));
 
-    // ダッシュボードのカリキュラム欄（page.tsx と同じ式。件数は API の courses をそのまま使う）
+    // ダッシュボードのカリキュラム欄（page.tsx は /api/dashboard の locked を表示するだけ。#78 PR A）
     const dash = (await (await ROUTES[2].call()).json()) as {
-      courses: Array<{ id: string; completedLessons: number; totalLessons: number }>;
+      courses: Array<{ id: string; locked?: unknown }>;
     };
-    const screenDash = dash.courses.map((c, i) => ({ id: c.id, locked: isCourseLocked(i > 0 ? dash.courses[i - 1] : null, c) }));
+    const screenDash = dash.courses.map((c) => ({ id: c.id, locked: c.locked }));
 
     const expected = [
       { id: "c_a", locked: false },
@@ -352,13 +348,6 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
     ];
     assert.deepEqual(screenList, expected);
     assert.deepEqual(screenDash, expected);
-
-    // サーバー：/api/courses の locked（#47 P4）も画面のロック表示と一致する
-    assert.deepEqual(
-      (list as Array<{ id: string; locked?: unknown }>).map((c) => ({ id: c.id, locked: c.locked })),
-      expected,
-      "/api/courses の locked が画面のロック表示と一致しない"
-    );
 
     // サーバー：/api/courses/[courseId]（#47 P4）は、画面がロック表示するコースだけ 403
     for (const e of expected) {
@@ -382,7 +371,7 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
     assert.deepEqual(
       unlocked,
       expected.filter((e) => !e.locked).map((e) => e.id),
-      "unlockedCourseIds が画面のロック表示と一致しない"
+      "質問一覧の解放済みコースが画面のロック表示と一致しない"
     );
 
     // サーバー：確認テストの一覧のロック（buildQuizCourses。偽 prisma は各コースに修了テストを 1 件置く）
