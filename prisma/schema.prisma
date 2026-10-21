@@ -33,21 +33,22 @@ enum AssignmentStatus {
 }
 
 model User {
-  id             String          @id @default(cuid())
-  email          String          @unique
-  name           String
-  password       String
-  role           Role            @default(STUDENT)
-  avatar         String?
-  createdAt      DateTime        @default(now())
-  deactivatedAt  DateTime?
-  sessionVersion Int             @default(0)
-  progress       Progress[]
-  quizAttempts   QuizAttempt[]
-  comments       Comment[]
-  assignments    Assignment[]
-  notifications  Notification[]
-  passwordResets PasswordReset[]
+  id                    String                 @id @default(cuid())
+  email                 String                 @unique
+  name                  String
+  password              String
+  role                  Role                   @default(STUDENT)
+  avatar                String?
+  createdAt             DateTime               @default(now())
+  deactivatedAt         DateTime?
+  sessionVersion        Int                    @default(0)
+  progress              Progress[]
+  quizAttempts          QuizAttempt[]
+  comments              Comment[]
+  assignments           Assignment[]
+  notifications         Notification[]
+  passwordResets        PasswordReset[]
+  quizQuestionRevisions QuizQuestionRevision[] @relation("QuizQuestionRevisionEditor")
 }
 
 model PasswordReset {
@@ -128,6 +129,23 @@ model QuizQuestion {
   options      Json
   correctIndex Int
   order        Int
+}
+
+// 確認テストの問題の編集履歴（監査用。#81）。問題を消しても履歴は残すため、questionId・quizId は FK にしない。
+// editor は編集した講師。履歴が残っている User は削除できない（onDelete: Restrict。受講生・講師の無効化は論理削除）。
+model QuizQuestionRevision {
+  id            String   @id @default(cuid())
+  questionId    String
+  quizId        String
+  editorId      String
+  editor        User     @relation("QuizQuestionRevisionEditor", fields: [editorId], references: [id], onDelete: Restrict)
+  changedFields String[]
+  before        Json
+  after         Json
+  createdAt     DateTime @default(now())
+
+  @@index([questionId, createdAt])
+  @@index([quizId, createdAt])
 }
 
 model QuizAttempt {

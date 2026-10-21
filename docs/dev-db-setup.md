@@ -225,6 +225,13 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 
 4. 手順 1 のコマンドをもう一度実行し、未適用が残っていないことを確かめる
 
+5. RLS と anon の権限を本番で確かめる
+
+   上の「8. Studio で RLS と anon の権限を確かめる」にある読み取りだけの SQL（RLS・anon / authenticated の権限・
+   public の関数とビューの 3 つ）を、Tec が本番の Supabase ダッシュボードの SQL Editor で実行する
+   （ローカルの Studio（127.0.0.1:54323）ではない）。期待する結果は手順 8 と同じ（すべてのテーブルで `rls_enabled` が
+   true・`rls_forced` が false、権限と関数・ビューは 0 行）。読み取りだけの SQL 以外は実行しない。
+
 `npm run db:local:deploy` / `db:local:reset` / `db:seed` は、本番の接続情報を読み込んだ状態ではガードで拒否される。
 本番に対して `prisma migrate dev` / `migrate reset` / `db push` は使わない。
 

@@ -32,6 +32,8 @@ async function main() {
   await prisma.section.deleteMany();
   await prisma.course.deleteMany();
   await prisma.passwordReset.deleteMany();
+  // QuizQuestionRevision.editorId -> User is ON DELETE RESTRICT (#81), so delete the history before users
+  await prisma.quizQuestionRevision.deleteMany();
   await prisma.user.deleteMany();
 
   // ═══════════════════════════════════════
