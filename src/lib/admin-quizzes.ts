@@ -285,12 +285,42 @@ export type PatchQuestionInput = {
   correctIndex?: number;
 };
 
-/** 前後の空白を除いて、見える文字が 1 文字以上あり、max 文字以内なら除いた値。違えば null */
+/** NUL（U+0000）。Postgres の text・jsonb は受け付けない */
+const NUL = /\u0000/;
+
+/** 対になっていないサロゲート（isWellFormed がない環境での代わり） */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/** 重複の判定で取り除く文字：書式文字（ZWSP・ZWJ・ソフトハイフン・BOM など）と異体字セレクタ */
+// tsconfig の target が ES5 のため、u フラグの正規表現はリテラルでなく RegExp で作る
+const IGNORED_FOR_DUPLICATE = new RegExp("[\\p{Cf}\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}]", "gu");
+
+/** 対になっていないサロゲートを含まない（Postgres の jsonb は拒否し、text は U+FFFD に置き換えて revision が食い違う） */
+function isWellFormedText(s: string): boolean {
+  return typeof s.isWellFormed === "function" ? s.isWellFormed() : !LONE_SURROGATE.test(s);
+}
+
+/**
+ * 前後の空白を除いて、見える文字が 1 文字以上あり、max 文字以内なら除いた値。違えば null。
+ * NUL と対になっていないサロゲートを含む値も null（DB に送らずに 400 にする）。
+ * 重い正規化（hasVisibleText）の前に、UTF-16 の長さが max の 2 倍を超えたら断る
+ * （1 文字は UTF-16 で 2 単位以下なので、2 倍を超えれば必ず max 文字を超える。結果は文字数の規則と同じ）
+ */
 function cleanText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const t = value.trim();
-  if (t === "" || !hasVisibleText(t) || commentLength(t) > max) return null;
+  if (t === "" || t.length > max * 2) return null;
+  if (NUL.test(t) || !isWellFormedText(t)) return null;
+  if (commentLength(t) > max || !hasVisibleText(t)) return null;
   return t;
+}
+
+/**
+ * 選択肢の重複を判定するための形：NFC で正規化し、書式文字と異体字セレクタを除く（除いたあとにもう一度 NFC）。
+ * 見た目が同じ選択肢（"a" と "a" + ZWSP、NFC と NFD の「が」など）を同じとみなす。保存する値には使わない
+ */
+export function optionDuplicateKey(text: string): string {
+  return text.normalize("NFC").replace(IGNORED_FOR_DUPLICATE, "").normalize("NFC");
 }
 
 /**
@@ -299,9 +329,11 @@ function cleanText(value: unknown, max: number): string | null {
  * 1. オブジェクトでない：invalid_json
  * 2. PATCH_QUESTION_FIELDS 以外の項目がある（order・quizId など）：unknown_field（黙って無視せず、変えられないことを知らせる）
  * 3. revision が REVISION_PATTERN に合わない・ない：invalid_revision
- * 4. question：文字列で、前後の空白を除いて 1〜QUESTION_MAX_LENGTH 字、見える文字を含む。違えば invalid_question
+ * 4. question：文字列で、前後の空白を除いて 1〜QUESTION_MAX_LENGTH 字、見える文字を含む、NUL・対になっていない
+ *    サロゲートを含まない。違えば invalid_question
  * 5. options：配列で MIN_OPTIONS〜MAX_OPTIONS 件、各要素が文字列で前後の空白を除いて 1〜OPTION_MAX_LENGTH 字、
- *    見える文字を含む、除いたあとの文が重複しない。違えば invalid_options
+ *    見える文字を含む、NUL・対になっていないサロゲートを含まない、optionDuplicateKey で比べて重複しない。
+ *    違えば invalid_options（保存するのは前後の空白を除いただけの値）
  * 6. correctIndex：0 以上の整数で MAX_OPTIONS 未満。違えば invalid_correct_index
  * 7. question・options・correctIndex のどれもない：no_changes
  * 成功時の value は新しい値（options は新しい配列）
@@ -324,9 +356,13 @@ export function parsePatchQuestionBody(body: unknown): ParseResult<PatchQuestion
     const raw = body.options;
     if (!Array.isArray(raw) || raw.length < MIN_OPTIONS || raw.length > MAX_OPTIONS) return { ok: false, reason: "invalid_options" };
     const options: string[] = [];
+    const keys = new Set<string>();
     for (const o of raw) {
       const t = cleanText(o, OPTION_MAX_LENGTH);
-      if (t === null || options.includes(t)) return { ok: false, reason: "invalid_options" };
+      if (t === null) return { ok: false, reason: "invalid_options" };
+      const key = optionDuplicateKey(t);
+      if (keys.has(key)) return { ok: false, reason: "invalid_options" };
+      keys.add(key);
       options.push(t);
     }
     value.options = options;

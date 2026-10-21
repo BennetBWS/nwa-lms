@@ -13,6 +13,7 @@ import {
   adminQuizStatus,
   buildAdminQuizDetail,
   buildAdminQuizList,
+  optionDuplicateKey,
   parsePatchQuestionBody,
   patchQuestionResponse,
   planQuestionEdit,
@@ -349,6 +350,50 @@ describe("parsePatchQuestionBody", () => {
     for (const c of [-1, 0.5, 1.0000001, "1", null, true, MAX_OPTIONS, Number.NaN, Infinity]) {
       assert.equal(reason({ revision: REV, correctIndex: c }), "invalid_correct_index", String(c));
     }
+  });
+
+  it("NUL・対になっていないサロゲートを含む問題文・選択肢は断る（Postgres が受け付けない）。対になったサロゲートは通す", () => {
+    for (const q of ["問\u0000", "\u0000問", "問\uD800", "問\uDC00", "\uDC00\uD800問", "問\uD83D"]) {
+      assert.equal(reason({ revision: REV, question: q }), "invalid_question", JSON.stringify(q));
+      assert.equal(reason({ revision: REV, options: [q, "b"] }), "invalid_options", JSON.stringify(q));
+    }
+    assert.equal(value({ revision: REV, question: "問\uD83D\uDE00" }).question, "問\uD83D\uDE00", "対になったサロゲートを断った");
+  });
+
+  it("UTF-16 の長さで先に打ち切っても、結果は文字数の規則と同じ（前後の空白は除いてから数える）", () => {
+    // 前後の空白が多くても、除いたあとが上限以内なら通す
+    const padded = " ".repeat(QUESTION_MAX_LENGTH * 3) + "問" + " ".repeat(QUESTION_MAX_LENGTH * 3);
+    assert.equal(value({ revision: REV, question: padded }).question, "問");
+    // 上限ちょうどの絵文字（UTF-16 で上限の 2 倍）は通し、1 文字多ければ断る
+    assert.ok("value" in parsePatchQuestionBody({ revision: REV, question: "\u{1F600}".repeat(QUESTION_MAX_LENGTH) }), "上限ちょうどの絵文字を断った");
+    assert.equal(reason({ revision: REV, question: "\u{1F600}".repeat(QUESTION_MAX_LENGTH + 1) }), "invalid_question");
+    assert.equal(reason({ revision: REV, options: ["\u{1F600}".repeat(OPTION_MAX_LENGTH + 1), "b"] }), "invalid_options");
+    // 巨大な見えない文字だけの値も断る（正規化の前に打ち切る。時間は測らない）
+    assert.equal(reason({ revision: REV, question: "\u200B".repeat(5 * 1024 * 1024) }), "invalid_question");
+    assert.equal(reason({ revision: REV, options: ["\u200B".repeat(5 * 1024 * 1024), "b"] }), "invalid_options");
+  });
+
+  it("見た目が同じ選択肢は重複として断る（NFC・書式文字・異体字セレクタ）。保存するのは前後の空白を除いただけの値", () => {
+    const dup: Array<[string, string[]]> = [
+      ["ZWSP", ["a", "a\u200B"]],
+      ["ZWJ", ["ab", "a\u200Db"]],
+      ["ソフトハイフン", ["ab", "a\u00ADb"]],
+      ["BOM", ["a", "\uFEFFa"]],
+      ["NFC と NFD の「が」", ["\u304C", "\u304B\u3099"]],
+      ["異体字セレクタ", ["\u845B", "\u845B\uFE00"]],
+      ["異体字セレクタ（補助）", ["\u845B", "\u845B\u{E0100}"]],
+      ["書式文字をはさんだ結合", ["\u304C", "\u304B\u200B\u3099"]],
+    ];
+    for (const [label, options] of dup) {
+      assert.equal(reason({ revision: REV, options }), "invalid_options", `${label}を重複とみなさない`);
+    }
+    // 違う文字は重複にしない
+    assert.deepEqual(value({ revision: REV, options: ["a", "A"] }).options, ["a", "A"]);
+    assert.deepEqual(value({ revision: REV, options: ["\u304B", "\u304C"] }).options, ["\u304B", "\u304C"]);
+    // 保存する値は正規化しない（NFD のまま・書式文字も残す）
+    assert.deepEqual(value({ revision: REV, options: [" \u304B\u3099 ", "a\u200Bb"] }).options, ["\u304B\u3099", "a\u200Bb"]);
+    assert.equal(optionDuplicateKey("\u304B\u3099"), "\u304C");
+    assert.equal(optionDuplicateKey("a\u200B\uFE0F"), "a");
   });
 
   it("question・options・correctIndex がどれもなければ no_changes", () => {

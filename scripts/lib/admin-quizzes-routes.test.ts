@@ -899,21 +899,23 @@ describe("PATCH（追加）：400 の境界（route を通す）", () => {
   });
 });
 
-describe("PATCH（追加）：Postgres が受け付けない文字（報告済みの問題。直るまで todo）", () => {
+describe("PATCH（追加）：Postgres が受け付けない文字", () => {
   // Postgres の text・jsonb は NUL（U+0000）を受け付けず、jsonb は対になっていないサロゲートも受け付けない
   // （PGlite で確認）。今の検証は見える文字が 1 つでもあれば通すため、本番では DB のエラーで 500 になる
   // （text の問題文の対になっていないサロゲートは U+FFFD に置き換わって保存され、応答の revision と食い違う）。
-  // 期待：DB を読む前に 400 で断る。
-  for (const [label, body] of [
-    ["問題文に NUL", { question: "問\u0000題" }],
-    ["選択肢に NUL", { options: ["a\u0000", "b"] }],
-    ["問題文に対になっていないサロゲート", { question: "問\uD800" }],
-    ["選択肢に対になっていないサロゲート", { options: ["a\uDC00", "b"] }],
-  ] as Array<[string, Row]>) {
-    it(`${label}は 400（DB に送らない）`, { todo: "本番コードの修正待ち（tester 報告）" }, async () => {
+  // DB を読む前に 400 で断る（問題文は invalid_question、選択肢は invalid_options）。
+  for (const [label, body, reason] of [
+    ["問題文に NUL", { question: "問\u0000題" }, "invalid_question"],
+    ["選択肢に NUL", { options: ["a\u0000", "b"] }, "invalid_options"],
+    ["問題文に対になっていないサロゲート", { question: "問\uD800" }, "invalid_question"],
+    ["選択肢に対になっていないサロゲート", { options: ["a\uDC00", "b"] }, "invalid_options"],
+  ] as Array<[string, Row, string]>) {
+    it(`${label}は 400 ${reason}（DB に送らない）`, async () => {
       const res = await patch("q1", { revision: revOf("q1"), ...body });
       assert.equal(res.status, 400, `${label} が 400 にならない（${res.status}）`);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason }, `${label} の理由が違う`);
       assert.deepEqual(writes(), [], `${label} を DB に送った`);
+      assert.deepEqual(calls, [], `${label} で DB を読んだ`);
     });
   }
 });
