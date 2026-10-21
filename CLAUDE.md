@@ -24,6 +24,7 @@ NWA 受講生向けの学習管理システム（LMS）。STEP1〜8 のコース
 - DB の接続先の確認: `npm run db:where`（DATABASE_URL / DIRECT_URL の「ホスト:ポート」とガードの判定だけを表示。接続しない）
 - マイグレーションの適用（ローカル DB のみ）: `npm run db:local:deploy`（ガードを通したあとで `prisma migrate deploy`）
 - ローカル DB の作り直し（ローカル DB のみ）: `npm run db:local:reset`（ガードを通したあとで `prisma migrate reset --force`。続けて seed も走る）
+- 問題の修正（#81 Q1）の DB の処理の確認（ローカル DB のみ）: `npm run db:local:verify-quiz-admin`（ガードを通したあとで `src/lib/admin-quiz-edit.ts` を seed の問題に実行し、1 件ごとにロールバックして PASS / FAIL を表示。FAIL があれば終了コード 1。npm test には含めない）
 - Prisma Client 生成: `npm run db:generate`
 - seed（ローカル DB のみ）: `npm run db:seed`
 - ※ Supabase 型生成（supabase gen types）は使わない。型は Prisma Client から生成される
