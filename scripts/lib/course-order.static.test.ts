@@ -159,6 +159,7 @@ describe("Course / Section / Lesson を読む箇所の一覧（prisma 以外の�
   /** 並び順を確かめなくてよい理由がある箇所 */
   const ORDER_NOT_NEEDED: Record<string, string> = {
     "src/app/api/admin/courses/[id]/route.ts": "コースの削除のために tx で section / lesson の id を集めるだけ。並び順を使わない",
+    "src/app/api/admin/quizzes/[id]/route.ts": "クイズ管理の詳細（#81 Q1）。クイズのコース名を id で 1 件読むだけ（並びはコースの一覧の GET が COURSE_ORDER_BY で決める）",
     "src/app/api/progress/route.ts": "講師の完了で、レッスンの存在を id で 1 件確かめるだけ（#47 P4。受講生は lesson-access で判定）。並び順を使わない",
   };
 

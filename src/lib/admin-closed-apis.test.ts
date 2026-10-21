@@ -376,7 +376,7 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     }
   });
 
-  it("GET /api/admin/quizzes は残っている（Q1 で作り直すまで）", () => {
+  it("GET /api/admin/quizzes は残っている（#81 Q1 で作り直した一覧）", () => {
     const path = join(API_DIR, "admin", "quizzes", "route.ts");
     assert.ok(existsSync(path), "admin/quizzes/route.ts がない");
     assert.ok(exportedMethods(readFileSync(path, "utf8")).has("GET"), "admin/quizzes/route.ts に GET がない");

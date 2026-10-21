@@ -132,6 +132,8 @@ const fakePrisma = {
         lessonId: null,
         lesson: null,
         questions: [{ options: ["ダミーA", "ダミーB"], correctIndex: 0 }],
+        // クイズ管理の一覧（#81 Q1）が読む受験記録の件数
+        _count: { attempts: 0 },
       }));
     },
   },
@@ -183,6 +185,7 @@ before(async () => {
   const adminCourses = await import("../../src/app/api/admin/courses/route");
   const quizzes = await import("../../src/app/api/quizzes/route");
   const comments = await import("../../src/app/api/comments/route");
+  const adminQuizzes = await import("../../src/app/api/admin/quizzes/route");
   ROUTES = [
     { file: "courses/route.ts", session: STUDENT_SESSION, call: () => courseList.GET(), nested: ["sections", "lessons"] },
     {
@@ -213,6 +216,8 @@ before(async () => {
       call: () => comments.GET(new Request("http://localhost/api/comments")),
       nested: [],
     },
+    // 末尾に足す（ROUTES[0]・[2]・[7]・[8] を位置で参照するテストがあるため）
+    { file: "admin/quizzes/route.ts", session: INSTRUCTOR_SESSION, call: () => adminQuizzes.GET(), nested: [] },
   ];
 });
 
@@ -382,5 +387,15 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
       expected,
       "確認テストの一覧の並び・ロックが画面と一致しない"
     );
+  });
+});
+
+describe("クイズ管理の一覧（#81 Q1）も [order, id] のコース順", () => {
+  it("同じ order の 2 コースの修了テストを、c_a → c_b → c_c の順に返す（登録順の c_b → c_a ではない）", async () => {
+    session = INSTRUCTOR_SESSION;
+    const res = await ROUTES[ROUTES.length - 1].call();
+    assert.equal(res.status, 200, "クイズ管理の一覧が 200 を返さない");
+    const body = (await res.json()) as { quizzes: Array<{ courseId: string | null }> };
+    assert.deepEqual(body.quizzes.map((q) => q.courseId), ["c_a", "c_b", "c_c"], "クイズ管理の一覧のコースの並びが [order, id] でない");
   });
 });
