@@ -10,9 +10,9 @@ import { NEXT_LESSONS_LIMIT, countCompletedSince, pickNextLessons, summarizeCour
 // ロックは lesson-access の loadCourseGates（course-gate.ts の規則）で、/api/courses と同じく講師は常に locked: false。
 // loadCourseGates が知らないコース（読み込みの間に足されたもの）はロックとして扱う。
 // 「学習を続ける」・Next Up（pickNextLessons）はロック中のコースを選ばない
-// 一覧の表示用の読み込みとロック用の読み込み（loadCourseGates）は別のクエリで、同じ時点のデータとは限らない。間に完了が書かれると、
+// 一覧の表示用の読み込みとロック用の読み込み（loadCourseGates）は別のクエリで、同じ時点のデータとは限らない。間に完了やレッスンの追加・削除が書かれると、
 // 一瞬だけ進捗とロックが食い違うことがある（例：100% なのに次のコースがまだロック、またはその逆）。どちらの向きにも食い違いうるが、
-// locked とレッスンの中身を隠すかどうかは loadCourseGates の結果だけで決まり、開き直せば直る（既知の挙動）
+// locked と、学習を続ける・Next Up にロック中のコースを選ばないことは loadCourseGates の結果だけで決まり、開き直せば直る（既知の挙動）
 
 export async function GET() {
   try {
