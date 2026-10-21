@@ -341,3 +341,76 @@ describe("講師が正解を直したときの、過去の受験記録（D2 a：
     assert.deepEqual([(db.revisions[0].before as Row).correctIndex, (db.revisions[0].after as Row).correctIndex], [0, 3]);
   });
 });
+
+// ═════════════ tester による追加（#81 Q1） ═════════════
+
+describe("講師が問題を直したときの、受験中の受講生（追加）", () => {
+  const assertStale409 = async (res: Response, label: string) => {
+    assert.equal(res.status, 409, `${label}：古いトークンの送信が 409 にならない（${res.status}）`);
+    const body = (await res.json()) as Row;
+    assert.equal(body.reason, "quiz_changed", `${label}：reason が quiz_changed でない`);
+    for (const k of ["score", "results", "passed", "correctIndex"]) assert.ok(!(k in body), `${label}：409 の本文に ${k} がある`);
+    assert.equal(creates().length, 0, `${label}：409 なのに受験を記録した`);
+    assert.deepEqual(db.attempts, [], `${label}：受験記録が増えた`);
+  };
+
+  it("選択肢を減らした（4 → 3 件）あとの古いトークンは 409 quiz_changed で記録しない", async () => {
+    const v1 = await open();
+    await instructorEdit("q1", { options: ["文A", "文B", "文C"] });
+    await assertStale409(await send(v1, ["文A", "文G"]), "選択肢を減らした");
+  });
+
+  it("選択肢の並べ替え（文は同じ、正解の位置を付け替え）でも、古いトークンは 409 quiz_changed で記録しない", async () => {
+    const v1 = await open();
+    const patched = await instructorEdit("q1", { options: ["文D", "文C", "文B", "文A"], correctIndex: 3 });
+    assert.deepEqual([patched.changed, patched.inProgressInvalidated], [["options", "correctIndex"], true]);
+    await assertStale409(await send(v1, ["文A", "文G"]), "並べ替え");
+    // 開き直すと、正解は同じ文（文A）のまま
+    const v2 = await open();
+    const ok = await send(v2, ["文A", "文G"]);
+    assert.equal(ok.status, 200, "開き直しても送れない");
+    assert.equal((await ok.json()).score, 100, "並べ替えのあと、同じ文の正解で採点されない");
+  });
+
+  it("前後の空白だけが違う選択肢を送っても、保存は除いた値なので変わらず no_changes（受験中のトークンは有効なまま）", async () => {
+    const v1 = await open();
+    session = INSTRUCTOR_SESSION;
+    const d = (await (await ADMIN_DETAIL(new Request("http://localhost/api/admin/quizzes/mini1"), idCtx("mini1"))).json()) as { questions: Array<{ id: string; revision: string }> };
+    const rev = d.questions.find((q) => q.id === "q1")?.revision;
+    const res = await ADMIN_PATCH(
+      new Request("http://localhost/api/admin/questions/q1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision: rev, options: [" 文A", "文B ", "\u3000文C", "文D\n"] }),
+      }),
+      idCtx("q1")
+    );
+    assert.equal(res.status, 400, "空白だけの違いで 400 no_changes にならない");
+    assert.equal((await res.json()).reason, "no_changes");
+    assert.deepEqual(db.revisions, [], "no_changes なのに履歴を書いた");
+    const sent = await send(v1, ["文A", "文G"]);
+    assert.equal(sent.status, 200, "no_changes のあとに古いトークンが 409 になった");
+  });
+
+  it("問題文と正解を同時に変えると、古いトークンのまま送れて、新しい正解で採点される", async () => {
+    const v1 = await open();
+    const patched = await instructorEdit("q2", { question: "ダミー問2（直した）", correctIndex: 0 });
+    assert.deepEqual([patched.changed, patched.inProgressInvalidated], [["question", "correctIndex"], false]);
+    const res = await send(v1, ["文A", "文E"]);
+    assert.equal(res.status, 200, "問題文と正解の変更で古いトークンが 409 になった");
+    const r = await res.json();
+    assert.deepEqual([r.results, r.score], [[true, true], 100], "新しい正解で採点されていない");
+    assert.deepEqual(db.attempts[0]?.answers, [0, 0], "回答が元の位置で保存されていない");
+  });
+
+  it("選択肢を変えても、過去の受験記録（点数・合否・回答）は変わらない", async () => {
+    const v1 = await open();
+    assert.equal((await send(v1, ["文B", "文G"])).status, 200);
+    const saved = JSON.parse(JSON.stringify(db.attempts));
+    await instructorEdit("q1", { options: ["新A", "新B"], correctIndex: 1 });
+    await instructorEdit("q2", { question: "直した", options: ["新E", "新F", "新G", "新H"], correctIndex: 3 });
+    assert.deepEqual(JSON.parse(JSON.stringify(db.attempts)), saved, "選択肢の変更で過去の受験記録が変わった");
+    assert.equal(db.revisions.length, 2, "履歴が 2 行でない");
+    assert.ok(!calls.some((c) => c.method.startsWith("quizAttempt.") && !["quizAttempt.findMany", "quizAttempt.count", "quizAttempt.create"].includes(c.method)), "受験記録を書き換える呼び出しがある");
+  });
+});
