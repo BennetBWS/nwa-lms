@@ -123,15 +123,15 @@ function changedFieldsCheckThreats(sql: string): string[] {
   const col = String.raw`(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})`;
   for (const stmt of stripComments(sql).split(";")) {
     const drop = new RegExp(String.raw`\bDROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(${IDENT})`, "gi");
-    for (const m of stmt.matchAll(drop)) {
+    for (const m of Array.from(stmt.matchAll(drop))) {
       if (tableKey(m[1]) === CHANGED_FIELDS_CHECK) found.push("DROP CONSTRAINT");
     }
     const alter = new RegExp(String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${QUALIFIED})`, "i").exec(stmt);
     if (!alter || tableKey(alter[1]) !== "QuizQuestionRevision") continue;
-    for (const m of stmt.matchAll(new RegExp(String.raw`\bDROP\s+${col}`, "gi"))) {
+    for (const m of Array.from(stmt.matchAll(new RegExp(String.raw`\bDROP\s+${col}`, "gi")))) {
       if (tableKey(m[1]) === "changedFields") found.push("DROP COLUMN");
     }
-    for (const m of stmt.matchAll(new RegExp(String.raw`\bALTER\s+${col}\s+(?:SET\s+DATA\s+)?TYPE\b`, "gi"))) {
+    for (const m of Array.from(stmt.matchAll(new RegExp(String.raw`\bALTER\s+${col}\s+(?:SET\s+DATA\s+)?TYPE\b`, "gi")))) {
       if (tableKey(m[1]) === "changedFields") found.push("ALTER COLUMN TYPE");
     }
   }
