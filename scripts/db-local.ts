@@ -1,26 +1,27 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { PrismaClient } from "@prisma/client";
-
 import {
   formatDatabaseTargets,
   isLocalPrismaCommand,
   runLocalPrisma,
   type SpawnLike,
 } from "./lib/db-local";
+import { loadRootEnv } from "./lib/load-env";
 
 // Usage (via package.json):
 //   npm run db:where          -> tsx scripts/db-local.ts where
 //   npm run db:local:deploy   -> tsx scripts/db-local.ts deploy
 //   npm run db:local:reset    -> tsx scripts/db-local.ts reset
 //
-// Load .env the same way as prisma/seed.ts and the Prisma CLI: the PrismaClient
-// constructor reads .env into process.env without overriding variables that are
-// already set, and does not connect. No query is ever run from this script.
-new PrismaClient();
+// No query is ever run from this script.
 
 const ROOT = path.resolve(__dirname, "..");
+
+// Read <repo>/.env by path (not through the generated Prisma Client, which may point
+// at another checkout's schema). Variables already set are not overridden; .env.local
+// is not read. Nothing from the file is printed.
+loadRootEnv(ROOT);
 const PRISMA_BIN = path.join(ROOT, "node_modules", ".bin", "prisma");
 
 const spawn: SpawnLike = (command, args, options) =>

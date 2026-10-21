@@ -1,14 +1,21 @@
+import path from "node:path";
+
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { assertLocalDatabase } from "../scripts/lib/assert-local-db";
+import { loadRootEnv } from "../scripts/lib/load-env";
 import { REPLY_NOTIFICATION_TITLE, replyNotificationMessage } from "../src/lib/question-reply";
+
+// Read <repo>/.env by path before anything else (not through the generated Prisma Client,
+// which may point at another checkout's schema). Variables already set are not overridden;
+// .env.local is not read. Nothing from the file is printed.
+loadRootEnv(path.resolve(__dirname, ".."));
 
 const prisma = new PrismaClient();
 
 // Destructive script: refuse to run against anything but a local database.
-// This must stay right after `new PrismaClient()`: the constructor loads .env into
-// process.env (so DATABASE_URL / DIRECT_URL are visible here) but does not connect.
+// This must stay right after `new PrismaClient()`, which does not connect.
 // No query may run before this check. Only the error message is printed.
 try {
   assertLocalDatabase([process.env.DATABASE_URL, process.env.DIRECT_URL]);
