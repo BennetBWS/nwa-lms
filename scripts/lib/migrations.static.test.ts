@@ -197,6 +197,23 @@ describe("マイグレーション SQL の静的な照合（#2 / #5 / #81 Q0）"
     assert.match(sql, /\bON\s+UPDATE\s+CASCADE\b/i, "editorId は ON UPDATE CASCADE");
   });
 
+  it("QuizQuestionRevision の changedFields は CHECK 制約で NULL と空配列を拒否する（承認済みの設計は TEXT[] NOT NULL）", () => {
+    // 列は Prisma の生成どおり NULL 可（String[] → TEXT[]）。意図は CHECK で守る。
+    // Prisma 6 は CHECK 制約を schema.prisma で表せず、マイグレーションでも管理しないため、schema との照合では検出できない。
+    // ここで固定し、手で消されたら落とす。ALTER TABLE の対象は新しいテーブルだけ（上の「追加だけ」の検査）と矛盾しない。
+    const dir = migrationDirs().find((d) => d.endsWith("_add_quiz_question_revision"));
+    assert.ok(dir, "add_quiz_question_revision のマイグレーションがない");
+    const sql = readSql(dir).replace(/\s+/g, " ");
+    assert.ok(
+      sql.includes(
+        'ALTER TABLE "QuizQuestionRevision" ADD CONSTRAINT "QuizQuestionRevision_changedFields_check" CHECK ("changedFields" IS NOT NULL AND cardinality("changedFields") > 0);'
+      ),
+      "QuizQuestionRevision_changedFields_check（IS NOT NULL かつ cardinality > 0）がない"
+    );
+    assert.equal((sql.match(/\bCHECK\b/gi) ?? []).length, 1, "CHECK は changedFields の 1 つだけ");
+    assert.ok(/"changedFields" TEXT\[\],/.test(sql), "changedFields の列定義は Prisma の生成どおり TEXT[]（NOT NULL なし）");
+  });
+
   it("QuizQuestionRevision の migration.sql と schema.prisma のモデルの列が一致する", () => {
     const dir = migrationDirs().find((d) => d.endsWith("_add_quiz_question_revision"));
     assert.ok(dir, "add_quiz_question_revision のマイグレーションがない");
