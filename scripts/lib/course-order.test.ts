@@ -393,7 +393,9 @@ describe("同じ order の 2 コースで、画面のロック表示とサーバ
 describe("クイズ管理の一覧（#81 Q1）も [order, id] のコース順", () => {
   it("同じ order の 2 コースの修了テストを、c_a → c_b → c_c の順に返す（登録順の c_b → c_a ではない）", async () => {
     session = INSTRUCTOR_SESSION;
-    const res = await ROUTES[ROUTES.length - 1].call();
+    const route = ROUTES.find((r) => r.file === "admin/quizzes/route.ts");
+    assert.ok(route, "ROUTES に admin/quizzes/route.ts がない");
+    const res = await route.call();
     assert.equal(res.status, 200, "クイズ管理の一覧が 200 を返さない");
     const body = (await res.json()) as { quizzes: Array<{ courseId: string | null }> };
     assert.deepEqual(body.quizzes.map((q) => q.courseId), ["c_a", "c_b", "c_c"], "クイズ管理の一覧のコースの並びが [order, id] でない");
