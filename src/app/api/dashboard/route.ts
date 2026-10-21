@@ -11,7 +11,8 @@ import { NEXT_LESSONS_LIMIT, countCompletedSince, pickNextLessons, summarizeCour
 // loadCourseGates が知らないコース（読み込みの間に足されたもの）はロックとして扱う。
 // 「学習を続ける」・Next Up（pickNextLessons）はロック中のコースを選ばない
 // 一覧の表示用の読み込みとロック用の読み込み（loadCourseGates）は別のクエリで、同じ時点のデータとは限らない。間に完了が書かれると、
-// 一瞬だけ進捗とロックが食い違うことがある（例：100% なのに次のコースがまだロック）。ロックが残る側に食い違い、開き直せば直る（既知の挙動）
+// 一瞬だけ進捗とロックが食い違うことがある（例：100% なのに次のコースがまだロック、またはその逆）。どちらの向きにも食い違いうるが、
+// locked とレッスンの中身を隠すかどうかは loadCourseGates の結果だけで決まり、開き直せば直る（既知の挙動）
 
 export async function GET() {
   try {

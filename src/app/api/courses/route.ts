@@ -12,7 +12,8 @@ import { safeErrorSummary } from "@/lib/safe-error";
 // ロックは lesson-access の loadCourseGates（course-gate.ts の規則。#78 PR A）の結果を使い、画面はこの locked を表示するだけにする。
 // loadCourseGates が知らないコース（読み込みの間に足されたもの）はロックとして扱う
 // 一覧の表示用の読み込みとロック用の読み込み（loadCourseGates）は別のクエリで、同じ時点のデータとは限らない。間に完了が書かれると、
-// 一瞬だけ進捗とロックが食い違うことがある（例：100% なのに次のコースがまだロック）。ロックが残る側に食い違い、開き直せば直る（既知の挙動）
+// 一瞬だけ進捗とロックが食い違うことがある（例：100% なのに次のコースがまだロック、またはその逆）。どちらの向きにも食い違いうるが、
+// locked とレッスンの中身を隠すかどうかは loadCourseGates の結果だけで決まり、開き直せば直る（既知の挙動）
 export async function GET() {
   try {
     const session = await auth();
