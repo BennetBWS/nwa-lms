@@ -114,7 +114,9 @@ const CHANGED_FIELDS_CHECK = "QuizQuestionRevision_changedFields_check";
 
 /**
  * changedFields の CHECK（#81 Q0）を消しうる記述。文（; で区切る）ごとに見る。
- * - CHECK の DROP CONSTRAINT（どのテーブルに対しても）
+ * - CHECK の DROP CONSTRAINT・RENAME CONSTRAINT（どのテーブルに対しても）
+ * - "QuizQuestionRevision" の DROP TABLE（IF EXISTS・複数のテーブルの列挙を含む。モデルの名前を変えると
+ *   Prisma は DROP TABLE と CREATE TABLE を生成し、CHECK も消える）
  * - "QuizQuestionRevision" の "changedFields" の DROP COLUMN
  * - "QuizQuestionRevision" の "changedFields" の ALTER COLUMN ... TYPE（SET DATA TYPE を含む）
  */
@@ -125,6 +127,15 @@ function changedFieldsCheckThreats(sql: string): string[] {
     const drop = new RegExp(String.raw`\bDROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(${IDENT})`, "gi");
     for (const m of Array.from(stmt.matchAll(drop))) {
       if (tableKey(m[1]) === CHANGED_FIELDS_CHECK) found.push("DROP CONSTRAINT");
+    }
+    const rename = new RegExp(String.raw`\bRENAME\s+CONSTRAINT\s+(${IDENT})`, "gi");
+    for (const m of Array.from(stmt.matchAll(rename))) {
+      if (tableKey(m[1]) === CHANGED_FIELDS_CHECK) found.push("RENAME CONSTRAINT");
+    }
+    const dropTable = new RegExp(String.raw`\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(${QUALIFIED}(?:\s*,\s*${QUALIFIED})*)`, "i").exec(stmt);
+    if (dropTable) {
+      const tables = Array.from(dropTable[1].matchAll(new RegExp(QUALIFIED, "g"))).map((m) => tableKey(m[0]));
+      if (tables.includes("QuizQuestionRevision")) found.push("DROP TABLE");
     }
     const alter = new RegExp(String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${QUALIFIED})`, "i").exec(stmt);
     if (!alter || tableKey(alter[1]) !== "QuizQuestionRevision") continue;
@@ -244,8 +255,8 @@ describe("マイグレーション SQL の静的な照合（#2 / #5 / #81 Q0）"
     assert.ok(/"changedFields" TEXT\[\],/.test(sql), "changedFields の列定義は Prisma の生成どおり TEXT[]（NOT NULL なし）");
   });
 
-  it("Q0 より後のマイグレーションは、changedFields の CHECK を消しうる変更をしない（DROP CONSTRAINT・DROP COLUMN・ALTER COLUMN TYPE）", () => {
-    // 列を作り直したり型を変えたりすると、CHECK も一緒に消える（または消す必要がある）。
+  it("Q0 より後のマイグレーションは、changedFields の CHECK を消しうる変更をしない（DROP / RENAME CONSTRAINT・DROP TABLE・DROP COLUMN・ALTER COLUMN TYPE）", () => {
+    // テーブルや列を作り直したり、型を変えたり、制約の名前を変えたりすると、CHECK が消える（または消す必要がある・この照合から外れる）。
     // これらを含むマイグレーションでは、同じファイルで CHECK を追加し直し、このテストを更新する。
     const dir = migrationDirs().find((d) => d.endsWith(REVISION_MIGRATION_SUFFIX));
     assert.ok(dir, "add_quiz_question_revision のマイグレーションがない");
@@ -383,6 +394,19 @@ describe("マイグレーションの検出器（取りこぼし・誤検出）"
     assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ADD COLUMN "x" TEXT, DROP "changedFields";'), ["DROP COLUMN"]);
     assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ALTER COLUMN "changedFields" TYPE JSONB USING to_jsonb("changedFields");'), ["ALTER COLUMN TYPE"]);
     assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE ONLY "QuizQuestionRevision" ALTER "changedFields" SET DATA TYPE TEXT;'), ["ALTER COLUMN TYPE"]);
+  });
+
+  it("changedFieldsCheckThreats：QuizQuestionRevision の DROP TABLE（IF EXISTS・スキーマ修飾・複数の列挙）を見つけ、別のテーブルの DROP TABLE は数えない", () => {
+    assert.deepEqual(changedFieldsCheckThreats('DROP TABLE "QuizQuestionRevision";'), ["DROP TABLE"]);
+    assert.deepEqual(changedFieldsCheckThreats('drop table if exists public."QuizQuestionRevision" cascade;'), ["DROP TABLE"]);
+    assert.deepEqual(changedFieldsCheckThreats('DROP TABLE IF EXISTS "Other", "QuizQuestionRevision";'), ["DROP TABLE"]);
+    assert.deepEqual(changedFieldsCheckThreats('DROP TABLE "QuizQuestionRevisionArchive";'), []);
+    assert.deepEqual(changedFieldsCheckThreats("DROP TABLE quizquestionrevision;"), []);
+  });
+
+  it("changedFieldsCheckThreats：CHECK の RENAME CONSTRAINT を見つけ、別の制約の RENAME は数えない", () => {
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" RENAME CONSTRAINT "QuizQuestionRevision_changedFields_check" TO "x";'), ["RENAME CONSTRAINT"]);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" RENAME CONSTRAINT "QuizQuestionRevision_editorId_fkey" TO "x";'), []);
   });
 
   it("changedFieldsCheckThreats：別のテーブル・別の列・別の制約・コメントの中・NOT NULL の追加は数えない", () => {
