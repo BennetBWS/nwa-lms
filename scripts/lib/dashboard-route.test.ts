@@ -1,6 +1,6 @@
 import { before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { installFakeAuth, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
+import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
 
 // #32 GET /api/dashboard。
 // DB・ネットワークなし。prisma は globalThis.prisma に置く、このテスト専用の小さな偽物
@@ -235,7 +235,8 @@ describe("GET /api/dashboard：クエリの指定", () => {
   it("progress・notification の where はすべて自分の userId に限定", async () => {
     await GET();
     const scoped = [...callsOf("progress.findMany"), ...callsOf("notification.findMany"), ...callsOf("notification.count")];
-    assert.equal(scoped.length, 4);
+    // progress 2 件（集計・最近の完了）＋ notification 2 件 ＋ ロックの判定（#78 PR A。lesson-access の loadCourseGates）の progress 1 件
+    assert.equal(scoped.length, 5);
     for (const c of scoped) {
       assert.equal((c.args.where as { userId?: string }).userId, USER, c.method);
     }
@@ -266,5 +267,43 @@ describe("GET /api/dashboard：クエリの指定", () => {
     assert.deepEqual(select.sections.orderBy, [{ order: "asc" }, { id: "asc" }]);
     assert.deepEqual(select.sections.select.lessons.orderBy, [{ order: "asc" }, { id: "asc" }]);
     assert.deepEqual(select.sections.select.lessons.select, { id: true, title: true, order: true });
+  });
+});
+
+describe("GET /api/dashboard：コースの locked（#78 PR A）", () => {
+  const lockedOf = (body: { courses: Array<{ id: string; locked: unknown }> }) => body.courses.map((c) => [c.id, c.locked]);
+
+  it("受講生：前のコースが途中で、このコースが未着手ならロック（lesson-access の loadCourseGates と同じ）", async () => {
+    const body = await (await GET()).json();
+    assert.deepEqual(lockedOf(body), [["c1", false], ["c2", true]]);
+    // ロックの判定はコースとレッスンの id・自分の完了だけを読む
+    const lockRead = callsOf("progress.findMany").find((c) => JSON.stringify(c.args.select) === JSON.stringify({ lessonId: true }));
+    assert.ok(lockRead, "ロックの判定の progress.findMany が呼ばれていない");
+    assert.deepEqual(lockRead.args.where, { userId: USER, completed: true });
+  });
+
+  it("受講生：前のコースを全部終えれば開く", async () => {
+    progress = progress.map((p) => (p.id === "p4" ? { ...p, completed: true, completedAt: new Date() } : p));
+    const body = await (await GET()).json();
+    assert.deepEqual(lockedOf(body), [["c1", false], ["c2", false]]);
+  });
+
+  it("講師：常に locked: false で、ロックの判定のための読み込みをしない（/api/courses と同じ）", async () => {
+    session = INSTRUCTOR_SESSION;
+    const body = await (await GET()).json();
+    assert.deepEqual(lockedOf(body), [["c1", false], ["c2", false]]);
+    assert.equal(callsOf("course.findMany").length, 1, "講師でロックの判定のためにコースを読んでいる");
+    assert.equal(callsOf("progress.findMany").length, 2, "講師でロックの判定のために進捗を読んでいる");
+  });
+
+  it("Next Up は開いているコースから選ぶ（ロック中のコースを飛ばす場面は course-order.random.test.ts で照合する）", async () => {
+    // c1 を全部終えると c2 が開き、Next Up は c2 のレッスン
+    progress = progress.map((p) => (p.id === "p4" ? { ...p, completed: true, completedAt: new Date() } : p));
+    const open = await (await GET()).json();
+    assert.deepEqual(open.nextLessons.map((n: { courseId: string }) => n.courseId), ["c2"]);
+    // c1 の途中では c1 のレッスンだけ
+    progress = progress.map((p) => (p.id === "p4" ? { ...p, completed: false, completedAt: null } : p));
+    const partial = await (await GET()).json();
+    assert.deepEqual(partial.nextLessons.map((n: { lessonId: string }) => n.lessonId), ["l4"]);
   });
 });

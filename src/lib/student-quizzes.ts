@@ -14,7 +14,6 @@
  */
 
 import type { Prisma } from "@prisma/client";
-import { isCourseLocked, type LessonCounts } from "./course-lock";
 import { isCourseLockedResponse } from "./course-locked";
 import { retryAfterHint } from "./comment-form";
 import { isValidId } from "./lesson-comments";
@@ -251,7 +250,6 @@ export type QuizCourseInput = {
   order: number;
   icon: string;
   color: string;
-  sections: ReadonlyArray<{ lessons: ReadonlyArray<{ id: string }> }>;
 };
 
 export type QuizInput = {
@@ -292,18 +290,6 @@ export type QuizCourse = {
   miniQuizzes: QuizSummary[];
 };
 
-function countLessons(course: QuizCourseInput, completedLessonIds: ReadonlySet<string>): LessonCounts {
-  let totalLessons = 0;
-  let completedLessons = 0;
-  for (const s of course.sections) {
-    for (const l of s.lessons) {
-      totalLessons++;
-      if (completedLessonIds.has(l.id)) completedLessons++;
-    }
-  }
-  return { completedLessons, totalLessons };
-}
-
 /** quizCourseId が読む項目（一覧の QuizInput と、lesson-access.ts の quizAccessFor の select の共通部分） */
 export type QuizCourseRef = {
   type: QuizType;
@@ -325,8 +311,8 @@ export function quizCourseId(q: QuizCourseRef): string | null {
 
 /**
  * GET /api/quizzes の courses。
- * - courses は表示順（route が [order, id] で並べる）。ロックは course-lock の isCourseLocked と同じ規則で、
- *   クイズのないコースも含めた全コースの並びで前のコースを見る
+ * - courses は表示順（route が [order, id] で並べる）。locked は lockedCourseIds に含まれるか
+ *   （route が lesson-access の loadCourseGates の結果から作る。規則は course-gate.ts。#78 PR A）
  * - 修了テスト（FINAL）は quiz.courseId のコースへ、ミニテスト（MINI）は lesson.section.courseId のコースへ振り分ける
  *   （quizCourseId。GET /api/quizzes/[quizId]・submit のロックの確認と同じ規則）
  * - 受験できないクイズ（問題が 0 件、options が壊れている、correctIndex が選択肢の範囲外の問題を 1 つでも含む。
@@ -336,7 +322,7 @@ export function quizCourseId(q: QuizCourseRef): string | null {
  */
 export function buildQuizCourses(
   courses: ReadonlyArray<QuizCourseInput>,
-  completedLessonIds: ReadonlySet<string>,
+  lockedCourseIds: ReadonlySet<string>,
   quizzes: ReadonlyArray<QuizInput>,
   attempts: ReadonlyArray<QuizAttemptInput>
 ): QuizCourse[] {
@@ -379,11 +365,8 @@ export function buildQuizCourses(
   };
 
   const out: QuizCourse[] = [];
-  let prev: LessonCounts | null = null;
   for (const c of courses) {
-    const counts = countLessons(c, completedLessonIds);
-    const locked = isCourseLocked(prev, counts);
-    prev = counts;
+    const locked = lockedCourseIds.has(c.id);
     const finalQuizzes = [...(finals.get(c.id) ?? [])].sort(byTitleThenId).map(toSummary);
     const miniQuizzes = [...(minis.get(c.id) ?? [])].sort(byLessonOrder).map(toSummary);
     if (finalQuizzes.length === 0 && miniQuizzes.length === 0) continue;

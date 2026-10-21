@@ -54,7 +54,6 @@ import {
 } from "@/lib/client-session";
 import { avatarInitial, displayName, greetingTitle } from "@/lib/user-display";
 import { isInProgress, nextUpEmptyMessage, pickActiveCourse, toActivityItems, toNewsItems } from "@/lib/student-dashboard";
-import { countCourseLessons, isCourseLocked } from "@/lib/course-lock";
 import { formatBadgeCount, readMarkReadResponse, readUnreadCountResponse, toUnreadCount, unreadBadgeLabel, unreadIdsToMark } from "@/lib/notification-read";
 import {
   COMPLETE_FORBIDDEN_MESSAGE,
@@ -613,10 +612,12 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
   const courses = dashData?.courses?.map(c => ({
     id: c.id, name: c.name, progress: c.progress, lessons: c.totalLessons, icon: c.icon, color: c.color,
     completedLessons: c.completedLessons, totalLessons: c.totalLessons,
+    // The lock is decided by the API only (#78); the screen just shows it
+    locked: c.locked === true,
   })) || [];
 
   // Same rule as nextLessons on the API (in progress, otherwise the first unfinished
-  // course, otherwise the first course).
+  // course, otherwise the first course; locked courses are skipped).
   const activeCourse = pickActiveCourse(courses);
   const radial = [{ value: activeCourse?.progress || 0, fill: T.accentVivid, max: 100 }];
 
@@ -784,7 +785,7 @@ const StudentDashboard = ({ setCurrentPage, userName }) => {
                   // Judge by lesson counts, not the rounded % (1/300 shows 0%, 299/300 shows 100%)
                   const isAct = isInProgress(c);
                   const isDone = c.totalLessons > 0 && c.completedLessons === c.totalLessons;
-                  const isLock = isCourseLocked(i > 0 ? courses[i - 1] : null, c);
+                  const isLock = c.locked;
                   return (
                     <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, opacity: isLock ? 0.35 : 1 }}>
                       <div style={{
@@ -889,10 +890,10 @@ const CourseList = ({ setCurrentPage }) => {
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  const courses = apiCourses.map((c, i) => {
+  const courses = apiCourses.map((c) => {
     const totalLessons = c.sections?.reduce((s, sec) => s + (sec.lessons?.length || 0), 0) || 0;
-    // Same lock rule as the dashboard curriculum, judged by lesson counts (not the rounded %)
-    const locked = isCourseLocked(i > 0 ? countCourseLessons(apiCourses[i - 1]) : null, countCourseLessons(c));
+    // The lock is decided by the API only (#78); the screen just shows it
+    const locked = c.locked === true;
     return {
       id: c.id, name: c.name, desc: c.description || "", lessons: totalLessons,
       hours: Math.round(totalLessons * 0.5), progress: c.progress || 0,

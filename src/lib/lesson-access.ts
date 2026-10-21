@@ -1,19 +1,18 @@
 import type { PrismaClient } from "@prisma/client";
 import { COURSE_ORDER_BY } from "./course-order";
-import { unlockedCourseIds } from "./question-threads";
+import { computeCourseGates, unlockedCourseIdsOf, type CourseGateState } from "./course-gate";
 import { quizCourseId } from "./student-quizzes";
 
 /**
  * 受講生がコース・レッスンを使えるか（コースのロック。#46、#47 P4、Tec 決定 2026-10-09 / D-a 2026-10-14）。
  *
- * コースのロックは course-lock.ts / question-threads.ts の unlockedCourseIds と同じ考え方：
- * コースを order（同じなら id）の順に並べ、前のコースを全部終えておらず、
- * このコースが未着手（完了 0 件）ならロック。最初のコースはロックしない。
- * 並び順は course-order.ts の COURSE_ORDER_BY（画面のロック表示と同じ並び。#47 P3）。
+ * コースのロックの規則は course-gate.ts の computeCourseGates だけで決める（#78 PR A）。
+ * 判定に使うデータの読み込みは loadCourseGates だけで行い、ロックを返す API（GET /api/courses、GET /api/comments（一覧）、
+ * GET /api/quizzes、GET /api/dashboard）とアクセスの確認（下の *AccessFor）はすべてその結果を使う。
+ * 並び順は course-order.ts の COURSE_ORDER_BY（#47 P3）。
  *
  * 使う API（#47 P4）：POST /api/comments、POST /api/progress、GET /api/courses/[courseId]、GET /api/comments/[lessonId]。
  * （#47 P5）：GET /api/quizzes/[quizId]、POST /api/quizzes/[quizId]/submit（quizAccessFor）。
- * GET /api/courses と GET /api/comments（一覧）は、読んだコースから question-threads の unlockedCourseIds で計算する。
  * ここの関数はロールを見ない。講師を通す（確認しない）かどうかは呼び出し側が決める。
  * prisma は引数で受け取る（student-status.ts と同じ書き方。テストでは偽物を渡す）。
  */
@@ -37,8 +36,11 @@ export type CourseLockedReason = "course_locked";
 
 export const COURSE_LOCKED_REASON: CourseLockedReason = "course_locked";
 
-/** すべてのコース（表示順）と、userId の受講生にとって解放済みのコース id */
-async function loadCourseLocks(db: CourseAccessDb, userId: string): Promise<{ courseIds: string[]; unlocked: string[] }> {
+/**
+ * userId の受講生にとっての、すべてのコース（COURSE_ORDER_BY の順）のロックの状態（#78 PR A）。
+ * 読むのはコースとレッスンの id と、自分の完了だけ。ロールは見ない（講師を通すかどうかは呼び出し側が決める）。
+ */
+export async function loadCourseGates(db: CourseAccessDb, userId: string): Promise<CourseGateState[]> {
   const [courses, progress] = await Promise.all([
     db.course.findMany({
       orderBy: COURSE_ORDER_BY,
@@ -49,15 +51,12 @@ async function loadCourseLocks(db: CourseAccessDb, userId: string): Promise<{ co
       select: { lessonId: true },
     }),
   ]);
-  return {
-    courseIds: courses.map((c) => c.id),
-    unlocked: unlockedCourseIds(courses, new Set(progress.map((p) => p.lessonId))),
-  };
+  return computeCourseGates({ courses, completedLessonIds: new Set(progress.map((p) => p.lessonId)) });
 }
 
 /** userId の受講生にとって解放済み（ロックされていない）コースの id（表示順） */
 export async function unlockedCourseIdsFor(db: CourseAccessDb, userId: string): Promise<string[]> {
-  return (await loadCourseLocks(db, userId)).unlocked;
+  return unlockedCourseIdsOf(await loadCourseGates(db, userId));
 }
 
 /**
@@ -67,9 +66,9 @@ export async function unlockedCourseIdsFor(db: CourseAccessDb, userId: string): 
  * - それ以外は ok
  */
 export async function courseAccessFor(db: CourseAccessDb, userId: string, courseId: string): Promise<CourseAccess> {
-  const { courseIds, unlocked } = await loadCourseLocks(db, userId);
-  if (!courseIds.includes(courseId)) return "not_found";
-  return unlocked.includes(courseId) ? "ok" : "locked";
+  const gate = (await loadCourseGates(db, userId)).find((g) => g.courseId === courseId);
+  if (!gate) return "not_found";
+  return gate.locked ? "locked" : "ok";
 }
 
 /**
@@ -114,7 +113,7 @@ export async function quizAccessFor(db: QuizAccessDb, userId: string, quizId: st
 
 /**
  * ロック中のコースのレッスンに残す項目（#47 P4、reviewer 指摘で除外リストから許可リストに変更）。
- * 画面（page.tsx の CourseList・LessonView）がロック中のコースで使うのは、ロック計算（course-lock の countCourseLessons）と
+ * 画面（page.tsx の CourseList・LessonView）がロック中のコースで使うのは、API の locked（#78 PR A で画面のロック計算はなくなった）と
  * 一覧表示に要るレッスンの数・completed だけ。id・sectionId・title・type・duration・order は表示用の見出しとして残す。
  * ここにない項目（videoUrl・content・pdfUrl や、将来 Lesson に足す列）は出さない。
  * Lesson に列を足したら lesson-access.schema.test.ts が落ちるので、ロック中に出すかを決めてどちらかの一覧に入れる。

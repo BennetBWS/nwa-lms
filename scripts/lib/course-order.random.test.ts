@@ -1,7 +1,6 @@
 import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { installFakeAuth, INSTRUCTOR_SESSION, STUDENT_SESSION, type FakeSession } from "./student-routes.test-helpers";
-import { countCourseLessons, isCourseLocked, type CourseWithLessons } from "../../src/lib/course-lock";
 import { pickInitialLesson } from "../../src/lib/initial-lesson";
 import { NEXT_LESSONS_LIMIT, pickNextLessons } from "../../src/lib/student-dashboard";
 
@@ -345,11 +344,14 @@ function oracleCurrentCourse(ordered: CourseRow[], done: Set<string>): string | 
   return null;
 }
 
-function oracleNextLessons(ordered: CourseRow[], done: Set<string>): string[] {
-  const c = ordered.map((course) => {
-    const ids = course.sections.flatMap((s) => s.lessons.map((l) => l.id));
-    return { course, ids, done: ids.filter((id) => done.has(id)).length };
-  });
+/** locks を渡すと、ロック中のコースを選ばない（#78 PR A。/api/dashboard の Next Up） */
+function oracleNextLessons(ordered: CourseRow[], done: Set<string>, locks: boolean[] = []): string[] {
+  const c = ordered
+    .map((course, i) => {
+      const ids = course.sections.flatMap((s) => s.lessons.map((l) => l.id));
+      return { course, ids, done: ids.filter((id) => done.has(id)).length, locked: locks[i] === true };
+    })
+    .filter((x) => !x.locked);
   const active =
     c.find((x) => x.done > 0 && x.done < x.ids.length) ?? c.find((x) => x.done < x.ids.length) ?? c[0];
   if (!active) return [];
@@ -357,13 +359,15 @@ function oracleNextLessons(ordered: CourseRow[], done: Set<string>): string[] {
 }
 
 type ApiLesson = { id: string; completed: boolean };
-type ApiCourse = { id: string; sections: Array<{ id: string; lessons: ApiLesson[] }> } & CourseWithLessons;
+type ApiCourse = { id: string; sections: Array<{ id: string; lessons: ApiLesson[] }> };
 
 const tree = (cs: Array<{ id: string; sections: Array<{ id: string; lessons: Array<{ id: string }> }> }>) =>
   cs.map((c) => ({ id: c.id, sections: c.sections.map((s) => ({ id: s.id, lessons: s.lessons.map((l) => l.id) })) }));
 
 describe("乱数データ（同じ order のコース・セクション・レッスンが多い）で、全ルートの並び・ロック・次のレッスンが一致する", () => {
   it(`${ITERATIONS} 通りのデータで照合する`, async () => {
+    // ロックを考えない Next Up とずれた（ロック中のコースを飛ばした）回数。照合が空振りしていないことの確認に使う
+    let nextUpSkippedLocked = 0;
     for (let seed = 1; seed <= ITERATIONS; seed++) {
       rand = mulberry32(seed);
       generate();
@@ -377,11 +381,7 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       session = STUDENT_SESSION;
       const list = await json<ApiCourse[]>(R.courseList(), `${ctx} /api/courses`);
       assert.deepEqual(tree(list), tree(ordered), `${ctx}: /api/courses の並び（コース・セクション・レッスン）が [order, id] でない`);
-      // コース一覧（page.tsx の CourseList と同じ式）
-      const listLocks = list.map((c, i) => isCourseLocked(i > 0 ? countCourseLessons(list[i - 1]) : null, countCourseLessons(c)));
-      assert.deepEqual(listLocks, expectedLocks, `${ctx}: コース一覧のロック表示が正解と違う`);
-
-      // /api/courses の locked（#47 P4）も正解と一致する
+      // /api/courses の locked（#47 P4）が正解と一致する（画面の CourseList はこれを表示するだけ。#78 PR A）
       assert.deepEqual(
         (list as Array<{ locked?: unknown }>).map((c) => c.locked),
         expectedLocks,
@@ -402,21 +402,25 @@ describe("乱数データ（同じ order のコース・セクション・レッ
       }
 
       const dash = await json<{
-        courses: Array<{ id: string; completedLessons: number; totalLessons: number }>;
+        courses: Array<{ id: string; completedLessons: number; totalLessons: number; locked?: unknown }>;
         nextLessons: Array<{ lessonId: string; courseId: string }>;
       }>(R.dashboard(), `${ctx} /api/dashboard`);
       assert.deepEqual(dash.courses.map((c) => c.id), expectedIds, `${ctx}: ダッシュボードのコースの並びが違う`);
-      const dashLocks = dash.courses.map((c, i) => isCourseLocked(i > 0 ? dash.courses[i - 1] : null, c));
-      assert.deepEqual(dashLocks, expectedLocks, `${ctx}: ダッシュボードのロック表示が正解と違う`);
-      assert.deepEqual(dash.nextLessons.map((l) => l.lessonId), oracleNextLessons(ordered, me), `${ctx}: 次のレッスン（Next Up）が正解と違う`);
+      // /api/dashboard の locked（#78 PR A。画面のカリキュラム欄はこれを表示するだけ）
+      assert.deepEqual(dash.courses.map((c) => c.locked), expectedLocks, `${ctx}: /api/dashboard の locked が正解と違う`);
+      assert.deepEqual(
+        dash.nextLessons.map((l) => l.lessonId),
+        oracleNextLessons(ordered, me, expectedLocks),
+        `${ctx}: 次のレッスン（Next Up）が正解と違う`
+      );
+      if (JSON.stringify(dash.nextLessons.map((l) => l.lessonId)) !== JSON.stringify(oracleNextLessons(ordered, me))) nextUpSkippedLocked++;
 
-      // Next Up の先頭は、そのコースを開いたときに最初に表示されるレッスン（LessonView の pickInitialLesson）と同じ
-      // ただし、レッスン 0 件のコースの次のコースは、未着手ならロックのまま（isCourseLocked の規則）で、Next Up が指すことがある。
-      // そのコースの詳細は 403 course_locked（#47 P4）になるので、最初のレッスンは比べない
-      const firstLocked = dash.nextLessons.length > 0 && expectedLocks[expectedIds.indexOf(dash.nextLessons[0].courseId)];
-      if (firstLocked) {
-        assert.equal((await R.courseDetail(dash.nextLessons[0].courseId)).status, 403, `${ctx}: Next Up のロック中のコースが 403 でない`);
-      } else if (dash.nextLessons.length > 0) {
+      // Next Up はロック中のコースを指さない（#78 PR A）。先頭は、そのコースを開いたときに最初に表示されるレッスン
+      // （LessonView の pickInitialLesson）と同じ
+      for (const l of dash.nextLessons) {
+        assert.equal(expectedLocks[expectedIds.indexOf(l.courseId)], false, `${ctx}: Next Up がロック中のコース ${l.courseId} を指している`);
+      }
+      if (dash.nextLessons.length > 0) {
         const first = dash.nextLessons[0];
         const detail = await json<ApiCourse>(R.courseDetail(first.courseId), `${ctx} /api/courses/${first.courseId}`);
         const initial = pickInitialLesson<ApiLesson>(detail.sections, (l) => l.completed === true);
@@ -473,6 +477,7 @@ describe("乱数データ（同じ order のコース・セクション・レッ
         assert.equal(d.students, n, `${ctx}: Distribution の ${d.courseId ?? "全コース修了"} の人数が、生徒管理の現在のコースと違う`);
       }
     }
+    assert.ok(nextUpSkippedLocked > 0, "Next Up がロック中のコースを飛ばす場面を照合できていない");
   });
 });
 
