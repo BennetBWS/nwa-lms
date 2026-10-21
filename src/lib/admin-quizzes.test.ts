@@ -376,7 +376,8 @@ describe("parsePatchQuestionBody", () => {
   it("見た目が同じ選択肢は重複として断る（NFC・書式文字・異体字セレクタ）。保存するのは前後の空白を除いただけの値", () => {
     const dup: Array<[string, string[]]> = [
       ["ZWSP", ["a", "a\u200B"]],
-      ["ZWJ", ["ab", "a\u200Db"]],
+      ["制御文字 U+0001", ["a", "a\u0001"]],
+      ["ハングルの埋め字 U+3164", ["a", "a\u3164"]],
       ["ソフトハイフン", ["ab", "a\u00ADb"]],
       ["BOM", ["a", "\uFEFFa"]],
       ["NFC と NFD の「が」", ["\u304C", "\u304B\u3099"]],
@@ -387,6 +388,16 @@ describe("parsePatchQuestionBody", () => {
     for (const [label, options] of dup) {
       assert.equal(reason({ revision: REV, options }), "invalid_options", `${label}を重複とみなさない`);
     }
+    // 絵文字に要る ZWJ とサブディビジョン旗のタグ文字は残す（hasVisibleText と同じ規則）ので、重複にしない
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const separate = "\u{1F468}\u{1F469}\u{1F467}";
+    assert.deepEqual(value({ revision: REV, options: [family, separate] }).options, [family, separate], "ZWJ でつないだ家族の絵文字を重複とみなした");
+    const england = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+    const scotland = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}";
+    assert.deepEqual(value({ revision: REV, options: [england, scotland] }).options, [england, scotland], "イングランドとスコットランドの旗を重複とみなした");
+    assert.equal(optionDuplicateKey(england), england, "旗のタグ文字を消した");
+    // ZWJ は絵文字の外でも残す（既存の規則と同じ）
+    assert.deepEqual(value({ revision: REV, options: ["ab", "a\u200Db"] }).options, ["ab", "a\u200Db"]);
     // 違う文字は重複にしない
     assert.deepEqual(value({ revision: REV, options: ["a", "A"] }).options, ["a", "A"]);
     assert.deepEqual(value({ revision: REV, options: ["\u304B", "\u304C"] }).options, ["\u304B", "\u304C"]);

@@ -15,6 +15,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { commentLength, hasVisibleText } from "./lesson-comments";
+import { stripInvisibleMarks } from "./user-display";
 import { MIN_OPTIONS, normalizeOptions, quizCourseId, toAnswerKey, type AnswerKeyRow, type ParseResult, type QuizType } from "./student-quizzes";
 
 /** 問題文の最大の文字数（前後の空白を除いたあと。サロゲートペアは 1 文字） */
@@ -291,9 +292,12 @@ const NUL = /\u0000/;
 /** 対になっていないサロゲート（isWellFormed がない環境での代わり） */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
-/** 重複の判定で取り除く文字：書式文字（ZWSP・ZWJ・ソフトハイフン・BOM など）と異体字セレクタ */
-// tsconfig の target が ES5 のため、u フラグの正規表現はリテラルでなく RegExp で作る
-const IGNORED_FOR_DUPLICATE = new RegExp("[\\p{Cf}\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}]", "gu");
+/**
+ * 重複の判定で取り除く異体字セレクタ（U+FE00〜FE0F、U+E0100〜E01EF）。
+ * 制御文字・書式文字・空白に見える埋め字は、stripInvisibleMarks（hasVisibleText と同じ規則）で先に除く。
+ * tsconfig の target が ES5 のため、u フラグの正規表現はリテラルでなく RegExp で作る
+ */
+const VARIATION_SELECTORS = new RegExp("[\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}]", "gu");
 
 /** 対になっていないサロゲートを含まない（Postgres の jsonb は拒否し、text は U+FFFD に置き換えて revision が食い違う） */
 function isWellFormedText(s: string): boolean {
@@ -302,7 +306,8 @@ function isWellFormedText(s: string): boolean {
 
 /**
  * 前後の空白を除いて、見える文字が 1 文字以上あり、max 文字以内なら除いた値。違えば null。
- * NUL と対になっていないサロゲートを含む値も null（DB に送らずに 400 にする）。
+ * NUL と対になっていないサロゲートを含む値も null（DB に送らずに 400 にする。NUL は text・jsonb とも受け付けない。
+ * 対になっていないサロゲートは jsonb は拒否し、text は U+FFFD に置き換えるので revision が食い違う）。
  * 重い正規化（hasVisibleText）の前に、UTF-16 の長さが max の 2 倍を超えたら断る
  * （1 文字は UTF-16 で 2 単位以下なので、2 倍を超えれば必ず max 文字を超える。結果は文字数の規則と同じ）
  */
@@ -316,11 +321,13 @@ function cleanText(value: unknown, max: number): string | null {
 }
 
 /**
- * 選択肢の重複を判定するための形：NFC で正規化し、書式文字と異体字セレクタを除く（除いたあとにもう一度 NFC）。
- * 見た目が同じ選択肢（"a" と "a" + ZWSP、NFC と NFD の「が」など）を同じとみなす。保存する値には使わない
+ * 選択肢の重複を判定するための形：stripInvisibleMarks（hasVisibleText と同じ規則。制御文字・書式文字・
+ * 空白に見える埋め字を除き、絵文字に要る ZWJ とサブディビジョン旗のタグ文字は残す）→ NFC → 異体字セレクタを除く → NFC。
+ * 見た目が同じ選択肢（"a" と "a" + ZWSP、"a" と "a" + U+0001、NFC と NFD の「が」など）を同じとみなし、
+ * 家族の絵文字（ZWJ でつなぐ）や地域の旗（タグ文字）は区別する。保存する値には使わない
  */
 export function optionDuplicateKey(text: string): string {
-  return text.normalize("NFC").replace(IGNORED_FOR_DUPLICATE, "").normalize("NFC");
+  return stripInvisibleMarks(text).normalize("NFC").replace(VARIATION_SELECTORS, "").normalize("NFC");
 }
 
 /**
