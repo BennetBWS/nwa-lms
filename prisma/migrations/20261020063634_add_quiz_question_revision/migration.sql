@@ -22,8 +22,10 @@
 -- - Production order: merge this migration (Q0) to main first, then Tec applies
 --   it to production from a checkout of main, and only after that the quiz admin
 --   API (Q1) is merged (the reverse order makes the API return 500). After
---   applying, check RLS and the anon privileges with the queries in step 8
---   of docs/dev-db-setup.md.
+--   applying, Tec runs the read-only queries of step 8 in docs/dev-db-setup.md
+--   in the SQL Editor of the production Supabase dashboard (not the local
+--   Studio) to check RLS and the anon privileges (step 5 of the production
+--   migration procedure in that document).
 
 -- CreateTable
 CREATE TABLE "QuizQuestionRevision" (
