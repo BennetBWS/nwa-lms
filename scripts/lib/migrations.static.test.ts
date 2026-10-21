@@ -100,12 +100,42 @@ const FORBIDDEN: ReadonlyArray<[RegExp, string]> = [
   [/\bCREATE\s+POLICY\b/i, "ポリシー"],
   [/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i, "関数"],
   [/\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMP|TEMPORARY)\s+)?(?:RECURSIVE\s+)?(?:MATERIALIZED\s+)?VIEW\b/i, "ビュー"],
+  // GRANT は一律に禁止（#2）。将来 GRANT が必要になったら、Tec の承認を取ってからこのテストを更新する
   [/\bGRANT\b/i, "GRANT"],
 ];
 
 function forbiddenFound(sql: string): string[] {
   const body = stripComments(sql);
   return FORBIDDEN.filter(([re]) => re.test(body)).map(([, label]) => label);
+}
+
+const REVISION_MIGRATION_SUFFIX = "_add_quiz_question_revision";
+const CHANGED_FIELDS_CHECK = "QuizQuestionRevision_changedFields_check";
+
+/**
+ * changedFields の CHECK（#81 Q0）を消しうる記述。文（; で区切る）ごとに見る。
+ * - CHECK の DROP CONSTRAINT（どのテーブルに対しても）
+ * - "QuizQuestionRevision" の "changedFields" の DROP COLUMN
+ * - "QuizQuestionRevision" の "changedFields" の ALTER COLUMN ... TYPE（SET DATA TYPE を含む）
+ */
+function changedFieldsCheckThreats(sql: string): string[] {
+  const found: string[] = [];
+  const col = String.raw`(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?(${IDENT})`;
+  for (const stmt of stripComments(sql).split(";")) {
+    const drop = new RegExp(String.raw`\bDROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?(${IDENT})`, "gi");
+    for (const m of stmt.matchAll(drop)) {
+      if (tableKey(m[1]) === CHANGED_FIELDS_CHECK) found.push("DROP CONSTRAINT");
+    }
+    const alter = new RegExp(String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(${QUALIFIED})`, "i").exec(stmt);
+    if (!alter || tableKey(alter[1]) !== "QuizQuestionRevision") continue;
+    for (const m of stmt.matchAll(new RegExp(String.raw`\bDROP\s+${col}`, "gi"))) {
+      if (tableKey(m[1]) === "changedFields") found.push("DROP COLUMN");
+    }
+    for (const m of stmt.matchAll(new RegExp(String.raw`\bALTER\s+${col}\s+(?:SET\s+DATA\s+)?TYPE\b`, "gi"))) {
+      if (tableKey(m[1]) === "changedFields") found.push("ALTER COLUMN TYPE");
+    }
+  }
+  return found;
 }
 
 function schemaModels(): string[] {
@@ -214,6 +244,18 @@ describe("マイグレーション SQL の静的な照合（#2 / #5 / #81 Q0）"
     assert.ok(/"changedFields" TEXT\[\],/.test(sql), "changedFields の列定義は Prisma の生成どおり TEXT[]（NOT NULL なし）");
   });
 
+  it("Q0 より後のマイグレーションは、changedFields の CHECK を消しうる変更をしない（DROP CONSTRAINT・DROP COLUMN・ALTER COLUMN TYPE）", () => {
+    // 列を作り直したり型を変えたりすると、CHECK も一緒に消える（または消す必要がある）。
+    // これらを含むマイグレーションでは、同じファイルで CHECK を追加し直し、このテストを更新する。
+    const dir = migrationDirs().find((d) => d.endsWith(REVISION_MIGRATION_SUFFIX));
+    assert.ok(dir, "add_quiz_question_revision のマイグレーションがない");
+    for (const later of migrationDirs().filter((d) => d > dir)) {
+      assert.deepEqual(changedFieldsCheckThreats(rawSql(later)), [], `${later} が ${CHANGED_FIELDS_CHECK} を消しうる`);
+    }
+    // Q0 自身は CHECK を足すだけ
+    assert.deepEqual(changedFieldsCheckThreats(rawSql(dir)), [], `${dir} は CHECK を消しうる記述を含まない`);
+  });
+
   it("QuizQuestionRevision の migration.sql と schema.prisma のモデルの列が一致する", () => {
     const dir = migrationDirs().find((d) => d.endsWith("_add_quiz_question_revision"));
     assert.ok(dir, "add_quiz_question_revision のマイグレーションがない");
@@ -224,6 +266,8 @@ describe("マイグレーション SQL の静的な照合（#2 / #5 / #81 Q0）"
     const schema = readFileSync(join(ROOT, "prisma", "schema.prisma"), "utf8");
     const model = /^model QuizQuestionRevision \{([\s\S]*?)^\}/m.exec(schema);
     assert.ok(model, "schema.prisma に model QuizQuestionRevision がある");
+    // 型は String・Json・DateTime・Int・Boolean に絞っている。enum や Float などの列を足すと、
+    // ここで拾えずに列の集合が一致しなくなり落ちる（そのときは型の一覧を足す）
     const scalar = Array.from(model[1].matchAll(/^\s+(\w+)\s+(\w+)(\[\])?(\?)?/gm))
       .filter((m) => ["String", "Json", "DateTime", "Int", "Boolean"].includes(m[2]))
       .map((m) => m[1])
@@ -331,6 +375,23 @@ describe("マイグレーションの検出器（取りこぼし・誤検出）"
       'ALTER TABLE "R" ADD CONSTRAINT "f" FOREIGN KEY ("e") REFERENCES "User"("id");',
     ].join("\n");
     assert.equal(referencesCount(sql), 2);
+  });
+  it("changedFieldsCheckThreats：CHECK の DROP CONSTRAINT・changedFields の DROP COLUMN・ALTER COLUMN TYPE を見つける", () => {
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" DROP CONSTRAINT "QuizQuestionRevision_changedFields_check";'), ["DROP CONSTRAINT"]);
+    assert.deepEqual(changedFieldsCheckThreats('alter table public."QuizQuestionRevision"\n  drop constraint if exists "QuizQuestionRevision_changedFields_check";'), ["DROP CONSTRAINT"]);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" DROP COLUMN "changedFields";'), ["DROP COLUMN"]);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ADD COLUMN "x" TEXT, DROP "changedFields";'), ["DROP COLUMN"]);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ALTER COLUMN "changedFields" TYPE JSONB USING to_jsonb("changedFields");'), ["ALTER COLUMN TYPE"]);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE ONLY "QuizQuestionRevision" ALTER "changedFields" SET DATA TYPE TEXT;'), ["ALTER COLUMN TYPE"]);
+  });
+
+  it("changedFieldsCheckThreats：別のテーブル・別の列・別の制約・コメントの中・NOT NULL の追加は数えない", () => {
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "Quiz" DROP COLUMN "changedFields";'), []);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" DROP COLUMN "before";'), []);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" DROP CONSTRAINT "QuizQuestionRevision_editorId_fkey";'), []);
+    assert.deepEqual(changedFieldsCheckThreats('-- ALTER TABLE "QuizQuestionRevision" DROP COLUMN "changedFields";'), []);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ALTER COLUMN "changedFields" SET NOT NULL;'), []);
+    assert.deepEqual(changedFieldsCheckThreats('ALTER TABLE "QuizQuestionRevision" ALTER COLUMN "after" TYPE JSONB;'), []);
   });
 });
 
