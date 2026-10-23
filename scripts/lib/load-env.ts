@@ -13,6 +13,9 @@
  * - Variables that are already set are not overridden (process.loadEnvFile semantics),
  *   so explicit values from the shell or tests always win.
  * - `${VAR}` references are not expanded (unlike Prisma's dotenv-expand). The current .env does not use them.
+ * - Node's .env parser (process.loadEnvFile, Node >= 20.12) can differ from dotenv, which Prisma uses:
+ *   `${VAR}` expansion, an `export ` prefix, a `#` inside an unquoted value, etc. Quote values in .env
+ *   (e.g. DATABASE_URL="postgresql://...") so both parsers read the same value.
  * - A missing file is not an error. A file that exists but cannot be read is an error
  *   (checked before loading: Node 20's loadEnvFile reports EACCES as ENOENT).
  * - Nothing from the file is ever printed.
