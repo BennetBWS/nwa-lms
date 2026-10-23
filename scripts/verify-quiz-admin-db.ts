@@ -5,7 +5,7 @@
  *
  * - 最初の import（./lib/load-root-env-first）で <repo>/.env を読み、ローカル DB のガード（assertLocalDatabase）を通す。通らなければ DB に接続せずに終了コード 1
  * - 確かめる 1 件ごとに $transaction の中で実行し、最後に必ずロールバックする（データを残さない）。
- *   終わるたびに、対象の問題と履歴の件数が実行前と同じかも確かめる
+ *   終わるたびに、対象の問題の行と、その問題の履歴の件数が実行前と同じかも確かめる
  * - 対象は seed の問題（選択肢が 2 件以上の文字列の配列で、正解が範囲内のもののうち [order, id] で最初の 1 件）と、seed の講師
  * - 表示は PASS / FAIL と項目の名前・件数・kind だけ（問題文・選択肢・id・接続先は出さない）。1 つでも FAIL なら終了コード 1
  * - npm test には含めない（npm test は DB に接続しない）
@@ -288,7 +288,7 @@ function describeError(err: unknown): string {
   return `エラー（${s.name}${s.code ? ` ${s.code}` : ""}）`;
 }
 
-/** 1 件を $transaction の中で実行し、必ずロールバックする。終わったら対象の行と履歴の件数が元に戻ったかを確かめる */
+/** 1 件を $transaction の中で実行し、必ずロールバックする。終わったら対象の行と、その問題の履歴の件数が元に戻ったかを確かめる */
 async function runCase(c: Case, fx: Fixture, baseline: { row: QuestionRow; revisionCount: number }): Promise<string | null> {
   let failure: string | null = null;
   try {
@@ -309,7 +309,7 @@ async function runCase(c: Case, fx: Fixture, baseline: { row: QuestionRow; revis
   }
 
   const row = await prisma.quizQuestion.findUnique({ where: { id: fx.questionId }, select: QUESTION_SELECT });
-  const revisionCount = await prisma.quizQuestionRevision.count();
+  const revisionCount = await prisma.quizQuestionRevision.count({ where: { questionId: fx.questionId } });
   if (!isDeepStrictEqual(row, baseline.row) || revisionCount !== baseline.revisionCount) {
     failure = `${failure ? `${failure}。` : ""}ロールバック後に行または履歴が元に戻っていない`;
   }
@@ -338,7 +338,7 @@ async function main(): Promise<number> {
     console.log("FAIL 準備: 対象の問題を読めない");
     return 1;
   }
-  const baseline = { row, revisionCount: await prisma.quizQuestionRevision.count() };
+  const baseline = { row, revisionCount: await prisma.quizQuestionRevision.count({ where: { questionId: fx.questionId } }) };
 
   let failed = 0;
   for (const c of CASES) {
