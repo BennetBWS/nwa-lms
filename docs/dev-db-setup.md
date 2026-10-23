@@ -250,6 +250,23 @@ http://localhost:3000 で seed のテスト用アカウント（`prisma/seed.ts`
 
 ## 注意：git worktree で作業する場合
 
-Prisma Client は、生成先（`node_modules/.prisma/client`）から見た `.env` を読む。`node_modules` を本体の
-リポジトリへのシンボリックリンクにした worktree では、`npm run db:where` / `db:local:*` / `db:seed` が
-**本体の `.env`** を読む。worktree で実行するときは `npm run db:where` で接続先を確かめてから行う。
+**どの `.env` を読むか**（#81）
+
+- DB のスクリプト（`scripts/db-local.ts`・`prisma/seed.ts`・`scripts/seed-step1.ts`・`scripts/verify-quiz-admin-db.ts`）は、
+  最初の import（`scripts/lib/load-root-env-first.ts`）で、**スクリプトが置かれている checkout の `.env`** を読む
+  （本体で実行すれば本体の `.env`、worktree で実行すれば worktree の `.env`。`.env.local` は読まない。設定済みの変数は上書きしない）
+- worktree に `.env` がないとき：
+  - db-local（`npm run db:where` / `db:local:deploy` / `db:local:reset`）は、どの `.env` も読まない。`db:where` は「未設定」と表示し、ガードは「拒否」になる
+  - seed・seed-step1・verify（`npm run db:seed` / `db:local:verify-quiz-admin` など）は、生成された Prisma Client が指す
+    schema の隣の `.env` を、Prisma が読む（本体で生成した Client なら本体の `.env`、worktree で `db:generate` した Client なら worktree の schema の隣の `.env`）。
+    どちらを読んだかは表示されない
+
+**`node_modules` を本体と共有している worktree での `db:generate`**
+
+- `node_modules` を本体のリポジトリへのシンボリックリンクにした worktree で `npm run db:generate` を実行すると、
+  **本体の Prisma Client（`node_modules/.prisma/client`）も worktree の schema で作り直される**
+
+**本体に戻ったら**
+
+1. 本体で `npm run db:generate` をやり直す（Prisma Client を本体の schema から作り直す）
+2. 本体で `npm run db:where` を実行し、`127.0.0.1:54322` とガードが「通る」ことを確かめてから、DB に接続するスクリプトを実行する
