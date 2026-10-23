@@ -560,7 +560,7 @@ describe("docs and .env.example match the implementation", () => {
 
   it("every `npm run <script>` mentioned exists in package.json, and db:migrate is gone", () => {
     for (const [file, text] of Object.entries(docs)) {
-      for (const m of Array.from(text.matchAll(/npm run ([a-z:]+)/g))) {
+      for (const m of Array.from(text.matchAll(/npm run ([a-z:-]+)/g))) {
         assert.ok(pkg.scripts[m[1]] !== undefined, `${file} mentions missing script ${m[1]}`);
       }
       assert.doesNotMatch(text, /db:migrate/, file);

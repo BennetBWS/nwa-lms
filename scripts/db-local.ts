@@ -1,7 +1,10 @@
+// Must stay the FIRST import: loads <repo>/.env before @prisma/client is required
+// (the generated client may point at another checkout's schema and load its .env).
+// Variables already set are not overridden; .env.local is not read. Nothing is printed.
+import "./lib/load-root-env-first";
+
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-
-import { PrismaClient } from "@prisma/client";
 
 import {
   formatDatabaseTargets,
@@ -15,10 +18,7 @@ import {
 //   npm run db:local:deploy   -> tsx scripts/db-local.ts deploy
 //   npm run db:local:reset    -> tsx scripts/db-local.ts reset
 //
-// Load .env the same way as prisma/seed.ts and the Prisma CLI: the PrismaClient
-// constructor reads .env into process.env without overriding variables that are
-// already set, and does not connect. No query is ever run from this script.
-new PrismaClient();
+// No query is ever run from this script.
 
 const ROOT = path.resolve(__dirname, "..");
 const PRISMA_BIN = path.join(ROOT, "node_modules", ".bin", "prisma");

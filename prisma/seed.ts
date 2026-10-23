@@ -1,3 +1,8 @@
+// Must stay the FIRST import: loads <repo>/.env before @prisma/client is required
+// (the generated client may point at another checkout's schema and load its .env).
+// Variables already set are not overridden; .env.local is not read. Nothing is printed.
+import "../scripts/lib/load-root-env-first";
+
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
@@ -7,8 +12,7 @@ import { REPLY_NOTIFICATION_TITLE, replyNotificationMessage } from "../src/lib/q
 const prisma = new PrismaClient();
 
 // Destructive script: refuse to run against anything but a local database.
-// This must stay right after `new PrismaClient()`: the constructor loads .env into
-// process.env (so DATABASE_URL / DIRECT_URL are visible here) but does not connect.
+// This must stay right after `new PrismaClient()`, which does not connect.
 // No query may run before this check. Only the error message is printed.
 try {
   assertLocalDatabase([process.env.DATABASE_URL, process.env.DIRECT_URL]);

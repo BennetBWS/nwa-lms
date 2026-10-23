@@ -13,6 +13,7 @@
     "db:where": "tsx scripts/db-local.ts where",
     "db:local:deploy": "tsx scripts/db-local.ts deploy",
     "db:local:reset": "tsx scripts/db-local.ts reset",
+    "db:local:verify-quiz-admin": "tsx scripts/verify-quiz-admin-db.ts",
     "db:generate": "npx prisma generate",
     "postinstall": "npx prisma generate"
   },
