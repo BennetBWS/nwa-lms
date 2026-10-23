@@ -123,13 +123,15 @@ class PrismaClient {
     });
   }
 }
-module.exports = { PrismaClient, Prisma: {} };
+// verify-quiz-admin-db.ts（と src/lib/admin-quiz-edit.ts）は Prisma の値を import する。関数の中でしか使わないが、念のため置く
+const JsonNull = Object.freeze({ fake: "JsonNull" });
+module.exports = { PrismaClient, Prisma: { JsonNull, DbNull: JsonNull, AnyNull: JsonNull } };
 `;
 
 function makeSandbox(rootEnv: string | null, rootEnvLocal: string | null, mode: ClientMode): string {
   const root = mkdtempSync(path.join(tmpdir(), "nwa-load-env-e2e-"));
   mkdirSync(path.join(root, "scripts", "lib"), { recursive: true });
-  for (const f of ["db-local.ts", "seed-step1.ts"]) cpSync(path.join(REPO, "scripts", f), path.join(root, "scripts", f));
+  for (const f of ["db-local.ts", "seed-step1.ts", "verify-quiz-admin-db.ts"]) cpSync(path.join(REPO, "scripts", f), path.join(root, "scripts", f));
   for (const f of ["db-local.ts", "assert-local-db.ts", "load-env.ts", "load-root-env-first.ts"]) {
     cpSync(path.join(REPO, "scripts", "lib", f), path.join(root, "scripts", "lib", f));
   }
@@ -207,7 +209,7 @@ describe("E2E：別の場所を指すクライアントでも <repo>/.env を読
     assert.match(output, /ガード: 拒否/, "URL がないのにガードが通った");
   });
 
-  for (const script of ["scripts/seed-step1.ts", "prisma/seed.ts"]) {
+  for (const script of ["scripts/seed-step1.ts", "prisma/seed.ts", "scripts/verify-quiz-admin-db.ts"]) {
     it(`${script}：クライアントが constructor でだけ .env を読むなら、<root>/.env のリモートの URL でガードに拒否される`, () => {
       const root = sandbox(REMOTE_ENV, "constructor");
       const { code, output } = runIn(root, [script]);
@@ -225,6 +227,8 @@ describe("E2E：別の場所を指すクライアントでも <repo>/.env を読
         assert.equal(code, 1, output);
         assert.match(output, /Refusing to run: database host "db\.from-root-env\.invalid" is not local/, output);
         assert.ok(!output.includes("FAKE_PRISMA_QUERY_CALLED"), "ガードより先、またはガードを通ってクエリを呼んだ");
+        assert.doesNotMatch(output, /^(PASS|FAIL) /m, "ガードを通らずに確認を始めた");
+        assert.ok(!output.includes(ROOT_PW), "出力にパスワードが含まれている");
       }
     );
   }
@@ -239,7 +243,7 @@ describe("E2E：別の場所を指すクライアントでも <repo>/.env を読
 
   it("コピーしたスクリプトは本物と同じ内容（再現テストの前提）", () => {
     const root = sandbox(LOCAL_ENV);
-    for (const rel of ["scripts/db-local.ts", "scripts/seed-step1.ts", "prisma/seed.ts", "scripts/lib/load-env.ts", "scripts/lib/load-root-env-first.ts", "scripts/lib/assert-local-db.ts"]) {
+    for (const rel of ["scripts/db-local.ts", "scripts/seed-step1.ts", "prisma/seed.ts", "scripts/verify-quiz-admin-db.ts", "scripts/lib/load-env.ts", "scripts/lib/load-root-env-first.ts", "scripts/lib/assert-local-db.ts"]) {
       assert.equal(readFileSync(path.join(root, rel), "utf8"), readFileSync(path.join(REPO, rel), "utf8"), `${rel} のコピーが違う`);
     }
   });
