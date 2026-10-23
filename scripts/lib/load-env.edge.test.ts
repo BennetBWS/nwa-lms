@@ -58,6 +58,7 @@ describe("loadRootEnv の境界", () => {
 
   it("ENOENT 以外のエラーは固定の文にし、元のエラーを cause・stack に残さない", () => {
     const leak = "dummySecretValue77";
+    writeFileSync(path.join(dir, ".env"), "NWA_LOADENV_EDGE_A=from-file\n");
     let caught: unknown;
     try {
       loadRootEnv(dir, () => {
@@ -72,7 +73,8 @@ describe("loadRootEnv の境界", () => {
     assert.ok(!String(caught.stack).includes(leak), "stack に元のエラーの文が含まれている");
   });
 
-  it("ENOENT（loader が投げた）は false を返し、投げない", () => {
+  it("ENOENT（確かめたあとで消えた。loader が投げた）は false を返し、投げない", () => {
+    writeFileSync(path.join(dir, ".env"), "NWA_LOADENV_EDGE_A=from-file\n");
     const r = loadRootEnv(dir, () => {
       throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     });
@@ -83,7 +85,6 @@ describe("loadRootEnv の境界", () => {
     "権限がなくて読めない .env は「ない」と区別してエラーにする",
     {
       skip: typeof process.getuid === "function" && process.getuid() === 0 ? "root では chmod 000 でも読める" : false,
-      todo: "Node 20 の process.loadEnvFile は EACCES を ENOENT として投げるため、黙って false を返す（報告済み）",
     },
     () => {
       writeFileSync(path.join(dir, ".env"), "NWA_LOADENV_EDGE_A=from-file\n");
@@ -129,7 +130,7 @@ function makeSandbox(rootEnv: string | null, rootEnvLocal: string | null, mode: 
   const root = mkdtempSync(path.join(tmpdir(), "nwa-load-env-e2e-"));
   mkdirSync(path.join(root, "scripts", "lib"), { recursive: true });
   for (const f of ["db-local.ts", "seed-step1.ts"]) cpSync(path.join(REPO, "scripts", f), path.join(root, "scripts", f));
-  for (const f of ["db-local.ts", "assert-local-db.ts", "load-env.ts"]) {
+  for (const f of ["db-local.ts", "assert-local-db.ts", "load-env.ts", "load-root-env-first.ts"]) {
     cpSync(path.join(REPO, "scripts", "lib", f), path.join(root, "scripts", "lib", f));
   }
   mkdirSync(path.join(root, "prisma"), { recursive: true });
@@ -218,10 +219,6 @@ describe("E2E：別の場所を指すクライアントでも <repo>/.env を読
 
     it(
       `${script}：クライアントが require の時点で別の checkout の .env を読んでも、<root>/.env の値でガードを判定する`,
-      {
-        todo:
-          "import は loadRootEnv(...) より先に評価されるため、@prisma/client の require 時の tryLoadEnvs が入れた別の checkout の値が勝つ（報告済み）",
-      },
       () => {
         const root = sandbox(REMOTE_ENV, "require");
         const { code, output } = runIn(root, [script]);
@@ -242,7 +239,7 @@ describe("E2E：別の場所を指すクライアントでも <repo>/.env を読
 
   it("コピーしたスクリプトは本物と同じ内容（再現テストの前提）", () => {
     const root = sandbox(LOCAL_ENV);
-    for (const rel of ["scripts/db-local.ts", "scripts/seed-step1.ts", "prisma/seed.ts", "scripts/lib/load-env.ts", "scripts/lib/assert-local-db.ts"]) {
+    for (const rel of ["scripts/db-local.ts", "scripts/seed-step1.ts", "prisma/seed.ts", "scripts/lib/load-env.ts", "scripts/lib/load-root-env-first.ts", "scripts/lib/assert-local-db.ts"]) {
       assert.equal(readFileSync(path.join(root, rel), "utf8"), readFileSync(path.join(REPO, rel), "utf8"), `${rel} のコピーが違う`);
     }
   });

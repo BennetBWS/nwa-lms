@@ -3,7 +3,7 @@
  *
  *   npm run db:local:verify-quiz-admin   -> tsx scripts/verify-quiz-admin-db.ts
  *
- * - 最初に <repo>/.env を読み、ローカル DB のガード（assertLocalDatabase）を通す。通らなければ DB に接続せずに終了コード 1
+ * - 最初の import（./lib/load-root-env-first）で <repo>/.env を読み、ローカル DB のガード（assertLocalDatabase）を通す。通らなければ DB に接続せずに終了コード 1
  * - 確かめる 1 件ごとに $transaction の中で実行し、最後に必ずロールバックする（データを残さない）。
  *   終わるたびに、対象の問題と履歴の件数が実行前と同じかも確かめる
  * - 対象は seed の問題（選択肢が 2 件以上の文字列の配列で、正解が範囲内のもののうち [order, id] で最初の 1 件）と、seed の講師
@@ -11,23 +11,21 @@
  * - npm test には含めない（npm test は DB に接続しない）
  */
 
-import path from "node:path";
+// Must stay the FIRST import: loads <repo>/.env before @prisma/client is required
+// (the generated client may point at another checkout's schema and load its .env).
+// Variables already set are not overridden; .env.local is not read. Nothing is printed.
+import "./lib/load-root-env-first";
+
 import { isDeepStrictEqual } from "node:util";
 
 import { Prisma, PrismaClient } from "@prisma/client";
 
 import { assertLocalDatabase } from "./lib/assert-local-db";
-import { loadRootEnv } from "./lib/load-env";
 import { editQuizQuestion, type EditOutcome } from "../src/lib/admin-quiz-edit";
 import { questionRevision } from "../src/lib/admin-quiz-revision";
 import { parsePatchQuestionBody, type PatchQuestionInput, type QuestionContent } from "../src/lib/admin-quizzes";
 import { normalizeOptions } from "../src/lib/student-quizzes";
 import { safeErrorSummary } from "../src/lib/safe-error";
-
-// Read <repo>/.env by path before anything else (not through the generated Prisma Client,
-// which may point at another checkout's schema). Variables already set are not overridden;
-// .env.local is not read. Nothing from the file is printed.
-loadRootEnv(path.resolve(__dirname, ".."));
 
 // Writes (rolled back) to the database: refuse to run against anything but a local database.
 // No PrismaClient is created and no query runs before this check. Only the error message is printed.

@@ -54,10 +54,17 @@ describe("loadRootEnv", () => {
   });
 
   it("passes only <root>/.env to the loader", () => {
+    writeFileSync(path.join(dir, ".env"), "NWA_LOADENV_TEST_A=from-file\n");
     const seen: string[] = [];
-    loadRootEnv("/fake/root", (file) => seen.push(file));
-    assert.deepEqual(seen, [path.join("/fake/root", ".env")]);
+    assert.equal(loadRootEnv(dir, (file) => seen.push(file)), true);
+    assert.deepEqual(seen, [path.join(dir, ".env")]);
     assert.equal(rootEnvFile("/fake/root"), path.join("/fake/root", ".env"));
+  });
+
+  it("does not call the loader when .env does not exist", () => {
+    const seen: string[] = [];
+    assert.equal(loadRootEnv(dir, (file) => seen.push(file)), false);
+    assert.deepEqual(seen, [], ".env がないのに loader を呼んだ");
   });
 
   it("throws a fixed message without file content when .env cannot be read", () => {
@@ -70,6 +77,7 @@ describe("loadRootEnv", () => {
 
   it("rethrows loader errors as the fixed message, never the original text", () => {
     const leak = "dummySecretValue42";
+    writeFileSync(path.join(dir, ".env"), "NWA_LOADENV_TEST_A=from-file\n");
     assert.throws(
       () =>
         loadRootEnv(dir, () => {
@@ -80,21 +88,46 @@ describe("loadRootEnv", () => {
   });
 });
 
-// The DB scripts must load .env by path before the guard, not through `new PrismaClient()`.
-describe("DB scripts load <repo>/.env explicitly", () => {
+// The DB scripts must load <repo>/.env through the side-effect import ./lib/load-root-env-first,
+// as their FIRST import: imports run before the script body, and requiring @prisma/client
+// already loads the .env next to the schema the generated client points at.
+describe("DB scripts load <repo>/.env first", () => {
   const ROOT = path.resolve(__dirname, "..", "..");
+  const FIRST = path.join(ROOT, "scripts", "lib", "load-root-env-first.ts");
   const SCRIPTS = ["scripts/db-local.ts", "prisma/seed.ts", "scripts/seed-step1.ts", "scripts/verify-quiz-admin-db.ts"];
 
+  // import / export ... from / require( at the start of a line (comments start with // or *, so they do not match)
+  const MODULE_REF = /^[ \t]*(?:import\s*["']([^"']+)["']|import\b[^;]*?\bfrom\s*["']([^"']+)["']|export\b[^;]*?\bfrom\s*["']([^"']+)["'])|\brequire\s*\(\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/gm;
+
+  function moduleRefs(src: string): Array<{ spec: string; sideEffectOnly: boolean; index: number }> {
+    return Array.from(src.matchAll(MODULE_REF), (m) => ({
+      spec: m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5],
+      sideEffectOnly: m[1] !== undefined,
+      index: m.index ?? -1,
+    }));
+  }
+
   for (const rel of SCRIPTS) {
-    it(`${rel} calls loadRootEnv(<repo root>) before PrismaClient and the guard`, () => {
+    it(`${rel}：最初の import が ./lib/load-root-env-first で、@prisma/client などのどの import よりも前にある`, () => {
       const src = readFileSync(path.join(ROOT, rel), "utf8");
-      const call = src.search(/^loadRootEnv\(/m);
-      assert.ok(call !== -1, `${rel} がトップレベルで loadRootEnv を呼んでいない`);
-      const prismaAt = src.indexOf("new PrismaClient(");
-      if (prismaAt !== -1) assert.ok(call < prismaAt, `${rel} は PrismaClient を作ったあとで .env を読んでいる`);
-      const guardAt = src.search(/^\s*assertLocalDatabase\(/m);
-      if (guardAt !== -1) assert.ok(call < guardAt, `${rel} はガードのあとで .env を読んでいる`);
-      assert.doesNotMatch(src, /loadEnvFile\(/, `${rel} が loadRootEnv を通さずに loadEnvFile を呼んでいる`);
+      const refs = moduleRefs(src);
+      assert.ok(refs.length >= 2, `${rel} の import を読めていない（${refs.length} 件）`);
+      const [first, ...others] = refs;
+      assert.ok(first.sideEffectOnly, `${rel} の最初の import が副作用だけの import でない（${first.spec}）`);
+      assert.equal(path.resolve(path.dirname(path.join(ROOT, rel)), first.spec) + ".ts", FIRST, `${rel} の最初の import が load-root-env-first でない（${first.spec}）`);
+      assert.ok(others.some((r) => r.spec === "@prisma/client" || r.spec.startsWith("./lib/") || r.spec.startsWith("node:")), `${rel} のほかの import を読めていない`);
+      for (const r of others) {
+        assert.ok(!/load-root-env-first|load-env$/.test(r.spec), `${rel} が .env を読む import を 2 回以上書いている（${r.spec}）`);
+        assert.ok(r.index > first.index, `${rel} の ${r.spec} が load-root-env-first より前にある`);
+      }
+      assert.doesNotMatch(src, /\bloadRootEnv\(|\bloadEnvFile\(/, `${rel} が load-root-env-first を通さずに .env を読んでいる`);
     });
   }
+
+  it("load-root-env-first は node:path と ./load-env だけを import し、リポジトリ直下を渡す", () => {
+    const src = readFileSync(FIRST, "utf8");
+    assert.deepEqual(moduleRefs(src).map((r) => r.spec).sort(), ["./load-env", "node:path"], "load-root-env-first の import が想定と違う");
+    assert.match(src, /^loadRootEnv\(path\.resolve\(__dirname, "\.\.", "\.\."\)\);$/m, "リポジトリ直下（scripts/lib の 2 つ上）を渡していない");
+    assert.equal(path.resolve(path.dirname(FIRST), "..", ".."), ROOT, "scripts/lib の 2 つ上がリポジトリ直下でない");
+  });
 });

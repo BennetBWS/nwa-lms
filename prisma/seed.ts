@@ -1,16 +1,13 @@
-import path from "node:path";
+// Must stay the FIRST import: loads <repo>/.env before @prisma/client is required
+// (the generated client may point at another checkout's schema and load its .env).
+// Variables already set are not overridden; .env.local is not read. Nothing is printed.
+import "../scripts/lib/load-root-env-first";
 
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 import { assertLocalDatabase } from "../scripts/lib/assert-local-db";
-import { loadRootEnv } from "../scripts/lib/load-env";
 import { REPLY_NOTIFICATION_TITLE, replyNotificationMessage } from "../src/lib/question-reply";
-
-// Read <repo>/.env by path before anything else (not through the generated Prisma Client,
-// which may point at another checkout's schema). Variables already set are not overridden;
-// .env.local is not read. Nothing from the file is printed.
-loadRootEnv(path.resolve(__dirname, ".."));
 
 const prisma = new PrismaClient();
 
