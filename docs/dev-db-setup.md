@@ -20,6 +20,7 @@ Supabase CLI のローカル DB（127.0.0.1:54322）だけを使い、本番の 
 ```sh
 docker info >/dev/null && echo "Docker OK"
 supabase --version   # 2.120 以上
+node --version       # v20.12 以上（db:* と seed のスクリプトが process.loadEnvFile を使うため）
 ```
 
 Docker Desktop が起動していなければ起動する。
