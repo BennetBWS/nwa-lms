@@ -120,7 +120,7 @@ export type SubmitShapeReason = "invalid_answers" | "invalid_question_ids" | "in
 /**
  * body が { answers: 配列, questionIds: id の配列, attemptToken: トークン } の形か（DB を読む前の確認。#51）。
  * - オブジェクトでない・answers が配列でない：invalid_answers（answers の中身は parseSubmitAnswers で見る）
- * - questionIds が配列でない・要素が isValidId（1〜64 文字の文字列）でない：invalid_question_ids
+ * - questionIds が配列でない・要素が isValidId（1〜64 文字の文字列で、NUL・対になっていないサロゲートを含まない。#86）でない：invalid_question_ids
  * - attemptToken が文字列でない・ATTEMPT_TOKEN_PATTERN に合わない：invalid_attempt_token（#51 選択肢のシャッフル）
  * 成功時の value.questionIds は新しい配列。並びと中身がサーバーの問題と同じかは checkQuestionIds で、
  * トークンの MAC は quiz-shuffle の verifyAttemptToken で見る

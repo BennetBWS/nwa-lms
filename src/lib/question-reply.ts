@@ -54,7 +54,7 @@ export function parseReplyBody(body: unknown): ParseResult<ReplyInput, ReplyReas
   return { ok: true, value: { content: content.value } };
 }
 
-/** 親の質問の id（URL の [id]）。空でない string で 64 文字以内 */
+/** 親の質問の id（URL の [id]）。空でない string で 64 文字以内、NUL・対になっていないサロゲートを含まない（isValidId。#86） */
 export function isValidQuestionId(value: unknown): value is string {
   return isValidId(value);
 }

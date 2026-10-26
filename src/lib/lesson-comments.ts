@@ -99,8 +99,8 @@ export function parseCommentContent(content: unknown): ParseResult<string, Comme
  * POST /api/comments の body を検証する。
  * - content：string。NUL・対になっていないサロゲートを含めば invalid_characters。
  *   前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
- * - lessonId：空でない string で 64 文字以内
- * - parentId：undefined / null（親の質問）か、空でない string で 64 文字以内
+ * - lessonId：空でない string で 64 文字以内、NUL・対になっていないサロゲートを含まない（isValidId。#86）
+ * - parentId：undefined / null（親の質問）か、空でない string で 64 文字以内、NUL・対になっていないサロゲートを含まない（isValidId。#86）
  * userId は受け取らない（route がセッションの値を使う）
  */
 export function parseCreateComment(body: unknown): ParseResult<CreateCommentInput, CreateCommentReason> {
