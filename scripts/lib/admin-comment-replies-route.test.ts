@@ -502,7 +502,8 @@ describe("POST /api/admin/comments/[id]/replies：id（追加）", () => {
     assert.deepEqual(first.args.where, { id: "a".repeat(64) });
   });
 
-  for (const id of ["q_stu%20", "q_stu/../q_stu", "q_stu\u0000", "Q_STU", " q_stu"]) {
+  // NUL を含む id は #86 で 400 invalid_id にした（DB に送ると Postgres がエラーにするため。下の #86 の describe で確かめる）
+  for (const id of ["q_stu%20", "q_stu/../q_stu", "Q_STU", " q_stu"]) {
     it(`id ${JSON.stringify(id)} はそのまま where に渡し、一致しないので 404（書き込まない）`, async () => {
       const res = await post(id, { content: "回答" });
       assert.equal(res.status, 404);
@@ -992,4 +993,27 @@ describe("POST /api/admin/comments/[id]/replies：#86 エスケープせずに�
     assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_body" });
     assert.equal(calls.length, 0, "DB に触れた");
   });
+});
+
+describe("POST /api/admin/comments/[id]/replies：URL の id に NUL・対になっていないサロゲートがあれば 400 invalid_id（#86）", () => {
+  for (const [label, id] of [
+    ["NUL", "q_stu\u0000"],
+    ["上位サロゲートだけ", "q_stu\uD800"],
+    ["下位サロゲートだけ", "\uDC00q_stu"],
+  ] as Array<[string, string]>) {
+    it(`${label}：DB に一度も触れない`, async () => {
+      const res = await POST(
+        new Request("https://nwa-lms.example.com/api/admin/comments/x/replies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: "回答" }),
+        }),
+        { params: Promise.resolve({ id }) }
+      );
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_id" }, label);
+      assert.equal(calls.length, 0, `DB に触れた：${calls.map((c) => c.method).join(",")}`);
+      assert.equal(notifications.length, 0, "通知を作った");
+    });
+  }
 });

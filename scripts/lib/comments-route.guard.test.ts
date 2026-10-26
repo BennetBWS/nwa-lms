@@ -795,3 +795,19 @@ describe("POST /api/comments：#86 エスケープせずに生の文字を body 
     assert.deepEqual(methods(), [], "DB に触れた");
   });
 });
+
+describe("POST /api/comments：lessonId に NUL・対になっていないサロゲートがあれば 400 invalid_lesson_id（#86）", () => {
+  for (const [label, raw] of [
+    ["\\u0000", '{"lessonId":"l1a\\u0000","content":"質問"}'],
+    ["\\ud800（上位だけ）", '{"lessonId":"l1a\\ud800","content":"質問"}'],
+    ["\\udc00（下位だけ）", '{"lessonId":"\\udc00l1a","content":"質問"}'],
+  ] as Array<[string, string]>) {
+    it(`${label}：DB に一度も触れない`, async () => {
+      assert.ok(!raw.includes("\u0000") && !/[\uD800-\uDFFF]/.test(raw), `ソースの JSON に生の文字が入っている：${label}`);
+      const res = await post(undefined, raw);
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_lesson_id" }, label);
+      assert.deepEqual(methods(), [], `DB に触れた：${methods().join(",")}`);
+    });
+  }
+});
