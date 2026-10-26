@@ -126,6 +126,7 @@ describe("interpretReplyResponse", () => {
   it("失敗は status と reason から comment-form の文言", () => {
     for (const [status, body] of [
       [400, { reason: "too_long" }],
+      [400, { reason: "invalid_characters" }],
       [400, { reason: "not_a_question" }],
       [400, null],
       [401, null],

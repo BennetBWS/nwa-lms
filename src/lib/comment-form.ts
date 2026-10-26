@@ -74,6 +74,7 @@ export function isUncertainSubmitError(message: unknown): boolean {
 const REASON_MESSAGES: Readonly<Record<string, string>> = {
   empty: "本文を入力してください。",
   too_long: `本文は ${COMMENT_MAX_LENGTH} 文字以内で入力してください。`,
+  invalid_characters: "使えない文字が含まれています。貼り付けた文章に特殊な文字が入っていないか確かめて、もう一度お試しください。",
   invalid_content: "送信内容を読み取れませんでした。画面を再読み込みして、もう一度お試しください。",
   invalid_body: "送信内容を読み取れませんでした。画面を再読み込みして、もう一度お試しください。",
   invalid_id: "送信先の質問を確かめられませんでした。一覧を再読み込みしてください。",
@@ -147,7 +148,13 @@ const QUESTION_FORBIDDEN_MESSAGES: Readonly<Record<string, string>> = {
 };
 
 /** 400 のうち、講師の回答欄と同じ文言を使う reason（本文の検証と JSON の形） */
-const SHARED_BAD_REQUEST_REASONS: ReadonlySet<string> = new Set(["empty", "too_long", "invalid_content", "invalid_body"]);
+const SHARED_BAD_REQUEST_REASONS: ReadonlySet<string> = new Set([
+  "empty",
+  "too_long",
+  "invalid_characters",
+  "invalid_content",
+  "invalid_body",
+]);
 
 const QUESTION_LESSON_UNKNOWN_MESSAGE = "このレッスンを確かめられませんでした。画面を再読み込みしてから、もう一度お試しください。";
 

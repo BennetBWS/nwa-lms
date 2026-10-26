@@ -14,6 +14,7 @@
 import { avatarInitial, displayName } from "./user-display";
 import { relativeTimeJa } from "./student-dashboard";
 import type { CourseLockedReason } from "./lesson-access";
+import { hasDbUnsafeChars } from "./text-safety";
 
 /** 本文の最大文字数（コードポイント単位） */
 export const COMMENT_MAX_LENGTH = 2000;
@@ -49,6 +50,7 @@ export type CreateCommentReason =
   | "invalid_body"
   | "invalid_lesson_id"
   | "invalid_content"
+  | "invalid_characters"
   | "empty"
   | "too_long"
   | "invalid_parent_id";
@@ -74,14 +76,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export type CommentContentReason = "invalid_content" | "empty" | "too_long";
+export type CommentContentReason = "invalid_content" | "invalid_characters" | "empty" | "too_long";
 
 /**
  * 本文の検証（POST /api/comments と講師の回答 API で共通）。
- * string でなければ invalid_content。前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
+ * string でなければ invalid_content。NUL・対になっていないサロゲートを含めば invalid_characters（#86。DB に送ると 500 になるため、
+ * empty・too_long より先に、trim の前の値で判定する）。前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
  */
 export function parseCommentContent(content: unknown): ParseResult<string, CommentContentReason> {
   if (typeof content !== "string") return { ok: false, reason: "invalid_content" };
+  if (hasDbUnsafeChars(content)) return { ok: false, reason: "invalid_characters" };
   const trimmed = content.trim();
   if (trimmed === "" || !hasVisibleText(trimmed)) return { ok: false, reason: "empty" };
   if (commentLength(trimmed) > COMMENT_MAX_LENGTH) return { ok: false, reason: "too_long" };
@@ -90,7 +94,8 @@ export function parseCommentContent(content: unknown): ParseResult<string, Comme
 
 /**
  * POST /api/comments の body を検証する。
- * - content：string。前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
+ * - content：string。NUL・対になっていないサロゲートを含めば invalid_characters。
+ *   前後の空白を除き、空・見える文字がない → empty、2000 文字超 → too_long。中の改行は残す
  * - lessonId：空でない string で 64 文字以内
  * - parentId：undefined / null（親の質問）か、空でない string で 64 文字以内
  * userId は受け取らない（route がセッションの値を使う）

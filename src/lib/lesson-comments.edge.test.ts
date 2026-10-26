@@ -89,7 +89,6 @@ describe("parseCreateComment：見えない文字だけは empty", () => {
     ["ZWJ だけ", ZWJ.repeat(3)],
     ["異体字セレクタだけ", VS16],
     ["タグ文字だけ", TAG_A],
-    ["対になっていないサロゲートだけ", LONE_HIGH],
     ["結合文字だけ（複数）", COMBINING_ACUTE.repeat(5)],
     ["RLO と改行", `${RLO}\r\n${RLO}`],
   ] as Array<[string, string]>) {
@@ -98,9 +97,13 @@ describe("parseCreateComment：見えない文字だけは empty", () => {
     });
   }
 
-  it("見える文字があれば、対になっていないサロゲートや RLO を含んでも通る（本文は変えない）", () => {
-    assert.equal(okContent(`a${LONE_HIGH}`), `a${LONE_HIGH}`);
+  it("見える文字があれば、RLO を含んでも通る（本文は変えない）", () => {
     assert.equal(okContent(`${RLO}abc`), `${RLO}abc`);
+  });
+
+  it("対になっていないサロゲートは、だけでも見える文字と一緒でも invalid_characters（#86。empty より先）", () => {
+    assert.equal(reasonOf(LONE_HIGH), "invalid_characters");
+    assert.equal(reasonOf(`a${LONE_HIGH}`), "invalid_characters");
   });
 });
 

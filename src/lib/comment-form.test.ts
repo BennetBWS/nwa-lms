@@ -92,6 +92,14 @@ describe("commentSubmitErrorMessage", () => {
     assert.equal(commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_content" }), bodyMsg);
   });
 
+  it("400 invalid_characters（#86）は使えない文字の文言で、reason の値・英語を出さない", () => {
+    const msg = commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_characters" });
+    assert.equal(msg, "使えない文字が含まれています。貼り付けた文章に特殊な文字が入っていないか確かめて、もう一度お試しください。");
+    assert.notEqual(msg, commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_body" }), "invalid_body と同じ文言になっている");
+    assert.ok(!msg.includes("invalid_characters"), "reason がそのまま出る");
+    assert.doesNotMatch(msg, /Invalid|request/);
+  });
+
   it("400 の知らない reason・reason なし・prototype の名前は invalid_body と同じ文言", () => {
     const bodyMsg = commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_body" });
     for (const reason of [undefined, null, 1, "unknown", "toString", "__proto__", "constructor"]) {

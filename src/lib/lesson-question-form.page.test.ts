@@ -369,6 +369,7 @@ describe("LessonQuestionForm 描画：送信", () => {
     ["403 forbidden_role", () => res(403, { reason: "forbidden_role" }), /質問対応/, false],
     ["403 reply_not_allowed", () => res(403, { reason: "reply_not_allowed" }), /返信は投稿できません/, false],
     ["400 too_long", () => res(400, { reason: "too_long" }), /2000 文字以内/, false],
+    ["400 invalid_characters", () => res(400, { reason: "invalid_characters" }), /^使えない文字が含まれています。/, false],
     ["404", () => res(404, { error: "Lesson not found" }), /レッスンが見つかりません/, false],
     ["500", () => res(500, { error: "Internal server error" }), /サーバーでエラー/, false],
     ["502（本文が JSON でない）", () => res(502, undefined), /送信できたかどうか確かめられませんでした/, true],
