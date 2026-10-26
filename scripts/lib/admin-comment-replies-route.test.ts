@@ -765,3 +765,53 @@ describe("POST /api/admin/comments/[id]/replies：エラー（追加）", () => 
     }
   });
 });
+
+// ───────────── #86 本文の NUL・対になっていないサロゲート ─────────────
+
+describe("POST /api/admin/comments/[id]/replies：本文に NUL・対になっていないサロゲートがあれば 400 invalid_characters（#86）", () => {
+  // body の JSON の中では \u エスケープの形で送る（ソースの文字列はバックスラッシュ u。生の文字は入れない）
+  const RAW: Array<[string, string]> = [
+    ["\\u0000", '{"content":"回答\\u0000です"}'],
+    ["\\ud800（上位だけ）", '{"content":"回答\\ud800です"}'],
+    ["\\udc00（下位だけ）", '{"content":"回答\\udc00です"}'],
+    ["\\ude00\\ud83d（逆順）", '{"content":"回答\\ude00\\ud83dです"}'],
+    ["\\u0000 だけ", '{"content":"\\u0000"}'],
+    ["上限超え + \\ud800", `{"content":"${"あ".repeat(2001)}\\ud800"}`],
+  ];
+  for (const [label, raw] of RAW) {
+    it(`${label}：400 で、DB に一度も触れない（質問を読まず、回答も通知も作らない）`, async () => {
+      assert.ok(!raw.includes("\u0000") && !/[\uD800-\uDFFF]/.test(raw), `ソースの JSON に生の文字が入っている：${label}`);
+      const before = comments.length;
+      const res = await post("q_stu", undefined, raw);
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_characters" }, label);
+      assert.equal(calls.length, 0, `DB に触れた：${calls.map((c) => c.method).join(",")}`);
+      assert.equal(comments.length, before, "保存していない");
+      assert.equal(notifications.length, 0, "通知を作った");
+    });
+  }
+
+  it("JSON.stringify で送った場合（対になっていないサロゲートは \\u エスケープになる）も 400", async () => {
+    for (const content of ["回答\u0000です", "回答\uD800です", "回答\uDC00です"]) {
+      const res = await post("q_stu", { content });
+      assert.equal(res.status, 400, JSON.stringify(content));
+      assert.equal((await res.json()).reason, "invalid_characters", JSON.stringify(content));
+    }
+    assert.equal(calls.length, 0, "DB に触れた");
+  });
+
+  it("受講生は本文より先に 403（判定の順は変えない）", async () => {
+    session = STUDENT_SESSION;
+    const res = await post("q_stu", undefined, '{"content":"\\u0000"}');
+    assert.equal(res.status, 403);
+    assert.equal(calls.length, 0, "DB に触れた");
+  });
+
+  it("正しいサロゲートペア（\\ud83d\\ude00）は 201 で、本文をそのまま保存する", async () => {
+    const res = await post("q_stu", undefined, '{"content":"回答\\ud83d\\ude00です"}');
+    assert.equal(res.status, 201);
+    const created = calls.filter((c) => c.method === "comment.create");
+    assert.equal(created.length, 1, "保存していない");
+    assert.equal((created[0].args.data as { content: string }).content, "回答\u{1F600}です");
+  });
+});

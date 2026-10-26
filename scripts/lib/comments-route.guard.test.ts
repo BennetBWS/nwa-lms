@@ -528,3 +528,53 @@ describe("見えない文字", () => {
     assert.doesNotMatch(text, new RegExp("[\\u00A0\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u3000\\uFEFF]", "u"));
   });
 });
+
+// ───────────── #86 本文の NUL・対になっていないサロゲート ─────────────
+
+describe("POST /api/comments：本文に NUL・対になっていないサロゲートがあれば 400 invalid_characters（#86）", () => {
+  // body の JSON の中では \u エスケープの形で送る（ソースの文字列はバックスラッシュ u。生の文字は入れない）
+  const RAW: Array<[string, string]> = [
+    ["\\u0000", '{"lessonId":"l1a","content":"質問\\u0000です"}'],
+    ["\\ud800（上位だけ）", '{"lessonId":"l1a","content":"質問\\ud800です"}'],
+    ["\\udc00（下位だけ）", '{"lessonId":"l1a","content":"質問\\udc00です"}'],
+    ["\\ude00\\ud83d（逆順）", '{"lessonId":"l1a","content":"質問\\ude00\\ud83dです"}'],
+    ["\\u0000 だけ", '{"lessonId":"l1a","content":"\\u0000"}'],
+    ["上限超え + \\u0000", `{"lessonId":"l1a","content":"${"あ".repeat(2001)}\\u0000"}`],
+    ["parentId 付き + \\ud800（reply_not_allowed より先）", '{"lessonId":"l1a","content":"質問\\ud800","parentId":"o_secret"}'],
+  ];
+  for (const [label, raw] of RAW) {
+    it(`${label}：400 で、DB に一度も触れない（create もレート制限の読み込みもしない）`, async () => {
+      assert.ok(!raw.includes("\u0000") && !/[\uD800-\uDFFF]/.test(raw), `ソースの JSON に生の文字が入っている：${label}`);
+      const before = comments.length;
+      const res = await post(undefined, raw);
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_characters" }, label);
+      assert.deepEqual(methods(), [], `DB を読んだ・書いた：${methods().join(",")}`);
+      assert.equal(comments.length, before, "保存していない");
+    });
+  }
+
+  it("JSON.stringify で送った場合（対になっていないサロゲートは \\u エスケープになる）も 400", async () => {
+    for (const content of ["質問\u0000です", "質問\uD800です", "質問\uDC00です"]) {
+      const res = await post({ lessonId: "l1a", content });
+      assert.equal(res.status, 400, JSON.stringify(content));
+      assert.equal((await res.json()).reason, "invalid_characters", JSON.stringify(content));
+    }
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("講師は本文より先に 403 forbidden_role（判定の順は変えない）", async () => {
+    session = { user: { id: "ins_1", role: "INSTRUCTOR" } };
+    const res = await post(undefined, '{"lessonId":"l1a","content":"\\u0000"}');
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "forbidden_role");
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("正しいサロゲートペア（\\ud83d\\ude00）は 201 で、本文をそのまま保存する", async () => {
+    const res = await post(undefined, '{"lessonId":"l1a","content":"質問\\ud83d\\ude00です"}');
+    assert.equal(res.status, 201);
+    assert.equal(writes().length, 1, "保存していない");
+    assert.equal((writes()[0].args.data as { content: string }).content, "質問\u{1F600}です");
+  });
+});
