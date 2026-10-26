@@ -28,7 +28,7 @@ describe("parseCommentContent：NUL・対になっていないサロゲートは
   }
 
   it("正しい絵文字（サロゲートペア・ZWJ・異体字セレクタ）は通り、本文を変えない", () => {
-    for (const s of ["質問😀です", "\u{1F600}", "\u{1F468}‍\u{1F469}‍\u{1F467}", "❤️", "\u{1F1EF}\u{1F1F5}"]) {
+    for (const s of ["質問😀です", "\u{1F600}", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}", "❤\uFE0F", "\u{1F1EF}\u{1F1F5}"]) {
       assert.deepEqual(parseCommentContent(s), { ok: true, value: s }, JSON.stringify(s));
     }
   });
@@ -46,7 +46,7 @@ describe("parseCommentContent：理由の優先順位", () => {
   });
 
   it("空白・見えない文字だけでも、NUL・対になっていないサロゲートがあれば empty より先に invalid_characters", () => {
-    for (const s of ["\u0000", "  \u0000  ", "​\u0000", "\uD800", " \uDC00 ", "\n\uD83D\n"]) {
+    for (const s of ["\u0000", "  \u0000  ", "\u200B\u0000", "\uD800", " \uDC00 ", "\n\uD83D\n"]) {
       assert.equal(reasonOf(parseCommentContent(s)), "invalid_characters", JSON.stringify(s));
     }
   });

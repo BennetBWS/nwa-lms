@@ -1424,3 +1424,30 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.match(compSrc, /\(\) => setLoadingMore\(false\)\s*\);/);
   });
 });
+
+// ───────────── #86 テスト担当の追加：使えない文字（NUL・対になっていないサロゲート） ─────────────
+// 見えない文字・サロゲートはソースに直接書かず、\u エスケープで書く
+
+describe("AdminQuestions：#86 400 invalid_characters", () => {
+  const INVALID_CHARS_MESSAGE = "使えない文字が含まれています。貼り付けた文章に特殊な文字が入っていないか確かめて、もう一度お試しください。";
+
+  for (const [label, value] of [
+    ["NUL を含む", "回答\u0000です"],
+    ["上位サロゲートだけ", "回答\uD800です"],
+    ["下位サロゲートだけ（先頭・前後に空白）", " \uDC00回答です\n"],
+    ["逆順のサロゲート", "回答\uDE00\uD83D"],
+  ] as Array<[string, string]>) {
+    it(`${label}：送った後の 400 invalid_characters で専用の文言を出し、入力をそのまま残す`, async () => {
+      const m = await typed(value);
+      click(button(m.render(), "回答を送信"));
+      assert.equal(replyReqs(m).length, 1, "送っていない");
+      assert.deepEqual(JSON.parse(String(replyReqs(m)[0].init?.body)), { content: value }, "送った本文が入力と違う");
+      replyReqs(m)[0].release(res({ error: "Invalid request", reason: "invalid_characters" }, { status: 400, ok: false, url: REPLY_URL("t1") }));
+      await settle();
+      const tree = m.render();
+      assert.deepEqual(alertsOf(tree), [INVALID_CHARS_MESSAGE], "専用の文言が出ない");
+      assert.equal(textarea(tree).props.value, value, "入力が消えた・変わった");
+      assert.ok(!statusTexts(tree).includes(adminQuestions.REPLY_SENT_MESSAGE), "失敗なのに送信の知らせが出た");
+    });
+  }
+});

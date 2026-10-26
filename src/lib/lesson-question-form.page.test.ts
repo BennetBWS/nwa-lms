@@ -490,3 +490,42 @@ describe("LessonView：reloadCommentsAfterPost（実行）", () => {
     }
   });
 });
+
+// ───────────── #86 テスト担当の追加：使えない文字（NUL・対になっていないサロゲート） ─────────────
+// 見えない文字・サロゲートはソースに直接書かず、\u エスケープで書く
+
+describe("LessonQuestionForm 描画：#86 400 invalid_characters", () => {
+  const INVALID_CHARS_MESSAGE = "使えない文字が含まれています。貼り付けた文章に特殊な文字が入っていないか確かめて、もう一度お試しください。";
+
+  for (const [label, value] of [
+    ["NUL を含む", "質問\u0000です"],
+    ["上位サロゲートだけ", "質問\uD800です"],
+    ["下位サロゲートだけ（先頭・前後に空白）", " \uDC00質問です\n"],
+    ["逆順のサロゲート", "質問\uDE00\uD83D"],
+  ] as Array<[string, string]>) {
+    it(`${label}：画面では止めずに送り、400 invalid_characters の専用の文言を出し、入力をそのまま残す`, async () => {
+      const m = sent(value);
+      const body = JSON.parse(String(m.reqs[0].init?.body)) as { lessonId: string; content: string };
+      assert.equal(body.content, value, "送った本文が入力と違う");
+      m.reqs[0].release(res(400, { error: "Invalid request", reason: "invalid_characters" }));
+      await settle();
+      const tree = m.render();
+      assert.deepEqual(alerts(tree), [INVALID_CHARS_MESSAGE], "専用の文言が出ない");
+      assert.equal(textarea(tree).props.value, value, "入力が消えた・変わった");
+      assert.equal(textarea(tree).props.readOnly, false, "失敗の後に入力できない");
+      assert.deepEqual(m.reloads, [], "一覧を読み直した");
+      assert.deepEqual(statuses(tree), [""], "成功の知らせが出ている");
+    });
+  }
+
+  it("文言を直して送り直すと、前のエラーが消える", async () => {
+    const m = sent("質問\uD800");
+    m.reqs[0].release(res(400, { error: "Invalid request", reason: "invalid_characters" }));
+    await settle();
+    change(textarea(m.render()), "質問です");
+    click(sendButton(m.render()));
+    assert.equal(m.reqs.length, 2, "直した後に送れない");
+    assert.deepEqual(alerts(m.render()), [], "前のエラーが残る");
+    assert.deepEqual(JSON.parse(String(m.reqs[1].init?.body)), { lessonId: "l1", content: "質問です" });
+  });
+});
