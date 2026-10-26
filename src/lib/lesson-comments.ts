@@ -30,9 +30,12 @@ export function commentLength(s: string): number {
   return Array.from(s).length;
 }
 
-/** 空でない string で ID_MAX_LENGTH 文字以内 */
+/**
+ * 空でない string で ID_MAX_LENGTH 文字以内、NUL・対になっていないサロゲートを含まない
+ * （#86。含む値を where に渡すと DB がエラーにして 500 になるため、形の検証で断る）
+ */
 export function isValidId(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= ID_MAX_LENGTH;
+  return typeof value === "string" && value.length > 0 && value.length <= ID_MAX_LENGTH && !hasDbUnsafeChars(value);
 }
 
 /** 見える文字（文字・数字・記号・句読点）が 1 文字以上ある。判定は user-display の displayName と同じ */

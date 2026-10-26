@@ -138,6 +138,14 @@ describe("isValidId", () => {
     assert.equal(isValidId(new String("c1")), false);
     assert.equal(isValidId(1), false);
   });
+
+  it("NUL・対になっていないサロゲートを含む値は通らない（#86）。正しいサロゲートペアは通る", () => {
+    for (const s of ["c1\u0000", "\u0000", "c1\uD800", "\uDC00c1", "c\uDE00\uD83D1", "c1\uD83D"]) {
+      assert.equal(isValidId(s), false, JSON.stringify(s));
+    }
+    assert.equal(isValidId(`c1${EMOJI}`), true, "正しいサロゲートペアを断った");
+    assert.equal(isValidId("c1\u0001"), true, "NUL 以外の制御文字は従来どおり通す");
+  });
 });
 
 describe("toCommentThreadView：境界", () => {
