@@ -47,7 +47,7 @@ const MILLIS_RE = /^\d{1,15}$/;
 
 /**
  * encodeThreadCursor の逆。epochMillis が 0 以上の整数（数字だけ、15 桁まで）で、
- * id が空でない 64 文字以内の文字列でなければ null
+ * id が空でない 64 文字以内の文字列でない、または NUL・対になっていないサロゲートを含めば null（isValidId。#86）
  */
 export function decodeThreadCursor(value: unknown): ThreadCursor | null {
   if (typeof value !== "string") return null;
@@ -80,7 +80,7 @@ const STATUSES: ReadonlyArray<ThreadStatus> = ["all", "answered", "unanswered"];
  * GET /api/comments のクエリを検証する。知らないパラメータは無視する。
  * - mine：なし・"0"・"false" → false、"1"・"true" → true。それ以外は invalid_mine
  * - status：なし → all。all / answered / unanswered 以外は invalid_status
- * - courseId：なし → null。空・65 文字以上は invalid_course_id
+ * - courseId：なし → null。空・65 文字以上・NUL や対になっていないサロゲートを含む（isValidId。#86）は invalid_course_id
  * - cursor：なし → null。decodeThreadCursor で読めなければ invalid_cursor
  * 同じ名前が複数あるときは最初の値を使う
  */

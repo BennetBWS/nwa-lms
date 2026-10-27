@@ -363,7 +363,8 @@ describe("DELETE /api/admin/comments/[id]：入力", () => {
     assert.deepEqual(calls[0].args, { where: { id: "a".repeat(64) }, select: { id: true, parentId: true } }, "id と parentId だけを読む");
   });
 
-  for (const id of ["q_stu%20", "Q_STU", " q_stu", "q_stu\u0000"]) {
+  // NUL を含む id は #86 で 400 invalid_id にした（DB に送ると Postgres がエラーにするため）。id-unsafe-chars-routes.test.ts で確かめる
+  for (const id of ["q_stu%20", "Q_STU", " q_stu"]) {
     it(`id ${JSON.stringify(id)} は加工せずに where に渡し、一致しないので 404（何も消さない）`, async () => {
       const res = await del(id);
       assert.equal(res.status, 404);

@@ -16,6 +16,7 @@
 import type { Prisma } from "@prisma/client";
 import { commentLength, hasVisibleText } from "./lesson-comments";
 import { stripInvisibleMarks } from "./user-display";
+import { hasDbUnsafeChars } from "./text-safety";
 import { MIN_OPTIONS, normalizeOptions, quizCourseId, toAnswerKey, type AnswerKeyRow, type ParseResult, type QuizType } from "./student-quizzes";
 
 /** 問題文の最大の文字数（前後の空白を除いたあと。サロゲートペアは 1 文字） */
@@ -286,23 +287,12 @@ export type PatchQuestionInput = {
   correctIndex?: number;
 };
 
-/** NUL（U+0000）。Postgres の text・jsonb は受け付けない */
-const NUL = /\u0000/;
-
-/** 対になっていないサロゲート（isWellFormed がない環境での代わり） */
-const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
-
 /**
  * 重複の判定で取り除く異体字セレクタ（U+FE00〜FE0F、U+E0100〜E01EF）。
  * 制御文字・書式文字・空白に見える埋め字は、stripInvisibleMarks（hasVisibleText と同じ規則）で先に除く。
  * tsconfig の target が ES5 のため、u フラグの正規表現はリテラルでなく RegExp で作る
  */
 const VARIATION_SELECTORS = new RegExp("[\\uFE00-\\uFE0F\\u{E0100}-\\u{E01EF}]", "gu");
-
-/** 対になっていないサロゲートを含まない（Postgres の jsonb は拒否し、text は U+FFFD に置き換えて revision が食い違う） */
-function isWellFormedText(s: string): boolean {
-  return typeof s.isWellFormed === "function" ? s.isWellFormed() : !LONE_SURROGATE.test(s);
-}
 
 /**
  * 前後の空白を除いて、見える文字が 1 文字以上あり、max 文字以内なら除いた値。違えば null。
@@ -315,7 +305,7 @@ function cleanText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
   const t = value.trim();
   if (t === "" || t.length > max * 2) return null;
-  if (NUL.test(t) || !isWellFormedText(t)) return null;
+  if (hasDbUnsafeChars(t)) return null;
   if (commentLength(t) > max || !hasVisibleText(t)) return null;
   return t;
 }

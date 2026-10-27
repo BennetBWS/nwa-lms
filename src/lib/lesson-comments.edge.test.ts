@@ -89,7 +89,6 @@ describe("parseCreateComment：見えない文字だけは empty", () => {
     ["ZWJ だけ", ZWJ.repeat(3)],
     ["異体字セレクタだけ", VS16],
     ["タグ文字だけ", TAG_A],
-    ["対になっていないサロゲートだけ", LONE_HIGH],
     ["結合文字だけ（複数）", COMBINING_ACUTE.repeat(5)],
     ["RLO と改行", `${RLO}\r\n${RLO}`],
   ] as Array<[string, string]>) {
@@ -98,9 +97,13 @@ describe("parseCreateComment：見えない文字だけは empty", () => {
     });
   }
 
-  it("見える文字があれば、対になっていないサロゲートや RLO を含んでも通る（本文は変えない）", () => {
-    assert.equal(okContent(`a${LONE_HIGH}`), `a${LONE_HIGH}`);
+  it("見える文字があれば、RLO を含んでも通る（本文は変えない）", () => {
     assert.equal(okContent(`${RLO}abc`), `${RLO}abc`);
+  });
+
+  it("対になっていないサロゲートは、だけでも見える文字と一緒でも invalid_characters（#86。empty より先）", () => {
+    assert.equal(reasonOf(LONE_HIGH), "invalid_characters");
+    assert.equal(reasonOf(`a${LONE_HIGH}`), "invalid_characters");
   });
 });
 
@@ -134,6 +137,14 @@ describe("isValidId", () => {
   it("String オブジェクト・数値は通らない", () => {
     assert.equal(isValidId(new String("c1")), false);
     assert.equal(isValidId(1), false);
+  });
+
+  it("NUL・対になっていないサロゲートを含む値は通らない（#86）。正しいサロゲートペアは通る", () => {
+    for (const s of ["c1\u0000", "\u0000", "c1\uD800", "\uDC00c1", "c\uDE00\uD83D1", "c1\uD83D"]) {
+      assert.equal(isValidId(s), false, JSON.stringify(s));
+    }
+    assert.equal(isValidId(`c1${EMOJI}`), true, "正しいサロゲートペアを断った");
+    assert.equal(isValidId("c1\u0001"), true, "NUL 以外の制御文字は従来どおり通す");
   });
 });
 

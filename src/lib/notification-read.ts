@@ -28,7 +28,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * POST /api/notifications/read の body を検証する。ids だけを使い、他の項目（userId など）は無視する。
  * - body がオブジェクトでなければ invalid_body
- * - ids が配列でない・要素のどれかが isValidId（空でない string で 64 文字以内）でない・重複を除いて 0 件または 51 件以上なら invalid_ids
+ * - ids が配列でない・要素のどれかが isValidId（空でない string で 64 文字以内、NUL・対になっていないサロゲートを含まない。#86）でない・重複を除いて 0 件または 51 件以上なら invalid_ids
  * - 重複は最初に出た順で 1 つにまとめる
  */
 export function parseMarkReadBody(body: unknown): ParseResult<MarkReadInput, MarkReadReason> {

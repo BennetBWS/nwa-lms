@@ -519,6 +519,12 @@ describe("AdminQuestions 追加：回答欄とサーバーの判定", () => {
     for (const [label, v] of samples) {
       const form = commentForm.commentFormState(v, false);
       const server = parseCommentContent(v);
+      if ("reason" in server && server.reason === "invalid_characters") {
+        // #86：NUL・対になっていないサロゲートは画面では止めず、送信後の 400 invalid_characters の文言で知らせる。
+        // 画面の判定は空・上限超えの規則だけ
+        assert.equal(form.canSubmit, !form.empty && !form.tooLong, `送れるかが空・上限超えの規則と違う：${label}`);
+        continue;
+      }
       assert.equal(form.canSubmit, server.ok, `送れるかが不一致：${label}`);
       if ("reason" in server) {
         assert.equal(form.empty, server.reason === "empty", `empty が不一致：${label}（${server.reason}）`);
@@ -597,7 +603,7 @@ describe("AdminQuestions 追加：応答の扱い", () => {
 
   it("400 の各 reason・403・404・500・502〜504 の文言を出し、入力を残す", async () => {
     const cases: Array<[Partial<FakeRes>, unknown, string]> = [];
-    for (const reason of ["empty", "too_long", "invalid_content", "invalid_body", "invalid_id", "not_a_question", "unknown_reason"]) {
+    for (const reason of ["empty", "too_long", "invalid_characters", "invalid_content", "invalid_body", "invalid_id", "not_a_question", "unknown_reason"]) {
       cases.push([{ status: 400, ok: false }, { error: "Invalid request", reason }, commentForm.commentSubmitErrorMessage({ httpStatus: 400, reason })]);
     }
     cases.push([{ status: 400, ok: false }, { error: "Invalid request" }, commentForm.commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_body" })]);
@@ -617,7 +623,7 @@ describe("AdminQuestions 追加：応答の扱い", () => {
   });
 
   it("400 の文言はそれぞれ空でなく、英語の既定文言・reason の値をそのまま出さない", () => {
-    for (const reason of ["empty", "too_long", "invalid_content", "invalid_body", "invalid_id", "not_a_question"]) {
+    for (const reason of ["empty", "too_long", "invalid_characters", "invalid_content", "invalid_body", "invalid_id", "not_a_question"]) {
       const msg = commentForm.commentSubmitErrorMessage({ httpStatus: 400, reason });
       assert.ok(msg.length > 0, reason);
       assert.ok(!msg.includes(reason), `reason がそのまま出る：${reason}`);
@@ -1417,4 +1423,31 @@ describe("AdminQuestions 追加：送信結果が分からないときの再読�
     assert.match(compSrc, /\(\) => setLoading\(false\),\s*forTab\s*\);/);
     assert.match(compSrc, /\(\) => setLoadingMore\(false\)\s*\);/);
   });
+});
+
+// ───────────── #86 テスト担当の追加：使えない文字（NUL・対になっていないサロゲート） ─────────────
+// 見えない文字・サロゲートはソースに直接書かず、\u エスケープで書く
+
+describe("AdminQuestions：#86 400 invalid_characters", () => {
+  const INVALID_CHARS_MESSAGE = "使えない文字が含まれています。貼り付けた文章に特殊な文字が入っていないか確かめて、もう一度お試しください。";
+
+  for (const [label, value] of [
+    ["NUL を含む", "回答\u0000です"],
+    ["上位サロゲートだけ", "回答\uD800です"],
+    ["下位サロゲートだけ（先頭・前後に空白）", " \uDC00回答です\n"],
+    ["逆順のサロゲート", "回答\uDE00\uD83D"],
+  ] as Array<[string, string]>) {
+    it(`${label}：送った後の 400 invalid_characters で専用の文言を出し、入力をそのまま残す`, async () => {
+      const m = await typed(value);
+      click(button(m.render(), "回答を送信"));
+      assert.equal(replyReqs(m).length, 1, "送っていない");
+      assert.deepEqual(JSON.parse(String(replyReqs(m)[0].init?.body)), { content: value }, "送った本文が入力と違う");
+      replyReqs(m)[0].release(res({ error: "Invalid request", reason: "invalid_characters" }, { status: 400, ok: false, url: REPLY_URL("t1") }));
+      await settle();
+      const tree = m.render();
+      assert.deepEqual(alertsOf(tree), [INVALID_CHARS_MESSAGE], "専用の文言が出ない");
+      assert.equal(textarea(tree).props.value, value, "入力が消えた・変わった");
+      assert.ok(!statusTexts(tree).includes(adminQuestions.REPLY_SENT_MESSAGE), "失敗なのに送信の知らせが出た");
+    });
+  }
 });

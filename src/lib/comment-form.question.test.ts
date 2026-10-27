@@ -79,9 +79,14 @@ describe("questionSubmitErrorMessage：受講生向けの文言", () => {
   });
 
   it("400：本文の検証は講師の回答欄と同じ文言、invalid_lesson_id は再読み込みの案内、それ以外は invalid_body と同じ", () => {
-    for (const reason of ["empty", "too_long", "invalid_content", "invalid_body"]) {
+    for (const reason of ["empty", "too_long", "invalid_characters", "invalid_content", "invalid_body"]) {
       assert.equal(questionSubmitErrorMessage({ httpStatus: 400, reason }), commentSubmitErrorMessage({ httpStatus: 400, reason }), reason);
     }
+    // #86：invalid_characters は invalid_body の文言に落ちない
+    assert.ok(
+      questionSubmitErrorMessage({ httpStatus: 400, reason: "invalid_characters" }).includes("使えない文字"),
+      "受講生の質問欄に invalid_characters の文言が出ない",
+    );
     assert.ok(questionSubmitErrorMessage({ httpStatus: 400, reason: "invalid_lesson_id" }).includes("再読み込み"), "invalid_lesson_id の文言");
     const bodyMsg = commentSubmitErrorMessage({ httpStatus: 400, reason: "invalid_body" });
     // 講師の回答欄だけの reason（not_a_question・invalid_id）は受講生には出さない

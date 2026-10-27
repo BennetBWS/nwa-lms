@@ -151,7 +151,7 @@ const CONTENT_CASES: Array<[string, unknown]> = [
   ["結合文字で 2001 コードポイント", `${"e".repeat(1000)}${"\u0301".repeat(1001)}`],
   ["家族の絵文字（ZWJ）×400", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}".repeat(400)],
   ["家族の絵文字（ZWJ）×401", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}".repeat(401)],
-  ["孤立したサロゲート", "\uD83D"],
+  // 孤立したサロゲートは #86 で invalid_characters に変えた（下の「#86」の describe で確かめる）
 ];
 
 describe("parseCommentContent の切り出しで挙動が変わっていない", () => {

@@ -528,3 +528,286 @@ describe("見えない文字", () => {
     assert.doesNotMatch(text, new RegExp("[\\u00A0\\u200B-\\u200F\\u202A-\\u202E\\u2060-\\u2064\\u3000\\uFEFF]", "u"));
   });
 });
+
+// ───────────── #86 本文の NUL・対になっていないサロゲート ─────────────
+
+describe("POST /api/comments：本文に NUL・対になっていないサロゲートがあれば 400 invalid_characters（#86）", () => {
+  // body の JSON の中では \u エスケープの形で送る（ソースの文字列はバックスラッシュ u。生の文字は入れない）
+  const RAW: Array<[string, string]> = [
+    ["\\u0000", '{"lessonId":"l1a","content":"質問\\u0000です"}'],
+    ["\\ud800（上位だけ）", '{"lessonId":"l1a","content":"質問\\ud800です"}'],
+    ["\\udc00（下位だけ）", '{"lessonId":"l1a","content":"質問\\udc00です"}'],
+    ["\\ude00\\ud83d（逆順）", '{"lessonId":"l1a","content":"質問\\ude00\\ud83dです"}'],
+    ["\\u0000 だけ", '{"lessonId":"l1a","content":"\\u0000"}'],
+    ["上限超え + \\u0000", `{"lessonId":"l1a","content":"${"あ".repeat(2001)}\\u0000"}`],
+    ["parentId 付き + \\ud800（reply_not_allowed より先）", '{"lessonId":"l1a","content":"質問\\ud800","parentId":"o_secret"}'],
+  ];
+  for (const [label, raw] of RAW) {
+    it(`${label}：400 で、DB に一度も触れない（create もレート制限の読み込みもしない）`, async () => {
+      assert.ok(!raw.includes("\u0000") && !/[\uD800-\uDFFF]/.test(raw), `ソースの JSON に生の文字が入っている：${label}`);
+      const before = comments.length;
+      const res = await post(undefined, raw);
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_characters" }, label);
+      assert.deepEqual(methods(), [], `DB を読んだ・書いた：${methods().join(",")}`);
+      assert.equal(comments.length, before, "保存していない");
+    });
+  }
+
+  it("JSON.stringify で送った場合（対になっていないサロゲートは \\u エスケープになる）も 400", async () => {
+    for (const content of ["質問\u0000です", "質問\uD800です", "質問\uDC00です"]) {
+      const res = await post({ lessonId: "l1a", content });
+      assert.equal(res.status, 400, JSON.stringify(content));
+      assert.equal((await res.json()).reason, "invalid_characters", JSON.stringify(content));
+    }
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("講師は本文より先に 403 forbidden_role（判定の順は変えない）", async () => {
+    session = { user: { id: "ins_1", role: "INSTRUCTOR" } };
+    const res = await post(undefined, '{"lessonId":"l1a","content":"\\u0000"}');
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).reason, "forbidden_role");
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("正しいサロゲートペア（\\ud83d\\ude00）は 201 で、本文をそのまま保存する", async () => {
+    const res = await post(undefined, '{"lessonId":"l1a","content":"質問\\ud83d\\ude00です"}');
+    assert.equal(res.status, 201);
+    assert.equal(writes().length, 1, "保存していない");
+    assert.equal((writes()[0].args.data as { content: string }).content, "質問\u{1F600}です");
+  });
+});
+
+// ───────────── #86 テスト担当の追加：文字・位置・空白・送り方の組み合わせと、理由の優先順位 ─────────────
+
+/** [ラベル, 実際の文字（\u エスケープで書く）, JSON の中でのエスケープの形] */
+const BAD_CHARS_86: Array<[string, string, string]> = [
+  ["NUL", "\u0000", "\\u0000"],
+  ["上位サロゲートだけ（D800）", "\uD800", "\\ud800"],
+  ["上位サロゲートだけ（DBFF・大文字のエスケープ）", "\uDBFF", "\\uDBFF"],
+  ["下位サロゲートだけ（DC00）", "\uDC00", "\\udc00"],
+  ["下位サロゲートだけ（DFFF・大文字のエスケープ）", "\uDFFF", "\\uDFFF"],
+  ["逆順のサロゲート", "\uDE00\uD83D", "\\ude00\\ud83d"],
+  ["上位が 2 つ続いてから下位", "\uD83D😀", "\\ud83d\\ud83d\\ude00"],
+];
+const PLACEHOLDER_86 = "@@BAD@@";
+/** 置き場所。X が問題の文字 */
+const POSITIONS_86: Array<[string, (x: string) => string]> = [
+  ["先頭", (x) => `${x}質問です`],
+  ["末尾", (x) => `質問です${x}`],
+  ["途中", (x) => `質問${x}です`],
+  ["それだけ", (x) => x],
+];
+/** 前後の空白（trim で消える部分の外側・内側に問題の文字がある形） */
+const WRAPS_86: Array<[string, (s: string) => string]> = [
+  ["空白なし", (s) => s],
+  ["前後に空白・改行・全角空白", (s) => ` \n${IDEOGRAPHIC_SPACE}${s}\t${NBSP} `],
+  ["前後に見えない文字（ZWSP）", (s) => `${ZWSP}${s}${ZWSP}`],
+];
+const hasRawUnsafe86 = (s: string) => s.includes("\u0000") || /[\uD800-\uDFFF]/.test(s);
+
+describe("POST /api/comments：#86 の文字 × 位置 × 前後の空白 × 送り方で 400 invalid_characters、DB に触れない", () => {
+  for (const [label, ch, esc] of BAD_CHARS_86) {
+    it(`${label}：エスケープの形で送る`, async () => {
+      for (const [pos, place] of POSITIONS_86) {
+        for (const [wrapLabel, wrap] of WRAPS_86) {
+          const raw = JSON.stringify({ lessonId: "l1a", content: wrap(place(PLACEHOLDER_86)) }).replace(PLACEHOLDER_86, esc);
+          assert.ok(!hasRawUnsafe86(raw), `送る JSON に生の文字が入っている：${label}/${pos}/${wrapLabel}`);
+          const where = `${label}/${pos}/${wrapLabel}`;
+          const res = await post(undefined, raw);
+          assert.equal(res.status, 400, where);
+          assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_characters" }, where);
+        }
+      }
+      assert.deepEqual(methods(), [], `DB を読んだ・書いた：${methods().join(",")}`);
+      assert.equal(comments.length, 1, "保存した");
+    });
+
+    it(`${label}：JSON.stringify で送る`, async () => {
+      for (const [pos, place] of POSITIONS_86) {
+        for (const [wrapLabel, wrap] of WRAPS_86) {
+          const content = wrap(place(ch));
+          const where = `${label}/${pos}/${wrapLabel}`;
+          const res = await post({ lessonId: "l1a", content });
+          assert.equal(res.status, 400, where);
+          assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_characters" }, where);
+        }
+      }
+      assert.deepEqual(methods(), [], `DB を読んだ・書いた：${methods().join(",")}`);
+      assert.equal(comments.length, 1, "保存した");
+    });
+  }
+
+  it("前提：JSON.stringify は NUL・対になっていないサロゲートを \\u エスケープで書く（生の文字を送らない）", () => {
+    for (const [label, ch] of BAD_CHARS_86) {
+      const json = JSON.stringify({ content: `質問${ch}` });
+      if (ch === "\uD83D😀") {
+        // 後ろの 2 つは正しいペアなので生のまま。先頭の上位だけがエスケープされる
+        assert.ok(json.includes("\\ud83d"), `エスケープされていない：${label}`);
+        continue;
+      }
+      assert.ok(!hasRawUnsafe86(json), `生の文字のまま：${label}`);
+    }
+  });
+});
+
+describe("POST /api/comments：#86 の判定の優先順位", () => {
+  const BAD = "質問\\u0000です";
+
+  it("未ログインは 401（本文より先。DB に触れない）", async () => {
+    session = null;
+    const res = await post(undefined, `{"lessonId":"l1a","content":"${BAD}"}`);
+    assert.equal(res.status, 401);
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("invalid_lesson_id は invalid_characters より先（lessonId を先に見る）", async () => {
+    for (const lessonId of ["", 1, null, "x".repeat(65)]) {
+      const raw = JSON.stringify({ lessonId, content: PLACEHOLDER_86 }).replace(PLACEHOLDER_86, BAD);
+      const res = await post(undefined, raw);
+      assert.equal(res.status, 400, JSON.stringify(lessonId));
+      assert.equal((await res.json()).reason, "invalid_lesson_id", JSON.stringify(lessonId));
+    }
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("invalid_content（string でない）は invalid_characters より先", async () => {
+    for (const content of [["\u0000"], { a: "\uD800" }, 0, null]) {
+      const res = await post({ lessonId: "l1a", content });
+      assert.equal(res.status, 400, JSON.stringify(content));
+      assert.equal((await res.json()).reason, "invalid_content", JSON.stringify(content));
+    }
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("invalid_characters は invalid_parent_id より先", async () => {
+    for (const parentId of [1, "", "x".repeat(65), {}]) {
+      const res = await post({ lessonId: "l1a", content: "質問\uD800", parentId });
+      assert.equal(res.status, 400, JSON.stringify(parentId));
+      assert.equal((await res.json()).reason, "invalid_characters", JSON.stringify(parentId));
+    }
+    // 対照：正しい本文なら invalid_parent_id
+    const ctl = await post({ lessonId: "l1a", content: "質問", parentId: 1 });
+    assert.equal((await ctl.json()).reason, "invalid_parent_id", "前提：正しい本文なら invalid_parent_id");
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("invalid_characters は empty・too_long より先（空白だけ・見えない文字だけ・上限超えでも）", async () => {
+    const long = "あ".repeat(2001);
+    for (const content of ["  \u0000  ", `${ZWSP}\uDC00${ZWSP}`, `${IDEOGRAPHIC_SPACE}\uD800`, `${long}\u0000`, `\uDFFF${long}`]) {
+      const res = await post({ lessonId: "l1a", content });
+      assert.equal(res.status, 400, `長さ ${content.length}`);
+      assert.equal((await res.json()).reason, "invalid_characters", `長さ ${content.length}`);
+    }
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+
+  it("400 invalid_characters は 429 rate_limited より先（直近の投稿を読まない）", async () => {
+    addMine(ago(1 * SEC));
+    const ctl = await post({ lessonId: "l1a", content: "別の質問" });
+    assert.equal(ctl.status, 429, "前提：正しい本文なら 429");
+    calls = [];
+    const res = await post({ lessonId: "l1a", content: "別の質問\u0000" });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).reason, "invalid_characters");
+    assert.deepEqual(methods(), [], "直近の投稿を読んだ");
+  });
+
+  it("400 invalid_characters は 409 duplicate より先（仮に同じ本文が DB にあっても読まない）", async () => {
+    // 実際には保存できない本文だが、判定の順を確かめるため直近の投稿に置く
+    addMine(ago(40 * SEC), "質問\uD800");
+    addMine(ago(35 * SEC), "質問です");
+    const ctl = await post({ lessonId: "l1a", content: "質問です" });
+    assert.equal(ctl.status, 409, "前提：正しい本文の重複なら 409");
+    calls = [];
+    const res = await post({ lessonId: "l1a", content: "質問\uD800" });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).reason, "invalid_characters");
+    assert.deepEqual(methods(), [], "直近の投稿を読んだ");
+  });
+
+  it("400 invalid_characters は 404（レッスンがない）・403 course_locked より先", async () => {
+    for (const [lessonId, expected] of [
+      ["l_nope", 404],
+      ["l3a", 403],
+    ] as Array<[string, number]>) {
+      const ctl = await post({ lessonId, content: `対照の質問 ${lessonId}` });
+      assert.equal(ctl.status, expected, `前提：正しい本文なら ${expected}（${lessonId}）`);
+      calls = [];
+      const res = await post({ lessonId, content: "質問\uDC00" });
+      assert.equal(res.status, 400, lessonId);
+      assert.equal((await res.json()).reason, "invalid_characters", lessonId);
+      assert.deepEqual(methods(), [], `DB に触れた（${lessonId}）`);
+    }
+  });
+});
+
+describe("POST /api/comments：#86 正しい文字は 201 で本文をそのまま保存する", () => {
+  const GOOD: Array<[string, string]> = [
+    ["絵文字（サロゲートペア）", "質問\u{1F600}です"],
+    ["絵文字だけ", "\u{1F600}"],
+    ["結合文字（e + U+0301）", "cafe\u0301 の質問"],
+    ["濁点の結合文字（か + U+3099）", "か\u3099の質問"],
+    ["ZWJ の家族の絵文字", "家族 \u{1F468}\u200D\u{1F469}\u200D\u{1F467}"],
+    ["異体字セレクタ付きのハート", "❤\uFE0F ありがとう"],
+    ["国旗（地域指示子のペア）", "\u{1F1EF}\u{1F1F5} の質問"],
+    ["肌の色の修飾子", "\u{1F44D}\u{1F3FD}"],
+    ["面外の漢字（U+20BB7）", "\u{20BB7}野家"],
+    ["U+FFFD と U+FFFF", "置換\uFFFD\uFFFF"],
+  ];
+  for (const [label, content] of GOOD) {
+    it(label, async () => {
+      const res = await post({ lessonId: "l1a", content });
+      assert.equal(res.status, 201, label);
+      assert.equal((await res.json()).content, content, `応答の本文が変わった：${label}`);
+      assert.equal(writes().length, 1, "保存していない");
+      assert.equal((writes()[0].args.data as { content: string }).content, content, `保存した本文が変わった：${label}`);
+    });
+  }
+
+  it("エスケープの形の正しいペア（大文字・小文字の混在）も 201", async () => {
+    const res = await post(undefined, '{"lessonId":"l1a","content":"\\uD83D\\ude00\\u200d"}');
+    assert.equal(res.status, 201);
+    assert.equal((writes()[0].args.data as { content: string }).content, "\u{1F600}\u200D");
+  });
+
+  it("前後の空白は除いて保存し、中の正しい絵文字は変えない", async () => {
+    const res = await post({ lessonId: "l1a", content: ` \n\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\n ` });
+    assert.equal(res.status, 201);
+    assert.equal((writes()[0].args.data as { content: string }).content, "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}");
+  });
+});
+
+describe("POST /api/comments：#86 エスケープせずに生の文字を body に入れた場合（参考）", () => {
+  it("生の対になっていないサロゲートは UTF-8 にする時点で U+FFFD に置き換わり、201 で U+FFFD を保存する", async () => {
+    const raw = `{"lessonId":"l1a","content":"質問${"\uD800"}です"}`;
+    const res = await post(undefined, raw);
+    assert.equal(res.status, 201);
+    assert.equal((writes()[0].args.data as { content: string }).content, "質問\uFFFDです");
+  });
+
+  it("生の NUL は JSON として不正なので 400 Invalid JSON（DB に触れない）", async () => {
+    const raw = `{"lessonId":"l1a","content":"質問${"\u0000"}です"}`;
+    const res = await post(undefined, raw);
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "Invalid JSON" });
+    assert.deepEqual(methods(), [], "DB に触れた");
+  });
+});
+
+describe("POST /api/comments：lessonId に NUL・対になっていないサロゲートがあれば 400 invalid_lesson_id（#86）", () => {
+  for (const [label, raw] of [
+    ["\\u0000", '{"lessonId":"l1a\\u0000","content":"質問"}'],
+    ["\\ud800（上位だけ）", '{"lessonId":"l1a\\ud800","content":"質問"}'],
+    ["\\udc00（下位だけ）", '{"lessonId":"\\udc00l1a","content":"質問"}'],
+  ] as Array<[string, string]>) {
+    it(`${label}：DB に一度も触れない`, async () => {
+      assert.ok(!raw.includes("\u0000") && !/[\uD800-\uDFFF]/.test(raw), `ソースの JSON に生の文字が入っている：${label}`);
+      const res = await post(undefined, raw);
+      assert.equal(res.status, 400, label);
+      assert.deepEqual(await res.json(), { error: "Invalid request", reason: "invalid_lesson_id" }, label);
+      assert.deepEqual(methods(), [], `DB に触れた：${methods().join(",")}`);
+    });
+  }
+});

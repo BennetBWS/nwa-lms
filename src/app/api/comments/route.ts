@@ -98,7 +98,8 @@ export async function GET(request: Request) {
 // 判定の順（DB をなるべく読まない順。拒否の理由に他人の投稿の情報を含めない）：
 // 1. 未ログイン 401
 // 2. 受講生以外 403 forbidden_role（講師の回答は POST /api/admin/comments/[id]/replies に一本化）
-// 3. 入力検証 400（parseCreateComment）
+// 3. 入力検証 400（parseCreateComment。本文の NUL・対になっていないサロゲートは invalid_characters。#86）。
+//    id も同じく使えない文字を断る（parentId に含まれると 403 reply_not_allowed より先に 400 invalid_parent_id）
 // 4. parentId 付き 403 reply_not_allowed（受講生は返信できない。親の存在は確かめない）
 // 5. 自分の直近の投稿だけを読み、連投 409 duplicate / 429 rate_limited（comment-rate-limit.ts）
 // 6. レッスンがない 404、ロック中のコース 403 course_locked（lesson-access.ts）
