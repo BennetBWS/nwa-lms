@@ -251,6 +251,119 @@ function routesServing(url: string): Array<{ rel: string; path: string }> {
     .filter(({ rel }) => routeServes(toSegments(rel.split("/").slice(0, -1).join("/")), closed));
 }
 
+// ───────────── 画面（#81 Q2 のクイズ管理）から呼ぶ形 ─────────────
+// 画面は GET（一覧・詳細）と PATCH（問題の修正）だけを使う。パスは画面用の lib の 3 行だけに書き、
+// page.tsx はその定数・関数を authFetch の 1 つ目の引数としてだけ使う。閉じたメソッド（POST・PUT・DELETE）は使わない。
+
+/** パスを書いてよい画面用の lib（リポジトリからの相対） */
+const VIEW_LIB = "src/lib/admin-quiz-view.ts";
+
+/** VIEW_LIB の中で、パスを書いてよい行（前後の空白を除いた全文）。URL の定数・関数の 3 行だけ */
+const VIEW_LIB_URL_LINES = [
+  'export const ADMIN_QUIZ_LIST_URL = "/api/admin/quizzes";',
+  "return `/api/admin/quizzes/${encodeURIComponent(quizId)}`;",
+  "return `/api/admin/questions/${encodeURIComponent(questionId)}`;",
+];
+
+/** URL の定数・関数と、page.tsx で許す呼び方（GET は 2 つ目の引数なし、PATCH は method: "PATCH" だけ） */
+const VIEW_URL_HELPERS: Array<{ name: string; method: "GET" | "PATCH" }> = [
+  { name: "ADMIN_QUIZ_LIST_URL", method: "GET" },
+  { name: "adminQuizDetailUrl", method: "GET" },
+  { name: "adminQuestionUrl", method: "PATCH" },
+];
+
+const HELPER_NAME_RE = new RegExp(`(?<![\\w$])(?:${VIEW_URL_HELPERS.map((x) => x.name).join("|")})(?![\\w$])`, "g");
+
+/** source の open（"(" の位置）に対応する ")" の位置。コメント・文字列は blankCommentsAndStrings で消した code を渡す */
+function closingParen(code: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    const c = code[i];
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** 呼び出しの引数の文字列（"(" と ")" の中身）を、トップレベルの , で分ける */
+function splitTopLevelArgs(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < args.length; i++) {
+    const c = args[i];
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(args.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(args.slice(start));
+  return out.map((a) => a.trim()).filter((a) => a !== "");
+}
+
+type HelperUse = { name: string; line: number; ok: boolean; why: string };
+
+/**
+ * page.tsx の中の URL の定数・関数の使い方を調べる（import の行は除く）。
+ * 許すのは authFetch(<定数・関数の呼び出し>) と authFetch(<関数の呼び出し>, { method: "PATCH", ... }) だけ：
+ * - 1 つ目の引数がちょうどその定数・関数の呼び出しであること（URL に何かを足さない）
+ * - GET の定数・関数は 2 つ目の引数がないこと（既定の GET）
+ * - PATCH の関数は 2 つ目の引数のメソッドが "PATCH" だけであること（method をほかに書かない・変数にしない）
+ * 文字列の中身は original から読む（code はコメント・文字列を空白にしたもの）
+ */
+function helperUses(original: string): HelperUse[] {
+  const code = blankCommentsAndStrings(original);
+  const uses: HelperUse[] = [];
+  const lineOf = (i: number) => code.slice(0, i).split("\n").length;
+  for (let m = HELPER_NAME_RE.exec(code); m; m = HELPER_NAME_RE.exec(code)) {
+    const name = m[0];
+    const at = m.index;
+    const lineStart = code.lastIndexOf("\n", at) + 1;
+    const lineEnd = code.indexOf("\n", at);
+    const lineText = code.slice(lineStart, lineEnd < 0 ? code.length : lineEnd);
+    const line = lineOf(at);
+    // import { ... } の中（複数行の import の名前の行を含む）は使い方ではない
+    const before = code.slice(0, at);
+    const lastImport = before.lastIndexOf("import {");
+    if (lastImport >= 0 && before.indexOf("}", lastImport) < 0) continue;
+    const helper = VIEW_URL_HELPERS.find((x) => x.name === name)!;
+    // 直前が authFetch( であること
+    const head = code.slice(0, at).replace(/\s+$/, "");
+    if (!head.endsWith("authFetch(")) {
+      uses.push({ name, line, ok: false, why: `authFetch の 1 つ目の引数でない：${lineText.trim()}` });
+      continue;
+    }
+    const open = head.length - 1;
+    const close = closingParen(code, open);
+    if (close < 0) {
+      uses.push({ name, line, ok: false, why: "authFetch の閉じかっこが見つからない" });
+      continue;
+    }
+    const args = splitTopLevelArgs(code.slice(open + 1, close));
+    const originalArgs = splitTopLevelArgs(original.slice(open + 1, close));
+    const first = args[0] ?? "";
+    const firstOk = name === "ADMIN_QUIZ_LIST_URL" ? first === name : new RegExp(`^${name}\\([^()]*\\)$`).test(first);
+    if (!firstOk || args.length > 2) {
+      uses.push({ name, line, ok: false, why: `1 つ目の引数が定数・関数の呼び出しだけでない、または引数が多い：${first}` });
+      continue;
+    }
+    if (helper.method === "GET") {
+      uses.push({ name, line, ok: args.length === 1, why: args.length === 1 ? "" : "GET の URL に 2 つ目の引数（メソッドなど）を渡している" });
+      continue;
+    }
+    const init = originalArgs[1] ?? "";
+    const methods = Array.from(init.matchAll(/\bmethod\s*:\s*([^,}]+)/g), (x) => x[1].trim());
+    const ok = args.length === 2 && methods.length === 1 && methods[0] === '"PATCH"' && !/\.\.\./.test(init);
+    uses.push({ name, line, ok, why: ok ? "" : `PATCH 以外のメソッド・展開を含む：${init}` });
+  }
+  return uses;
+}
+
 describe("使っていない危険な書き込み API は閉じたまま（#81 Q3）", () => {
   it("exportedMethods は関数・const・export { } の形を拾う（検査の前提）", () => {
     const sample = [
@@ -382,15 +495,58 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.ok(exportedMethods(readFileSync(path, "utf8")).has("GET"), "admin/quizzes/route.ts に GET がない");
   });
 
-  // Q2 で画面から管理用のクイズ・問題の API（GET / PATCH）を呼ぶときは、閉じたメソッド（POST / PUT / DELETE）を
-  // 使っていないことを確かめてから、この検査と下の「テスト以外のコード」の検査の両方を更新する
-  it("画面（page.tsx）は管理用のクイズ・問題の API を呼んでいない", () => {
+  // #81 Q2：画面（クイズ管理）は GET（一覧・詳細）と PATCH（問題の修正）だけを、画面用の lib の URL の定数・関数で呼ぶ。
+  // 呼び出しを足す・変えるときは、閉じたメソッド（POST / PUT / DELETE）を使っていないことを確かめてから、ここと下の検査を更新する
+  it("画面（page.tsx）は管理用のクイズ・問題の API のパスを直書きしない", () => {
     const source = readFileSync(PAGE, "utf8");
     const hits = source
       .split("\n")
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
       .filter(({ text }) => /\/api\/admin\/(quizzes|questions)\b/.test(text));
-    assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API を参照している：${JSON.stringify(hits)}`);
+    assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API のパスを直書きしている：${JSON.stringify(hits)}`);
+  });
+
+  it("画面（page.tsx）は URL の定数・関数を authFetch の 1 つ目の引数としてだけ使い、GET と PATCH だけで呼ぶ", () => {
+    const uses = helperUses(readFileSync(PAGE, "utf8"));
+    const bad = uses.filter((u) => !u.ok);
+    assert.deepEqual(bad, [], `許していない呼び方がある：${JSON.stringify(bad)}`);
+    // 3 つとも使っている（検査が空振りしていない）。PATCH は問題の修正の 1 か所だけ
+    for (const { name } of VIEW_URL_HELPERS) {
+      assert.ok(uses.some((u) => u.name === name), `page.tsx が ${name} を使っていない（検査の前提）`);
+    }
+    assert.equal(uses.filter((u) => u.name === "adminQuestionUrl").length, 1, "問題の PATCH の呼び出しが 1 か所でない");
+  });
+
+  it("呼び方の検査は、閉じたメソッド・URL の組み立て・authFetch 以外での使い方を拾う（検査の前提）", () => {
+    const ok = [
+      "authFetch(ADMIN_QUIZ_LIST_URL).then(r => r);",
+      "authFetch(adminQuizDetailUrl(id));",
+      'authFetch(adminQuestionUrl(q.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });',
+      'import {\n  ADMIN_QUIZ_LIST_URL,\n  adminQuestionUrl,\n} from "@/lib/admin-quiz-view";',
+      "// コメントの adminQuestionUrl(id) は数えない",
+    ];
+    for (const source of ok) {
+      const bad = helperUses(source).filter((u) => !u.ok);
+      assert.deepEqual(bad, [], `正しい呼び方を拒んだ：${source}`);
+    }
+    const ng = [
+      'authFetch(adminQuestionUrl(id), { method: "DELETE" });',
+      'authFetch(adminQuestionUrl(id), { method: "PUT" });',
+      'authFetch(adminQuizDetailUrl(id), { method: "PUT" });',
+      'authFetch(ADMIN_QUIZ_LIST_URL, { method: "POST", body: "{}" });',
+      'authFetch(adminQuizDetailUrl(id) + "/questions", { method: "POST" });',
+      "authFetch(adminQuestionUrl(id), { method: m });",
+      'authFetch(adminQuestionUrl(id), { ...init, method: "PATCH" });',
+      'authFetch(adminQuestionUrl(id), { method: "PATCH", method: "DELETE" });',
+      "authFetch(adminQuestionUrl(id), init);",
+      "fetch(adminQuestionUrl(id), init);",
+      "const u = adminQuestionUrl(id);",
+      "const u = ADMIN_QUIZ_LIST_URL;",
+    ];
+    for (const source of ng) {
+      const uses = helperUses(source);
+      assert.ok(uses.length > 0 && uses.some((u) => !u.ok), `許していない呼び方を見落とした：${source}`);
+    }
   });
 
   it("参照の走査は、外した route ファイル以外の参照を拾う（検査の前提）", () => {
@@ -416,8 +572,9 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     }
   });
 
-  // Q2 で呼び出し元を足すときは、閉じたメソッドを使っていないことを確かめてから、この検査と上の page.tsx の検査の両方を更新する
-  it("テスト以外のコード（src・scripts・prisma）は管理用のクイズ・問題の API を参照していない", () => {
+  // #81 Q2：パスを書いてよいのは画面用の lib（VIEW_LIB）の URL の 3 行だけ。呼び出し元を足すときは、閉じたメソッドを
+  // 使っていないことを確かめてから、この検査と上の page.tsx の検査の両方を更新する
+  it("テスト以外のコード（src・scripts・prisma）は、画面用の lib の URL の 3 行のほかに管理用のクイズ・問題の API を参照していない", () => {
     const CODE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
     const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$|\.test-helpers\.ts$/;
     const files: string[] = [];
@@ -437,8 +594,50 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
       // 管理用のクイズ・問題の API 自身の route ファイル（src/app/api/admin/quizzes/・questions/ の下）は外す。
       // ログ・コメントに自分のパスを書く慣習があり、Q1 で PATCH /api/admin/questions/[id] を足すと落ちるため。
       // そのほかのファイルに出てくるパスは呼び出し元とみなす（外す範囲は isOwnAdminQuizRoute と上の前提の検査を参照）
-      hits.push(...adminQuizApiRefs(relative(ROOT, f).split(sep).join("/"), readFileSync(f, "utf8")));
+      const rel = relative(ROOT, f).split(sep).join("/");
+      const source = readFileSync(f, "utf8");
+      const refs = adminQuizApiRefs(rel, source);
+      if (rel !== VIEW_LIB) {
+        hits.push(...refs);
+        continue;
+      }
+      // 画面用の lib は、URL の 3 行だけを許す（コメントにもパスを書かない）
+      const lines = source.split("\n");
+      hits.push(...refs.filter((r) => !VIEW_LIB_URL_LINES.includes(lines[Number(r.split(":").pop()) - 1].trim())));
     }
     assert.deepEqual(hits, [], `管理用のクイズ・問題の API の参照が残っている：${JSON.stringify(hits)}`);
+  });
+
+  it("画面用の lib は URL の 3 行をそれぞれ 1 回だけ持ち、メソッドの名前・fetch を書かない", () => {
+    const source = readFileSync(join(ROOT, VIEW_LIB), "utf8");
+    const lines = source.split("\n").map((l) => l.trim());
+    for (const want of VIEW_LIB_URL_LINES) {
+      assert.equal(lines.filter((l) => l === want).length, 1, `${VIEW_LIB} に ${want} が 1 行だけない`);
+    }
+    const code = blankCommentsAndStrings(source);
+    assert.doesNotMatch(source, /["'`](?:POST|PUT|DELETE|PATCH|GET)["'`]/, `${VIEW_LIB} がメソッドの名前を文字列で書いている（メソッドは page.tsx の呼び出しで決める）`);
+    assert.doesNotMatch(code, /\bmethod\b|(?<![\w$.])fetch\s*\(|authFetch/, `${VIEW_LIB} が通信をしている`);
+  });
+
+  it("URL の定数・関数を使うのは page.tsx と画面用の lib だけ（テストを除く）", () => {
+    const CODE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
+    const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$|\.test-helpers\.ts$/;
+    const users: string[] = [];
+    const walk = (dir: string) => {
+      if (!existsSync(dir)) return;
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === ".next") continue;
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (CODE.test(name) && !TEST.test(name)) {
+          const code = blankCommentsAndStrings(readFileSync(p, "utf8"));
+          HELPER_NAME_RE.lastIndex = 0;
+          if (HELPER_NAME_RE.test(code)) users.push(relative(ROOT, p).split(sep).join("/"));
+          HELPER_NAME_RE.lastIndex = 0;
+        }
+      }
+    };
+    for (const d of ["src", "scripts", "prisma"]) walk(join(ROOT, d));
+    assert.deepEqual(users.sort(), ["src/app/page.tsx", VIEW_LIB].sort(), "page.tsx と画面用の lib のほかに URL の定数・関数を使うファイルがある");
   });
 });

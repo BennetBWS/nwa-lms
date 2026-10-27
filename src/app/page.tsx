@@ -21,7 +21,8 @@ import {
   Home, BookOpen, Play, Bell, MessageSquare, Settings, Users, BarChart3,
   ChevronRight, Clock, FileText, HelpCircle, Lock, Search, ArrowLeft,
   Plus, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
-  LogOut, Target, Zap, Sparkles, ArrowUpRight, User
+  LogOut, Target, Zap, Sparkles, ArrowUpRight, User,
+  AlertTriangle, Pencil, ChevronUp, ChevronDown, Trash2
 } from "lucide-react";
 import {
   DEFAULT_STUDENT_TAB,
@@ -128,6 +129,43 @@ import {
   toQuizCourseItems,
   toQuizTakeView,
 } from "@/lib/student-quizzes";
+// #81 Q2 クイズ管理（AdminQuiz）。revision の計算（admin-quiz-revision・node:crypto）は import しない
+import {
+  ADMIN_QUIZ_LIST_URL,
+  EDIT_UNCHANGED_MESSAGE,
+  QUIZ_DETAIL_LOAD_FAILED_MESSAGE,
+  QUIZ_DETAIL_NOT_FOUND_MESSAGE,
+  QUIZ_EDIT_SCOPE_NOTE,
+  QUIZ_LIST_EMPTY_MESSAGE,
+  QUIZ_LIST_LOAD_FAILED_MESSAGE,
+  QUIZ_QUESTIONS_EMPTY_MESSAGE,
+  QUIZ_REFRESH_FAILED_MESSAGE,
+  SAVE_UNCERTAIN_MESSAGE,
+  addDraftOption,
+  adminQuestionUrl,
+  adminQuizDetailUrl,
+  applyQuestionUpdate,
+  canAddOption,
+  canRemoveOption,
+  changedFieldsLabel,
+  editDialogTitle,
+  initialQuestionDraft,
+  interpretQuestionPatchResponse,
+  moveDraftOption,
+  questionEditConfirmLines,
+  questionEditOutcome,
+  questionSavedMessage,
+  quizDetailMeta,
+  quizStatusBadge,
+  readAdminQuizDetail,
+  readAdminQuizList,
+  removeDraftOption,
+  setDraftCorrect,
+  setDraftOptionText,
+  setDraftQuestion,
+  toAdminQuizGroups,
+  toQuestionView,
+} from "@/lib/admin-quiz-view";
 
 // ═══════════════════════════════════════════
 // COURSE ICONS — Tech logos as SVG components
@@ -3666,6 +3704,546 @@ const AdminQuestions = () => {
   );
 };
 
+// ═══════════════════════════════════════════
+// ADMIN QUIZ — クイズ管理（#81 Q2）
+// ═══════════════════════════════════════════
+// クイズの一覧（GET）→ 詳細（GET）→ 1 問ずつの編集（PATCH）。URL は src/lib/admin-quiz-view.ts の定数・関数だけを使い、ここにはパスを書かない
+// （admin-closed-apis.test.ts が page.tsx のパスの直書きと、GET・PATCH 以外での呼び出しを検査している）。
+// 文言・判定・送る body の組み立ては src/lib/admin-quiz-view.ts。ここは表示と通信の順だけを持つ。
+// 生徒管理・質問対応と同じ作り：authFetch と classifyAuthFailure、セッション切れの ref、送信中の ref と disabled、role="status"
+const AdminQuiz = () => {
+  // 一覧（readAdminQuizList の結果）。null は未取得
+  const [quizRows, setQuizRows] = useState(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [listFailed, setListFailed] = useState(false);
+  // 詳細。detailId が null なら一覧
+  const [detailId, setDetailId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  // null | "not_found" | "failed"
+  const [detailError, setDetailError] = useState(null);
+  // 表示中の詳細を残したまま読み直している（409・結果不明・404 のあと）。読み直しに失敗したら refreshFailed
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  // 保存の結果の知らせ（role="status"）
+  const [notice, setNotice] = useState("");
+  // 編集ダイアログ：{ original（開いたときの問題。revision もこの値を送る）, number } | null
+  const [editing, setEditing] = useState(null);
+  // 下書き（QuestionDraft）
+  const [draft, setDraft] = useState(null);
+  // "edit"（入力）| "confirm"（保存の前の確認）
+  const [editStep, setEditStep] = useState("edit");
+  // 確認の段で送る内容：{ body, changed } | null
+  const [pendingEdit, setPendingEdit] = useState(null);
+  const [editError, setEditError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // セッションが切れたら authFetch がサインアウトして /login へ移る。読み込み中のままにし、もう読まない・送らない
+  const sessionExpired = useRef(false);
+  // 一覧の読み込みは 1 本ずつ（再読み込みの連打など）
+  const listInFlight = useRef(false);
+  // 詳細の取得ごとに 1 増やす。閉じた後・別のクイズに切り替えた後に届いた応答は捨てる
+  const detailSeq = useRef(0);
+  // 保存中。ボタンの disabled が反映される前の連打でも二重に送らないよう ref で判定する
+  const savingRef = useRef(false);
+  // 保存したあと一覧に戻るときは一覧を読み直す（状態・受験数が変わりうる）
+  const listStale = useRef(false);
+  // 編集ダイアログを開いたボタン。閉じたらここにフォーカスを戻す
+  const editTriggerRef = useRef(null);
+  // 「一覧に戻る」のあと、この id のタイトルのボタンにフォーカスを戻す（戻った直後の 1 回だけ）
+  const returnFocusIdRef = useRef(null);
+  const titleButtonEls = useRef(new Map());
+  const listHeadingRef = useRef(null);
+  const detailHeadingRef = useRef(null);
+
+  // 一覧を読む。読み始めたら true（セッション切れ・読み込み中なら false）
+  const loadList = () => {
+    if (sessionExpired.current || listInFlight.current) return false;
+    listInFlight.current = true;
+    setListLoading(true);
+    setListFailed(false);
+    let expired = false;
+    authFetch(ADMIN_QUIZ_LIST_URL).then(res => {
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { expired = true; sessionExpired.current = true; return null; }
+      if (!res.ok || res.redirected) return null;
+      return res.json();
+    }).then(data => {
+      if (expired) return;
+      const list = readAdminQuizList(data);
+      if (list) setQuizRows(list);
+      else setListFailed(true);
+    }).catch(() => {
+      if (!expired) setListFailed(true);
+    }).finally(() => {
+      if (expired) return;
+      listInFlight.current = false;
+      setListLoading(false);
+    });
+    return true;
+  };
+
+  useEffect(() => { loadList(); }, []);
+
+  // 詳細を読む。keep：表示中の詳細を残したまま読み直す（保存のあと）。失敗しても残し、refreshFailed で知らせる
+  const loadDetail = async (id, keep = false) => {
+    if (sessionExpired.current) return;
+    const seq = ++detailSeq.current;
+    if (keep) {
+      setRefreshing(true);
+      setRefreshFailed(false);
+    } else {
+      setDetailId(id);
+      setDetail(null);
+      setDetailError(null);
+      setDetailLoading(true);
+      setRefreshing(false);
+      setRefreshFailed(false);
+    }
+    let view = null;
+    let outcome = "failed";
+    try {
+      const res = await authFetch(adminQuizDetailUrl(id));
+      if (seq !== detailSeq.current) return;
+      if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired.current = true; return; }
+      if (res.status === 404 && !res.redirected) {
+        outcome = "not_found";
+      } else if (res.ok && !res.redirected) {
+        const body = await res.json().catch(() => null);
+        if (seq !== detailSeq.current) return;
+        view = readAdminQuizDetail(body, id);
+        if (view) outcome = null;
+      }
+    } catch {
+      if (seq !== detailSeq.current) return;
+    }
+    if (view) {
+      setDetail(view);
+      setDetailError(null);
+    } else if (keep && outcome === "failed") {
+      setRefreshFailed(true);
+    } else {
+      setDetail(null);
+      setDetailError(outcome);
+    }
+    setDetailLoading(false);
+    setRefreshing(false);
+  };
+
+  const openDetail = (id) => {
+    if (sessionExpired.current) return;
+    setNotice("");
+    loadDetail(id);
+  };
+
+  const closeDetail = () => {
+    if (savingRef.current) return;
+    detailSeq.current++;
+    returnFocusIdRef.current = detailId;
+    setDetailId(null);
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(false);
+    setRefreshing(false);
+    setRefreshFailed(false);
+    setNotice("");
+    if (listStale.current && loadList()) listStale.current = false;
+  };
+
+  // 詳細を開いたら詳細の見出しへ、一覧に戻ったら開いていたクイズのタイトルのボタンへフォーカスを移す（生徒管理と同じ）
+  useEffect(() => {
+    if (detailId !== null) {
+      const heading = detailHeadingRef.current;
+      if (heading && heading.isConnected) heading.focus();
+      return;
+    }
+    const id = returnFocusIdRef.current;
+    if (id === null) return;
+    returnFocusIdRef.current = null;
+    const el = titleButtonEls.current.get(id);
+    if (el && el.isConnected) {
+      el.focus();
+      return;
+    }
+    const heading = listHeadingRef.current;
+    if (heading && heading.isConnected) heading.focus();
+  }, [detailId]);
+
+  // ── 編集ダイアログ ──
+
+  // trigger：押した「編集」ボタン（閉じたときのフォーカスの戻り先）
+  const openEdit = (question, number, trigger = null) => {
+    // 読み直しの途中は開かない（古い revision で編集させない）
+    if (sessionExpired.current || savingRef.current || refreshing) return;
+    editTriggerRef.current = trigger;
+    setEditing({ original: question, number });
+    setDraft(initialQuestionDraft(question));
+    setEditStep("edit");
+    setPendingEdit(null);
+    setEditError("");
+    setNotice("");
+  };
+
+  const closeEdit = () => {
+    if (savingRef.current) return;
+    setEditing(null);
+    setDraft(null);
+    setPendingEdit(null);
+    setEditError("");
+    setEditStep("edit");
+  };
+
+  // ダイアログが開いている間だけ Esc で閉じる（保存中は closeEdit が閉じない）
+  useEffect(() => {
+    if (!editing) return;
+    const closeOnEscape = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      closeEdit();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [editing, saving]);
+
+  // ダイアログが閉じたら、開いたボタンにフォーカスを戻す（ボタンが画面にないときは何もしない）
+  const editOpen = editing !== null;
+  useEffect(() => {
+    if (editOpen) return;
+    const trigger = editTriggerRef.current;
+    editTriggerRef.current = null;
+    if (trigger && trigger.isConnected) trigger.focus();
+  }, [editOpen]);
+
+  const updateDraft = (fn) => {
+    setDraft(prev => prev ? fn(prev) : prev);
+    setEditError("");
+  };
+
+  // 「保存」：送る内容を決めて確認の段へ進む（変わった項目と revision だけ。正解の位置は並べ替え・削除のあとの位置）
+  const goConfirm = () => {
+    if (!editing || !draft || savingRef.current) return;
+    const outcome = questionEditOutcome(editing.original, draft);
+    if (outcome.kind === "unchanged") {
+      setEditError(EDIT_UNCHANGED_MESSAGE);
+      return;
+    }
+    if (outcome.kind === "invalid") {
+      setEditError(outcome.message);
+      return;
+    }
+    setPendingEdit({ body: outcome.body, changed: outcome.changed });
+    setEditError("");
+    setEditStep("confirm");
+  };
+
+  const backToEdit = () => {
+    if (savingRef.current) return;
+    setEditStep("edit");
+  };
+
+  // 確認の段の「保存する」。保存中は二重に送らない。
+  // 成功：ダイアログを閉じて、詳細のその問題を応答の内容（新しい revision）で置き換える。
+  // 409 edit_conflict・404・結果不明（通信エラーなど）：ダイアログを閉じて知らせ、詳細を読み直す。
+  // それ以外の失敗（400 など）：ダイアログの入力の段に文言を出し、下書きは残す
+  const handleSave = async () => {
+    if (sessionExpired.current || savingRef.current || !editing || !pendingEdit) return;
+    const quizId = detailId;
+    const { original, number } = editing;
+    const { body: patch } = pendingEdit;
+    savingRef.current = true;
+    setSaving(true);
+    setEditError("");
+    let reload = false;
+    try {
+      let outcome;
+      try {
+        const res = await authFetch(adminQuestionUrl(original.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+        if (classifyAuthFailure({ status: res.status, redirected: res.redirected, url: res.url }) === "expired") { sessionExpired.current = true; return; }
+        // 本文が JSON でない（ゲートウェイのエラーページなど）ときは null とし、ステータスだけで扱いを決める
+        const data = await res.json().catch(() => null);
+        outcome = interpretQuestionPatchResponse({ ok: res.ok, status: res.status, redirected: res.redirected, body: data, questionId: original.id });
+      } catch {
+        outcome = { kind: "uncertain", message: SAVE_UNCERTAIN_MESSAGE };
+      }
+      if (outcome.kind === "error") {
+        setEditError(outcome.message);
+        setEditStep("edit");
+        return;
+      }
+      setEditing(null);
+      setDraft(null);
+      setPendingEdit(null);
+      setEditStep("edit");
+      listStale.current = true;
+      if (outcome.kind === "success") {
+        setDetail(prev => prev && prev.id === quizId ? applyQuestionUpdate(prev, outcome) : prev);
+        setNotice(questionSavedMessage(number, outcome.changed));
+      } else {
+        setNotice(outcome.message);
+        reload = true;
+      }
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+    if (reload && quizId !== null) loadDetail(quizId, true);
+  };
+
+  const adminFont = "var(--font-sora), 'Sora', sans-serif";
+  const sectionTitle = { fontSize: 15, fontWeight: 700, color: T.dark, margin: 0, fontFamily: adminFont };
+  const statusBadgeEl = (badge) => badge && (
+    <Badge variant="secondary" title={badge.description} style={{ fontSize: 10, fontWeight: 700, background: `${T.warning}14`, color: T.warning, border: "none", whiteSpace: "nowrap", flexShrink: 0 }}>{badge.label}</Badge>
+  );
+  const reloadButtonStyle = { marginTop: 14, background: T.accent, color: "#fff", border: "none", borderRadius: 10, fontWeight: 600, fontFamily: adminFont, fontSize: 12, padding: "6px 15px" };
+  const thStyle = { padding: "10px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: adminFont, borderTop: `1px solid ${T.border}`, borderBottom: `1px solid ${T.border}`, whiteSpace: "nowrap" };
+  const tdStyle = { padding: "12px 16px", fontSize: 13, color: T.textSecondary, borderBottom: `1px solid ${T.borderSubtle}`, verticalAlign: "middle" };
+  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" };
+
+  const spinner = (
+    <div style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", color: T.textMuted }}>
+      <div style={{ width: 24, height: 24, border: `2px solid ${T.border}`, borderTopColor: T.accent, borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+      <div style={{ fontSize: 13, fontFamily: adminFont }}>Loading...</div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
+  let body;
+  if (detailId !== null) {
+    // ── 詳細 ──
+    let detailBody;
+    if (detailLoading) {
+      detailBody = spinner;
+    } else if (detailError === "not_found") {
+      detailBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center", fontSize: 13.5, color: T.textPrimary }}>{QUIZ_DETAIL_NOT_FOUND_MESSAGE}</div>
+      );
+    } else if (detailError || !detail) {
+      detailBody = (
+        <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: adminFont }}>{QUIZ_DETAIL_LOAD_FAILED_MESSAGE}</div>
+          <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+          <Button size="sm" onClick={() => loadDetail(detailId)} disabled={detailLoading} style={reloadButtonStyle}>
+            再読み込み
+          </Button>
+        </div>
+      );
+    } else {
+      const badge = quizStatusBadge(detail.status);
+      detailBody = (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: "22px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <h3 style={{ fontSize: 20, fontWeight: 800, color: T.dark, margin: 0, fontFamily: adminFont, overflowWrap: "anywhere" }}>{detail.title}</h3>
+              {statusBadgeEl(badge)}
+            </div>
+            <div style={{ fontSize: 12.5, color: T.textMuted, marginTop: 6, fontFamily: adminFont, overflowWrap: "anywhere" }}>{quizDetailMeta(detail)}</div>
+            {badge && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginTop: 10, fontSize: 12.5, color: T.warning }}>
+                <AlertTriangle size={14} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} /> <span>{badge.description}</span>
+              </div>
+            )}
+            <div style={{ fontSize: 12, color: T.textMuted, marginTop: 10 }}>{QUIZ_EDIT_SCOPE_NOTE}</div>
+            {refreshing && <div style={{ fontSize: 12, color: T.textMuted, marginTop: 10 }}>最新の内容を読み込んでいます...</div>}
+            {refreshFailed && (
+              <div role="alert" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: T.danger }}>
+                <span>{QUIZ_REFRESH_FAILED_MESSAGE}</span>
+                <Button size="sm" variant="outline" onClick={() => loadDetail(detailId, true)} disabled={refreshing} style={{ borderRadius: 10, fontWeight: 600, fontFamily: adminFont, fontSize: 12, padding: "4px 12px" }}>
+                  再読み込み
+                </Button>
+              </div>
+            )}
+          </div>
+          {detail.questions.length === 0 ? (
+            <div style={{ ...glassStyle(), borderRadius: 20, padding: "24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{QUIZ_QUESTIONS_EMPTY_MESSAGE}</div>
+          ) : detail.questions.map((q, i) => {
+            const v = toQuestionView(q, i);
+            return (
+              <div key={q.id} style={{ ...glassStyle(), borderRadius: 18, padding: "18px 24px", borderLeft: `4px solid ${v.warning ? T.warning : T.accent}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: T.accent, fontFamily: adminFont }}>問題 {v.number}</span>
+                  {/* 読み直しの途中は aria-disabled（disabled にすると、閉じたダイアログからフォーカスを戻せない） */}
+                  <Button size="sm" variant="outline" aria-label={`問題 ${v.number} を編集`} aria-disabled={refreshing ? true : undefined} disabled={editOpen || saving} onClick={e => openEdit(q, v.number, e.currentTarget)} style={{ borderRadius: 8, fontSize: 12, gap: 4, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    <Pencil size={13} aria-hidden="true" /> 編集
+                  </Button>
+                </div>
+                {v.warning && (
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: 10, borderRadius: 8, background: `${T.warning}10`, color: T.warning, fontSize: 12.5, marginBottom: 10 }}>
+                    <AlertTriangle size={14} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} /> <span>{v.warning}</span>
+                  </div>
+                )}
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: T.dark, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif" }}>{v.question}</div>
+                {v.options && (
+                  <ol style={{ listStyle: "none", margin: "12px 0 0", padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {v.options.map((o, oi) => (
+                      <li key={oi} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, border: `1px solid ${o.correct ? `${T.success}50` : T.borderSubtle}`, background: o.correct ? `${T.success}0A` : "transparent", fontSize: 13, color: T.textPrimary }}>
+                        {o.correct ? (
+                          <CheckCircle2 size={15} aria-hidden="true" style={{ color: T.success, flexShrink: 0 }} />
+                        ) : (
+                          <span aria-hidden="true" style={{ width: 13, height: 13, borderRadius: "50%", border: `2px solid ${T.textMuted}`, opacity: 0.4, flexShrink: 0, margin: "0 1px" }} />
+                        )}
+                        <span style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{o.text}</span>
+                        {o.correct && <Badge variant="secondary" style={{ fontSize: 10, fontWeight: 700, background: `${T.success}12`, color: T.success, border: "none", flexShrink: 0 }}>正解</Badge>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    const detailRowTitle = (quizRows || []).find(r => r.id === detailId)?.title;
+    body = (
+      <div>
+        <h2 ref={detailHeadingRef} tabIndex={-1} className="sr-only">{detailRowTitle ? `${detailRowTitle} の詳細` : "クイズの詳細"}</h2>
+        <Button size="sm" variant="outline" onClick={closeDetail} disabled={editOpen || saving} style={{ borderRadius: 10, fontSize: 12, gap: 4, marginBottom: 16 }}>
+          <ArrowLeft size={14} aria-hidden="true" /> 一覧に戻る
+        </Button>
+        {detailBody}
+      </div>
+    );
+  } else if (quizRows === null && listLoading) {
+    body = spinner;
+  } else if (quizRows === null || listFailed) {
+    body = (
+      <div role="alert" style={{ ...glassStyle(), borderRadius: 20, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.dark, fontFamily: adminFont }}>{QUIZ_LIST_LOAD_FAILED_MESSAGE}</div>
+        <div style={{ fontSize: 12, color: T.textMuted, marginTop: 6 }}>時間をおいて、もう一度お試しください。</div>
+        <Button size="sm" onClick={loadList} disabled={listLoading} style={reloadButtonStyle}>
+          再読み込み
+        </Button>
+      </div>
+    );
+  } else {
+    // ── 一覧（コースごとの表） ──
+    const groups = toAdminQuizGroups(quizRows);
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <h2 ref={listHeadingRef} tabIndex={-1} className="sr-only">クイズの一覧</h2>
+        {groups.length === 0 && (
+          <div style={{ ...glassStyle(), borderRadius: 20, padding: "24px", textAlign: "center", fontSize: 13, color: T.textMuted }}>{QUIZ_LIST_EMPTY_MESSAGE}</div>
+        )}
+        {groups.map((g, gi) => (
+          <section key={g.key} aria-labelledby={`admin-quiz-group-${gi}`} style={{ ...glassStyle(), borderRadius: 20, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 12px" }}>
+              <h3 id={`admin-quiz-group-${gi}`} style={sectionTitle}>{g.courseName}</h3>
+              {g.noCourse && <div style={{ fontSize: 12, color: T.textMuted, marginTop: 4 }}>振り分け先のコースがないクイズです。受講生の一覧には出ません。</div>}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th scope="col" style={thStyle}>種類</th>
+                    <th scope="col" style={thStyle}>タイトル</th>
+                    <th scope="col" style={thStyle}>レッスン</th>
+                    <th scope="col" style={{ ...thStyle, textAlign: "right" }}>問題数</th>
+                    <th scope="col" style={{ ...thStyle, textAlign: "right" }}>受験数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map(r => (
+                    <tr key={r.id}>
+                      <td style={{ ...tdStyle, whiteSpace: "nowrap", fontSize: 12 }}>{r.typeLabel}</td>
+                      <td style={tdStyle}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" onClick={() => openDetail(r.id)} title="詳細を表示"
+                            ref={el => { if (el) titleButtonEls.current.set(r.id, el); else titleButtonEls.current.delete(r.id); }}
+                            style={{ border: "none", background: "transparent", padding: 0, cursor: "pointer", textAlign: "left", fontSize: 13.5, fontWeight: 600, color: T.textPrimary, textDecoration: "underline", textDecorationColor: `${T.textMuted}60`, textUnderlineOffset: 3, fontFamily: "inherit", overflowWrap: "anywhere" }}>
+                            {r.title}
+                          </button>
+                          {statusBadgeEl(r.badge)}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, overflowWrap: "anywhere" }}>{r.lessonLabel}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontFamily: adminFont }}>{r.questionCount}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontFamily: adminFont }}>{r.attemptCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  }
+
+  const editOutcome = editing && draft ? questionEditOutcome(editing.original, draft) : null;
+  const editUnchanged = editOutcome !== null && editOutcome.kind === "unchanged";
+  const confirmLines = pendingEdit && detail ? questionEditConfirmLines(pendingEdit.changed, detail.attemptCount) : [];
+
+  return (
+    <ScrollArea style={{ height: "100%" }}>
+      <div className="nwa-page-content" style={{ padding: "36px 40px 48px", maxWidth: 1160 }}>
+        <FadeIn>
+          <div style={{ marginBottom: 28 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: T.accent, textTransform: "uppercase", letterSpacing: "0.12em", fontFamily: adminFont }}>Admin</span>
+            <h1 style={{ fontFamily: adminFont, fontSize: 34, fontWeight: 800, color: T.dark, margin: "4px 0 0", letterSpacing: "-0.04em" }}>クイズ管理</h1>
+          </div>
+        </FadeIn>
+        {/* 保存の結果の知らせ（成功・409・結果不明）。領域は常に置く */}
+        <div role="status" aria-live="polite" style={{ fontSize: 12.5, color: T.textSecondary, marginBottom: notice ? 14 : 0 }}>{notice}</div>
+        {body}
+        {/* 問題の編集ダイアログ。生徒管理・質問対応の確認ダイアログと同じ作り（背景のクリックでは閉じない：下書きを失わないため） */}
+        {editing && draft && (
+          <ModalPortal>
+          <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="nwa-quiz-edit-title" aria-describedby={editStep === "confirm" ? "nwa-quiz-edit-confirm" : undefined} onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 560, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
+              <h3 id="nwa-quiz-edit-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>{editDialogTitle(editing.number)}</h3>
+              {editStep === "confirm" && pendingEdit ? (
+                <div>
+                  <div id="nwa-quiz-edit-confirm" style={{ fontSize: 13.5, lineHeight: 1.7, color: T.textPrimary, marginBottom: 20 }}>
+                    <p style={{ margin: "0 0 8px" }}>この内容で保存しますか？</p>
+                    <p style={{ margin: "0 0 8px" }}>変更する項目：{changedFieldsLabel(pendingEdit.changed)}</p>
+                    {confirmLines.map(line => (
+                      <p key={line} style={{ margin: "0 0 8px", padding: "8px 12px", borderRadius: 8, background: `${T.warning}10`, color: T.textPrimary }}>{line}</p>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Button key="confirm-back" variant="outline" autoFocus onClick={backToEdit} disabled={saving} style={{ flex: 1, borderRadius: 10 }}>戻る</Button>
+                    <Button key="confirm-save" onClick={handleSave} disabled={saving} style={{ flex: 1, background: T.accent, borderRadius: 10 }}>{saving ? "保存中..." : "保存する"}</Button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label htmlFor="nwa-quiz-edit-question" style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, display: "block", marginBottom: 4 }}>問題文</label>
+                    <textarea id="nwa-quiz-edit-question" value={draft.question} onChange={e => updateDraft(d => setDraftQuestion(d, e.target.value))} rows={4} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} />
+                  </div>
+                  <fieldset style={{ border: "none", margin: "0 0 16px", padding: 0 }}>
+                    <legend style={{ fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6, padding: 0 }}>選択肢と正解（2〜10 件。正解を 1 つ選んでください）</legend>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {draft.options.map((o, i) => (
+                        <div key={o.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input type="radio" name="nwa-quiz-edit-correct" checked={draft.correctKey === o.key} onChange={() => updateDraft(d => setDraftCorrect(d, o.key))} aria-label={`選択肢 ${i + 1} を正解にする`} style={{ flexShrink: 0, width: 16, height: 16, accentColor: T.success }} />
+                          <input type="text" value={o.text} onChange={e => updateDraft(d => setDraftOptionText(d, o.key, e.target.value))} aria-label={`選択肢 ${i + 1}`} style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "8px 12px", fontSize: 13.5 }} />
+                          <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を上へ`} disabled={i === 0} onClick={() => updateDraft(d => moveDraftOption(d, o.key, -1))} style={{ padding: "4px 6px", flexShrink: 0 }}><ChevronUp size={14} aria-hidden="true" /></Button>
+                          <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を下へ`} disabled={i === draft.options.length - 1} onClick={() => updateDraft(d => moveDraftOption(d, o.key, 1))} style={{ padding: "4px 6px", flexShrink: 0 }}><ChevronDown size={14} aria-hidden="true" /></Button>
+                          <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を削除`} disabled={!canRemoveOption(draft)} onClick={() => updateDraft(d => removeDraftOption(d, o.key))} style={{ padding: "4px 6px", flexShrink: 0, color: T.danger }}><Trash2 size={14} aria-hidden="true" /></Button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button size="sm" variant="outline" disabled={!canAddOption(draft)} onClick={() => updateDraft(addDraftOption)} style={{ marginTop: 10, borderRadius: 10, fontSize: 12, gap: 4 }}>
+                      <Plus size={14} aria-hidden="true" /> 選択肢を追加
+                    </Button>
+                  </fieldset>
+                  {editError && <div role="alert" style={{ padding: 10, borderRadius: 8, background: `${T.danger}10`, color: T.danger, fontSize: 13, marginBottom: 12 }}>{editError}</div>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Button key="edit-cancel" variant="outline" autoFocus onClick={closeEdit} disabled={saving} style={{ flex: 1, borderRadius: 10 }}>キャンセル</Button>
+                    <Button key="edit-next" onClick={goConfirm} disabled={saving || editUnchanged} aria-describedby={editUnchanged ? "nwa-quiz-edit-unchanged" : undefined} style={{ flex: 1, background: T.accent, borderRadius: 10 }}>保存</Button>
+                  </div>
+                  {editUnchanged && <div id="nwa-quiz-edit-unchanged" style={{ fontSize: 11, color: T.textMuted, marginTop: 8 }}>{EDIT_UNCHANGED_MESSAGE}</div>}
+                </div>
+              )}
+            </div>
+          </div>
+          </ModalPortal>
+        )}
+      </div>
+    </ScrollArea>
+  );
+};
+
 const AdminCourses = () => {
   const [apiCourses, setApiCourses] = useState([]);
   useEffect(() => {
@@ -3919,7 +4497,7 @@ export default function NWALearningPlatform() {
     "admin-questions": <AdminQuestions />,
     "admin-courses": <AdminCourses />,
     "admin-lessons": <Placeholder title="レッスン管理" desc="レッスンの作成・編集・並び替え（管理APIは実装済み）" />,
-    "admin-quiz": <Placeholder title="クイズ管理" desc="クイズの作成・編集・採点設定（管理APIは実装済み）" />,
+    "admin-quiz": <AdminQuiz />,
     "settings": <SettingsPage />,
   };
 

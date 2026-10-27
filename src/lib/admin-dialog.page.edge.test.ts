@@ -368,9 +368,12 @@ describe("AdminStudents：招待ダイアログの挙動が Portal 化で変わ�
 });
 
 describe("page.tsx：ModalPortal の使われ方", () => {
-  it("ModalPortal は AdminStudents の 2 つのダイアログと AdminQuestions の削除の確認（#47）だけで使う（AdminDashboard には残っていない）", () => {
-    assert.equal(src.split("<ModalPortal>").length - 1, 3);
-    assert.equal(src.split("</ModalPortal>").length - 1, 3);
+  it("ModalPortal は AdminStudents の 2 つのダイアログと AdminQuestions の削除の確認（#47）と AdminQuiz の問題の編集（#81 Q2）だけで使う（AdminDashboard には残っていない）", () => {
+    assert.equal(src.split("<ModalPortal>").length - 1, 4);
+    assert.equal(src.split("</ModalPortal>").length - 1, 4);
+    const quiz = component("AdminQuiz");
+    assert.equal(quiz.split("<ModalPortal>").length - 1, 1);
+    assert.equal(quiz.split("</ModalPortal>").length - 1, 1);
     assert.equal(admin.split("<ModalPortal>").length - 1, 2);
     const questions = component("AdminQuestions");
     assert.equal(questions.split("<ModalPortal>").length - 1, 1);
