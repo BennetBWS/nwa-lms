@@ -102,7 +102,7 @@ describe("POST /api/auth/forgot-password：DB に渡せない email（#87）", (
     });
   }
 
-  it("email がない・body が JSON の null / 数値 / 配列：同じ 400（500 にならない）", async () => {
+  it("email がない・body が JSON の数値 / 配列：同じ 400。body が null のときも 400（以前は 500）", async () => {
     for (const body of [{}, null, 1, "\"a@example.com\"", [USER_EMAIL]]) {
       const res = await POST(jsonRequest(body === null ? "null" : body));
       assert.equal(res.status, 400, `body ${JSON.stringify(body)}：400`);

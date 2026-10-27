@@ -121,7 +121,7 @@ describe("POST /api/auth/reset-password：DB に渡せない token（#87）", ()
       assert.deepEqual(await res.json(), { error: "Token and new password are required" }, `${label}：今の 400 の形`);
       assert.deepEqual(touched, [], `${label}：prisma に触れていない`);
     });
-    it(`newPassword が ${label}：DB に触れずに 400（500 にならない）`, async () => {
+    it(`newPassword が ${label}：DB に触れずに 400（今までどおり）`, async () => {
       const res = await reset(resetReq({ token: GOOD_TOKEN, newPassword: token }));
       assert.equal(res.status, 400, `${label}：400`);
       assert.deepEqual(await res.json(), { error: "Token and new password are required" }, `${label}：今の 400 の形`);
