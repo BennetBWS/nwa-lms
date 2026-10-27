@@ -3,7 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { authConfig } from "./auth.config";
-import { checkCredentials } from "./account-access";
+import { authorizeCredentials } from "./account-access";
 import { makeJwtCallback } from "./session-guard";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
@@ -21,20 +21,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
-        });
-
+        // Input shape is checked before the DB is read (#87); bad input returns null.
         // Wrong password and deactivated account (#7) both return null (same error).
-        const allowed = await checkCredentials(
-          user,
-          credentials.password as string,
+        const user = await authorizeCredentials(
+          credentials,
+          (email) => prisma.user.findUnique({ where: { email } }),
           bcrypt.compare
         );
-
-        if (!allowed) return null;
+        if (!user) return null;
 
         return {
           id: user.id,
