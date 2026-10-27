@@ -418,9 +418,9 @@ describe("questionEditOutcome（送る body）", () => {
     const d = initialQuestionDraft(q);
     const cases: Array<[string, QuestionDraft]> = [
       ["同じ文", setDraftOptionText(d, keyAt(d, 0), "選択肢B")],
-      ["ゼロ幅スペース付き", setDraftOptionText(d, keyAt(d, 0), "選択肢B​")],
-      ["NFD", setDraftOptionText(setDraftOptionText(d, keyAt(d, 0), "が"), keyAt(d, 2), "が")],
-      ["見えない文字だけ", setDraftOptionText(d, keyAt(d, 0), "​⁠")],
+      ["ゼロ幅スペース付き", setDraftOptionText(d, keyAt(d, 0), "選択肢B\u200B")],
+      ["NFD", setDraftOptionText(setDraftOptionText(d, keyAt(d, 0), "\u304C"), keyAt(d, 2), "か\u3099")],
+      ["見えない文字だけ", setDraftOptionText(d, keyAt(d, 0), "\u200B\u2060")],
       ["NUL", setDraftOptionText(d, keyAt(d, 0), "A\u0000")],
       ["対になっていないサロゲート", setDraftOptionText(d, keyAt(d, 0), "A\uD800")],
     ];
@@ -428,7 +428,7 @@ describe("questionEditOutcome（送る body）", () => {
       const out = questionEditOutcome(q, draft);
       assert.deepEqual(out, { kind: "invalid", message: patchReasonMessage("invalid_options") }, label);
     }
-    for (const [label, text] of [["空", "   "], ["見えない文字だけ", "　​"], ["NUL", "a\u0000"], ["サロゲート", "\uDC00"]]) {
+    for (const [label, text] of [["空", "   "], ["見えない文字だけ", "\u3000\u200B"], ["NUL", "a\u0000"], ["サロゲート", "\uDC00"]]) {
       assert.deepEqual(questionEditOutcome(q, setDraftQuestion(d, text)), { kind: "invalid", message: patchReasonMessage("invalid_question") }, label);
     }
   });

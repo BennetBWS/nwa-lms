@@ -6,6 +6,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { classifyAuthFailure } from "./client-session";
 import * as adminQuizView from "./admin-quiz-view";
+import { parsePatchQuestionBody, planQuestionEdit } from "./admin-quizzes";
 import {
   ADMIN_QUIZ_LIST_URL,
   EDIT_CONFLICT_MESSAGE,
@@ -851,5 +852,259 @@ describe("AdminQuiz 描画：保存", () => {
     click(button(dialog(tree), "保存する"));
     m.render();
     assert.equal(m.reqs.length, 3, "セッション切れの後に送った");
+  });
+});
+
+// ───────────── tester 追加（#81 Q2） ─────────────
+
+const okPatch = (question: Record<string, unknown>, changed: string[], attemptCount = 3) =>
+  res({ question, changed, inProgressInvalidated: changed.includes("options"), attemptCount }, { url: `${ORIGIN}/api/admin/questions/x` });
+
+describe("AdminQuiz 描画：保存の失敗と読み直し（tester 追加）", () => {
+  it("404：閉じて「見つかりません」と知らせ、詳細を読み直す。読み直しも 404 ならクイズが見つからない表示", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(res({ error: "Not found" }, { status: 404, ok: false }));
+    await settle();
+    let tree = m.render();
+    assert.equal(dialogs(tree).length, 0, "閉じていない");
+    assert.ok(statusText(tree).includes(adminQuizView.QUESTION_GONE_MESSAGE), "404 の知らせがない");
+    const reload = m.reqs[m.reqs.length - 1];
+    assert.equal(reload.url, adminQuizDetailUrl("m1"), "詳細を読み直していない");
+    reload.release(res(null, { status: 404, ok: false }));
+    await settle();
+    tree = m.render();
+    assert.ok(text(byRole(tree, "alert")[0] ?? "").includes(QUIZ_DETAIL_NOT_FOUND_MESSAGE), "クイズが見つからない表示がない");
+    assert.equal(hasButton(tree, "問題 2 を編集"), false, "なくなったクイズの問題を出したまま");
+  });
+
+  it("403・500：ダイアログに文言を出して下書きを残し、読み直さない。もう一度「保存する」まで進めば同じ revision で送り直せる", async () => {
+    for (const [status, message] of [[403, adminQuizView.SAVE_FORBIDDEN_MESSAGE], [500, adminQuizView.SAVE_SERVER_ERROR_MESSAGE]] as const) {
+      const { m } = await editing(2);
+      change(questionInput(m.render()), "直した問題文");
+      saveFromDialog(m).release(res({ error: "x" }, { status, ok: false }));
+      await settle();
+      const d = dialog(m.render());
+      assert.ok(text(byRole(d, "alert")[0]).includes(message), `${status} の文言がない`);
+      assert.equal(questionInput(d).props.value, "直した問題文", `${status} で下書きを消した`);
+      assert.equal(m.reqs.length, 3, `${status} で読み直した`);
+      const again = saveFromDialog(m);
+      assert.deepEqual(jsonBody(again), { revision: REV, question: "直した問題文" }, `${status} のあとの送り直しの body が違う`);
+    }
+  });
+
+  it("ログイン以外へのリダイレクトは結果不明（読み直す）。/login へのリダイレクトはセッション切れ（読み直さない）", async () => {
+    const a = await editing(2);
+    change(questionInput(a.m.render()), "直した問題文");
+    saveFromDialog(a.m).release(res("<html>", { redirected: true, url: `${ORIGIN}/maintenance` }));
+    await settle();
+    assert.ok(statusText(a.m.render()).includes(SAVE_UNCERTAIN_MESSAGE), "結果不明の知らせがない");
+    assert.equal(a.m.reqs[a.m.reqs.length - 1].url, adminQuizDetailUrl("m1"), "読み直していない");
+
+    const b = await editing(2);
+    change(questionInput(b.m.render()), "直した問題文");
+    saveFromDialog(b.m).release(res("<html>", { redirected: true, url: `${ORIGIN}/login?callbackUrl=%2F` }));
+    await settle();
+    const tree = b.m.render();
+    assert.equal(statusText(tree).includes(SAVE_UNCERTAIN_MESSAGE), false, "セッション切れを結果不明として出した");
+    assert.equal(b.m.reqs.length, 3, "セッション切れのあとに読み直した");
+  });
+
+  it("2xx でも別の問題の応答は結果不明として読み直し、詳細は書き換えない", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(okPatch(q("qa", { order: 1, question: "別の問題", revision: REV2 }), ["question"]));
+    await settle();
+    const tree = m.render();
+    assert.ok(statusText(tree).includes(SAVE_UNCERTAIN_MESSAGE), "結果不明の知らせがない");
+    assert.equal(text(tree).includes("別の問題"), false, "別の問題の応答で詳細を書き換えた");
+    assert.equal(m.reqs[m.reqs.length - 1].url, adminQuizDetailUrl("m1"), "読み直していない");
+  });
+
+  it("409 → 読み直しの間は編集ボタンが aria-disabled。読み直しに失敗 →「再読み込み」→ 成功で知らせが消え、最新の revision で送れる", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(res({ error: "Conflict", reason: "edit_conflict" }, { status: 409, ok: false }));
+    await settle();
+    let tree = m.render();
+    assert.deepEqual([1, 2].map((n) => button(tree, `問題 ${n} を編集`).props["aria-disabled"]), [true, true], "読み直しの間に aria-disabled でない");
+    assert.ok(text(tree).includes("最新の内容を読み込んでいます"), "読み直し中の表示がない");
+    m.reqs[m.reqs.length - 1].release(res(null, { status: 500, ok: false }));
+    await settle();
+    tree = m.render();
+    assert.ok(text(byRole(tree, "alert")[0]).includes(adminQuizView.QUIZ_REFRESH_FAILED_MESSAGE), "読み直しの失敗を知らせていない");
+    assert.ok(hasButton(tree, "問題 2 を編集"), "読み直しの失敗で表示を消した");
+    assert.equal(button(tree, "問題 2 を編集").props["aria-disabled"], undefined, "失敗のあとも aria-disabled のまま");
+    click(button(tree, "再読み込み"));
+    const retry = m.reqs[m.reqs.length - 1];
+    assert.equal(retry.url, adminQuizDetailUrl("m1"));
+    retry.release(res(DETAIL({ questions: [q("qa", { order: 1, revision: REV3 }), q("qb", { order: 2, question: "他の講師の問題文", revision: REV3 })] })));
+    await settle();
+    tree = m.render();
+    assert.equal(byRole(tree, "alert").length, 0, "読み直しに成功しても失敗の表示が残った");
+    assert.ok(text(tree).includes("他の講師の問題文"), "最新の内容を出していない");
+    click(button(tree, "問題 2 を編集"), m.target("z"));
+    change(questionInput(m.render()), "もう一度");
+    assert.equal(jsonBody(saveFromDialog(m)).revision, REV3, "最新の revision で送っていない");
+  });
+
+  it("409 の読み直しの途中で一覧に戻ると、読み直しの応答は捨て、一覧を読み直す", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(res({ reason: "edit_conflict" }, { status: 409, ok: false }));
+    await settle();
+    const reload = m.reqs[m.reqs.length - 1];
+    click(button(m.render(), "一覧に戻る"));
+    m.render();
+    assert.equal(m.reqs[m.reqs.length - 1].url, ADMIN_QUIZ_LIST_URL, "一覧を読み直していない");
+    reload.release(res(DETAIL()));
+    await settle();
+    const tree = m.render();
+    assert.equal(hasButton(tree, "問題 1 を編集"), false, "一覧に戻ったあとの応答で詳細を出した");
+  });
+
+  it("409 の読み直しでセッションが切れたら、以降は編集を開かず、読まない・送らない", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(res({ reason: "edit_conflict" }, { status: 409, ok: false }));
+    await settle();
+    m.reqs[m.reqs.length - 1].release(res(null, { status: 401, ok: false }));
+    await settle();
+    const before = m.reqs.length;
+    const tree = m.render();
+    click(button(tree, "問題 2 を編集"), m.target("x"));
+    assert.equal(dialogs(m.render()).length, 0, "セッション切れのあとに編集を開いた");
+    click(button(m.render(), "一覧に戻る"));
+    m.render();
+    assert.equal(m.reqs.length, before, "セッション切れのあとに読んだ");
+  });
+
+  it("保存中は「一覧に戻る」が disabled で、押しても戻らない", async () => {
+    const { m } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m);
+    const tree = m.render();
+    const back = button(tree, "一覧に戻る");
+    assert.equal(back.props.disabled, true, "保存中に一覧に戻れる");
+    click(back);
+    assert.equal(dialogs(m.render()).length, 1, "保存中に詳細を閉じた");
+  });
+});
+
+describe("AdminQuiz 描画：壊れた問題と組み合わせた操作（tester 追加）", () => {
+  it("正解が範囲外の問題（問題 1）：ラジオはどれも選ばれていない。正解を選べば correctIndex だけを送る", async () => {
+    const { m } = await editing(1);
+    const d = dialog(m.render());
+    assert.deepEqual(radios(d).map((r) => r.props.checked), [false, false, false], "範囲外の正解でラジオが選ばれている");
+    pick(radios(d)[2]);
+    assert.deepEqual(jsonBody(saveFromDialog(m)), { revision: REV, correctIndex: 2 });
+  });
+
+  it("選択肢が壊れた問題：空の 2 件から入力し、正解を選ぶまで送らない。送った body はサーバーで通る", async () => {
+    const broken = q("qa", { order: 1, options: null, correctIndex: 0, valid: false });
+    const { m } = await editing(1, DETAIL({ questions: [broken] }));
+    let d = dialog(m.render());
+    assert.deepEqual(optionInputs(d).map((i) => i.props.value), ["", ""], "空の 2 件でない");
+    change(byLabel(d, "選択肢 1"), "新A");
+    change(byLabel(m.render(), "選択肢 2"), "新B");
+    click(button(m.render(), "選択肢を追加"));
+    change(byLabel(m.render(), "選択肢 3"), "新C");
+    click(button(m.render(), "保存"));
+    d = dialog(m.render());
+    assert.ok(text(byRole(d, "alert")[0]).includes(adminQuizView.CORRECT_NOT_SELECTED_MESSAGE), "正解を選ぶよう知らせていない");
+    assert.equal(m.reqs.length, 2, "正解なしで送った");
+    pick(radios(d)[2]);
+    const body = jsonBody(saveFromDialog(m));
+    assert.deepEqual(body, { revision: REV, options: ["新A", "新B", "新C"], correctIndex: 2 });
+    const parsed = parsePatchQuestionBody(body);
+    assert.ok(!("reason" in parsed), "サーバーの検証を通らない");
+    const plan = planQuestionEdit({ question: broken.question, options: null, correctIndex: 0 }, parsed.value);
+    assert.ok(!("reason" in plan), "サーバーで反映できない");
+    assert.equal((plan.value.after.options as string[])[plan.value.after.correctIndex], "新C");
+  });
+
+  it("追加 → 入力 → 先頭へ移動 → 正解に選ぶ → 元の選択肢を削除：body は下書きの並びと正解の位置", async () => {
+    const { m } = await editing(2);
+    click(button(m.render(), "選択肢を追加"));
+    change(byLabel(m.render(), "選択肢 4"), "新しいD");
+    for (let i = 4; i > 1; i--) click(button(m.render(), `選択肢 ${i} を上へ`));
+    assert.deepEqual(optionInputs(dialog(m.render())).map((i) => i.props.value), ["新しいD", "選択肢A", "選択肢B", "選択肢C"]);
+    pick(radios(dialog(m.render()))[0]);
+    // 元の正解だった B（3 番目）を消す
+    click(button(m.render(), "選択肢 3 を削除"));
+    const d = dialog(m.render());
+    assert.deepEqual(optionInputs(d).map((i) => i.props.value), ["新しいD", "選択肢A", "選択肢C"]);
+    assert.deepEqual(radios(d).map((r) => r.props.checked), [true, false, false], "正解の印がずれた");
+    click(button(m.render(), "保存"));
+    assert.ok(text(dialog(m.render())).includes("変更する項目：選択肢・正解"), "変更する項目が違う");
+    click(button(m.render(), "保存する"));
+    const body = jsonBody(m.reqs[m.reqs.length - 1]);
+    assert.deepEqual(body, { revision: REV, options: ["新しいD", "選択肢A", "選択肢C"], correctIndex: 0 });
+  });
+
+  it("正解の選択肢を消すと正解なしに戻り、保存で知らせる（送らない）", async () => {
+    const { m } = await editing(2);
+    click(button(m.render(), "選択肢 2 を削除"));
+    const d = dialog(m.render());
+    assert.deepEqual(radios(d).map((r) => r.props.checked), [false, false], "正解の選択肢を消しても正解が残っている");
+    click(button(d, "保存"));
+    assert.ok(text(byRole(dialog(m.render()), "alert")[0]).includes(adminQuizView.CORRECT_NOT_SELECTED_MESSAGE), "正解を選ぶよう知らせていない");
+    assert.equal(m.reqs.length, 2, "送った");
+  });
+
+  it("使えない文字（NUL・対になっていないサロゲート・見えない文字だけ）は保存の前に知らせ、入力し直すと知らせが消える", async () => {
+    for (const [label, apply, reason] of [
+      ["問題文の NUL", (t: El) => change(questionInput(t), "A\u0000"), "invalid_question"],
+      ["問題文の対になっていないサロゲート", (t: El) => change(questionInput(t), "A\uD800"), "invalid_question"],
+      ["選択肢のゼロ幅だけ", (t: El) => change(byLabel(t, "選択肢 1"), "​⁠"), "invalid_options"],
+      ["見た目が同じ選択肢", (t: El) => change(byLabel(t, "選択肢 1"), "選択肢B️"), "invalid_options"],
+    ] as Array<[string, (t: El) => void, string]>) {
+      const { m } = await editing(2);
+      apply(m.render());
+      click(button(m.render(), "保存"));
+      const d = dialog(m.render());
+      assert.ok(text(byRole(d, "alert")[0] ?? "").includes(patchReasonMessage(reason)), `${label}の文言がない`);
+      assert.equal(m.reqs.length, 2, `${label}で送った`);
+      change(questionInput(m.render()), "直した問題文");
+      assert.equal(byRole(dialog(m.render()), "alert").length, 0, `${label}：入力し直しても知らせが残った`);
+    }
+  });
+
+  it("確認文：受験 0 件で選択肢を変えると受験中の注意だけを出す", async () => {
+    const { m } = await editing(2, DETAIL({ attemptCount: 0 }));
+    change(byLabel(m.render(), "選択肢 1"), "直したA");
+    click(button(m.render(), "保存"));
+    const t = text(dialog(m.render()));
+    assert.ok(t.includes(OPTIONS_CHANGE_NOTICE), "受験中の注意がない");
+    assert.equal(t.includes("過去の受験"), false, "受験 0 件なのに過去の受験の注意を出した");
+  });
+
+  it("壊れた問題を直して保存できたら、状態のバッジ（受験できない）が消える", async () => {
+    const { m } = await editing(1);
+    assert.ok(badges(m.render()).includes("受験できない"), "前提：バッジがない");
+    pick(radios(dialog(m.render()))[0]);
+    saveFromDialog(m).release(okPatch(q("qa", { order: 1, correctIndex: 0, valid: true, revision: REV2 }), ["correctIndex"]));
+    await settle();
+    const tree = m.render();
+    assert.equal(badges(tree).includes("受験できない"), false, "直したあともバッジが残った");
+    assert.equal(text(tree).includes(adminQuizView.CORRECT_OUT_OF_RANGE_WARNING), false, "直したあとも警告が残った");
+  });
+});
+
+describe("AdminQuiz：講師以外には出さない（tester 追加）", () => {
+  it("クイズ管理は講師のナビ（adminNav）にだけあり、受講生のナビにない", () => {
+    const sidebar = component("Sidebar");
+    const navOf = (name: string) => {
+      const start = sidebar.indexOf(`const ${name} = [`);
+      assert.ok(start >= 0, `${name} がない`);
+      return sidebar.slice(start, sidebar.indexOf("];", start));
+    };
+    assert.match(navOf("adminNav"), /id: "admin-quiz"/);
+    assert.doesNotMatch(navOf("studentNav"), /admin-/, "受講生のナビに管理画面がある");
+    assert.match(sidebar, /const nav = isAdmin \? adminNav : studentNav;/);
+    assert.match(src, /<Sidebar [^>]*isAdmin=\{admin\}/);
+    assert.match(src, /const admin = sessionView\.kind === "authenticated" && sessionView\.role === "INSTRUCTOR";/);
+    // 画面から admin-quiz へ移るのはナビからだけ（setPage("admin-quiz") などの直書きがない）
+    assert.equal(src.split('"admin-quiz"').length - 1, 2, "admin-quiz への移動がナビ以外にもある");
   });
 });
