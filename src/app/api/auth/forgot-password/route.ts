@@ -4,12 +4,17 @@ import { Resend } from "resend";
 import { buildResetUrl, readMailConfig } from "@/lib/mail-config";
 import { safeErrorSummary, safeResendErrorSummary } from "@/lib/safe-error";
 import { isDeactivated } from "@/lib/account-access";
+import { isValidEmailInput } from "@/lib/auth-input";
 
 export async function POST(request: Request) {
   try {
-    const { email } = await request.json();
+    const body: unknown = await request.json();
+    const email = typeof body === "object" && body !== null ? (body as { email?: unknown }).email : undefined;
 
-    if (!email) {
+    // #87: a value that cannot be sent to the DB (not a string, blank, too long,
+    // NUL or a lone surrogate) gets the same 400 as a missing email, before the DB
+    // is read. This depends on the input only, so it reveals nothing about accounts.
+    if (!isValidEmailInput(email)) {
       return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { checkResetToken } from "@/lib/account-access";
 import { safeErrorSummary } from "@/lib/safe-error";
+import { isValidResetTokenInput } from "@/lib/auth-input";
 
 export async function POST(request: Request) {
   try {
@@ -24,6 +25,11 @@ export async function POST(request: Request) {
     }
     if (newPassword.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+    }
+    // #87: a token that cannot be sent to the DB (too long, NUL or a lone surrogate)
+    // is answered like an unknown token, without reading the DB.
+    if (!isValidResetTokenInput(token)) {
+      return NextResponse.json({ error: "Invalid token" }, { status: 400 });
     }
 
     const findRecord = () =>
