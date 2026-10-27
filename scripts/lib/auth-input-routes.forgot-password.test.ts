@@ -1,6 +1,7 @@
 import { afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEACTIVATED_EMAIL,
   OTHER_EMAIL,
   USER_EMAIL,
   USER_ID,
@@ -137,5 +138,104 @@ describe("POST /api/auth/forgot-password：正しい email は今までどおり
     const res = await POST(jsonRequest(`{"email":"${USER_EMAIL}"`));
     assert.equal(res.status, 500, "500");
     assert.deepEqual(touched, [], "prisma に触れていない");
+  });
+});
+
+// ---- 追加（tester、#87）：4 通りの応答と DB の読み込み回数、境界、ヘッダーまで含めた比較 ----
+
+/** status・本文・すべてのヘッダー（名前と値） */
+async function shapeOf(res: Response) {
+  return { status: res.status, headers: Array.from(res.headers.entries()), body: await res.text() };
+}
+
+describe("POST /api/auth/forgot-password：登録あり・なし・無効化済み・断った入力（tester、#87）", () => {
+  it("登録あり・なし・無効化済みは status・本文・ヘッダーがすべて同じ。DB の読み書きの回数だけが違う", async () => {
+    const results: Array<[string, Awaited<ReturnType<typeof shapeOf>>, string[]]> = [];
+    for (const [label, email] of [
+      ["登録あり", USER_EMAIL],
+      ["登録なし", OTHER_EMAIL],
+      ["無効化済み", DEACTIVATED_EMAIL],
+    ] as Array<[string, string]>) {
+      fake.calls.length = 0;
+      const res = await POST(jsonRequest({ email }));
+      results.push([label, await shapeOf(res), fake.calls.map((c) => c.method)]);
+    }
+    for (const [label, shape] of results.slice(1)) {
+      assert.deepEqual(shape, results[0][1], `${label}：登録ありと同じ応答`);
+    }
+    assert.deepEqual(
+      results.map(([label, , calls]) => [label, calls]),
+      [
+        ["登録あり", ["user.findUnique", "passwordReset.updateMany", "passwordReset.create"]],
+        ["登録なし", ["user.findUnique"]],
+        ["無効化済み", ["user.findUnique"]],
+      ],
+      "DB の呼び出し（登録ありだけ 3 回。#87 より前からの差）"
+    );
+  });
+
+  it("断った入力は 0 回で 400。status・本文・ヘッダーは email がないときと同じ（入力だけで決まる）", async () => {
+    const missing = await shapeOf(await POST(jsonRequest({})));
+    for (const email of [`${USER_EMAIL}\u0000`, `${OTHER_EMAIL}\u0000`, `${DEACTIVATED_EMAIL}\u0000`, { equals: USER_EMAIL }]) {
+      const shape = await shapeOf(await POST(jsonRequest({ email })));
+      assert.deepEqual(shape, missing, `${JSON.stringify(email)}：email がないときと同じ応答`);
+    }
+    assert.deepEqual(fake.calls, [], "DB を読まない");
+    assert.deepEqual(touched, [], "prisma に触れていない");
+  });
+
+  it("逆順のサロゲート・NUL だけ・body が true / JSON の文字列：DB に触れずに 400 Email is required", async () => {
+    for (const raw of [
+      JSON.stringify({ email: "a\uDE00\uD83D@example.com" }),
+      JSON.stringify({ email: "\u0000" }),
+      "true",
+      '"x"',
+    ]) {
+      const res = await POST(jsonRequest(raw));
+      assert.equal(res.status, 400, `${raw}：400`);
+      assert.deepEqual(await res.json(), REQUIRED, `${raw}：今の 400 の形`);
+    }
+    assert.deepEqual(touched, [], "prisma に触れていない");
+    assert.equal(fetchCalls, 0, "メールを送らない");
+  });
+
+  it("前後に空白のある email は正規化せずにそのまま DB に渡す（今までどおり、見つからなければ 200）", async () => {
+    const res = await POST(jsonRequest({ email: ` ${USER_EMAIL} ` }));
+    assert.equal(res.status, 200, "200");
+    assert.deepEqual(await res.json(), { success: true }, "今の 200 の形");
+    assert.deepEqual(
+      fake.calls.map((c) => c.args[0]),
+      [{ where: { email: ` ${USER_EMAIL} ` } }],
+      "空白付きのまま 1 回だけ読む"
+    );
+    assert.equal(fake.createdTokens.length, 0, "トークンを作らない");
+  });
+
+  it("254 文字の登録済みアドレスなら今までどおりトークンを作る（境界の内側）", async () => {
+    const long = "a".repeat(242) + "@example.com";
+    assert.equal(long.length, 254, "テストの値の長さが違う");
+    const original = fake.user.findUnique;
+    fake.user.findUnique = async (args) => {
+      fake.calls.push({ method: "user.findUnique", args: [args] });
+      return args.where.email === long ? { id: USER_ID, email: long, name: "Dummy", deactivatedAt: null } : null;
+    };
+    try {
+      const res = await POST(jsonRequest({ email: long }));
+      assert.equal(res.status, 200, "200");
+      assert.equal(fake.createdTokens.length, 1, "トークンを 1 つ作る");
+      assert.deepEqual(findLeaks(logs, [fake.createdTokens[0], long, USER_ID]), [], "ログに値が出ない");
+    } finally {
+      fake.user.findUnique = original;
+    }
+  });
+
+  it("DB の例外のメッセージに email が入っていても、ログに出ない", async () => {
+    fake.failWith = Object.assign(new Error(`Unique constraint failed on email ${USER_EMAIL}`), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2002",
+    });
+    const res = await POST(jsonRequest({ email: USER_EMAIL }));
+    assert.equal(res.status, 500, "500");
+    assert.deepEqual(findLeaks(logs, [USER_EMAIL]), [], "ログに email が出ない");
   });
 });

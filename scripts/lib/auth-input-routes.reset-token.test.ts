@@ -220,3 +220,110 @@ describe("GET /api/auth/verify-reset-token：DB に渡せない token（#87）",
     }
   });
 });
+
+// ---- 追加（tester、#87）：ヘッダーまで含めた比較・境界・判定の順・例外のログ ----
+
+/** status・本文・すべてのヘッダー（名前と値） */
+async function shapeOf(res: Response) {
+  return { status: res.status, headers: Array.from(res.headers.entries()), body: await res.text() };
+}
+
+describe("POST /api/auth/reset-password：追加の確認（tester、#87）", () => {
+  it("断った token の応答は、登録のないトークンの応答と status・本文・ヘッダーまで同じ", async () => {
+    const unknown = await shapeOf(await reset(resetReq({ token: "tok-unknown", newPassword: NEW_PASSWORD })));
+    for (const token of [`${GOOD_TOKEN}\u0000`, "x\uDE00\uD83D", "a".repeat(129)]) {
+      const shape = await shapeOf(await reset(resetReq({ token, newPassword: NEW_PASSWORD })));
+      assert.deepEqual(shape, unknown, `${token.length} 文字：登録のないトークンと同じ応答`);
+    }
+  });
+
+  it("逆順のサロゲート：DB に触れずに 400 Invalid token", async () => {
+    const res = await reset(resetReq({ token: "x\uDE00\uD83D", newPassword: NEW_PASSWORD }));
+    assert.equal(res.status, 400, "400");
+    assert.deepEqual(await res.json(), { error: "Invalid token" }, "今の無効なトークンの形");
+    assert.deepEqual(touched, [], "prisma に触れていない");
+  });
+
+  it("token が true・body が null / 配列 / true：DB に触れずに今の 400 Token and new password are required", async () => {
+    for (const raw of [
+      JSON.stringify({ token: true, newPassword: NEW_PASSWORD }),
+      "null",
+      JSON.stringify([GOOD_TOKEN, NEW_PASSWORD]),
+      "true",
+    ]) {
+      const res = await reset(
+        new Request("http://localhost/api/auth/reset-password", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: raw,
+        })
+      );
+      assert.equal(res.status, 400, `${raw}：400`);
+      assert.deepEqual(await res.json(), { error: "Token and new password are required" }, `${raw}：今の 400 の形`);
+    }
+    assert.deepEqual(touched, [], "prisma に触れていない");
+  });
+
+  it("断る token と 8 文字未満のパスワード：登録のないトークンと同じく、パスワードの長さの 400 が先", async () => {
+    const unknown = await shapeOf(await reset(resetReq({ token: "tok-unknown", newPassword: "short" })));
+    const bad = await shapeOf(await reset(resetReq({ token: `${GOOD_TOKEN}\u0000`, newPassword: "short" })));
+    assert.deepEqual(bad, unknown, "同じ応答（判定の順で token の形が分からない）");
+    assert.deepEqual(JSON.parse(bad.body), { error: "Password must be at least 8 characters" }, "長さの 400");
+    assert.deepEqual(touched, [], "prisma に触れていない");
+  });
+
+  it("前後に空白のあるトークンは正規化せずに DB で探す（見つからず Invalid token）", async () => {
+    const res = await reset(resetReq({ token: ` ${GOOD_TOKEN} `, newPassword: NEW_PASSWORD }));
+    assert.equal(res.status, 400, "400");
+    assert.deepEqual(await res.json(), { error: "Invalid token" }, "Invalid token");
+    assert.equal(db.resets.find((r) => r.id === "r87")!.used, false, "正しいトークンは使われない");
+    const looked = db.calls.filter((c) => c.method === "passwordReset.findUnique");
+    assert.equal(looked.length, 1, "1 回だけ読む");
+    assert.equal((looked[0].args[0] as { where: { token: string } }).where.token, ` ${GOOD_TOKEN} `, "空白付きのまま");
+  });
+
+  it("想定外の例外のログはエラー名だけ（token・パスワードを出さない）", async () => {
+    const original = (db.client.passwordReset as { findUnique: unknown }).findUnique;
+    (db.client.passwordReset as { findUnique: unknown }).findUnique = async () => {
+      throw Object.assign(new Error(`lookup failed where token = "${GOOD_TOKEN}" pw ${NEW_PASSWORD}`), {
+        name: "PrismaClientKnownRequestError",
+        code: "P2000",
+      });
+    };
+    try {
+      const res = await reset(resetReq({ token: GOOD_TOKEN, newPassword: NEW_PASSWORD }));
+      assert.equal(res.status, 500, "500");
+      assert.deepEqual(logs, ["[reset-password] Unexpected error: PrismaClientKnownRequestError"], "固定文とエラー名だけ");
+      assert.ok(!logs.some((l) => l.includes(GOOD_TOKEN) || l.includes(NEW_PASSWORD)), "ログに値が出ない");
+    } finally {
+      (db.client.passwordReset as { findUnique: unknown }).findUnique = original;
+    }
+  });
+});
+
+describe("GET /api/auth/verify-reset-token：追加の確認（tester、#87）", () => {
+  it("断った token の応答は、登録のないトークンの応答と status・本文・ヘッダーまで同じ", async () => {
+    const unknown = await shapeOf(await verify(verifyReq("tok-unknown")));
+    for (const token of [`${GOOD_TOKEN}\u0000`, "a".repeat(129)]) {
+      const shape = await shapeOf(await verify(verifyReq(token)));
+      assert.deepEqual(shape, unknown, `${token.length} 文字：登録のないトークンと同じ応答`);
+    }
+  });
+
+  it("128 文字は DB を読み、129 文字は読まない（境界）", async () => {
+    const r128 = await verify(verifyReq("a".repeat(128)));
+    assert.deepEqual(await r128.json(), { valid: false, reason: "Invalid token" }, "128 文字：Invalid token");
+    assert.ok(touched.includes("passwordReset"), "128 文字は DB を読む");
+    touched = [];
+    const r129 = await verify(verifyReq("a".repeat(129)));
+    assert.deepEqual(await r129.json(), { valid: false, reason: "Invalid token" }, "129 文字：Invalid token");
+    assert.deepEqual(touched, [], "129 文字は DB を読まない");
+  });
+
+  it("無効化済みの受講生の正しいトークンも、登録のないトークンと同じ応答（今までどおり）", async () => {
+    db.resets.push({ id: "r87off", userId: "stu_off", token: "tok-87-off", expiresAt: new Date(Date.now() + HOUR), used: false });
+    const off = await shapeOf(await verify(verifyReq("tok-87-off")));
+    const unknown = await shapeOf(await verify(verifyReq("tok-unknown")));
+    assert.deepEqual(off, unknown, "同じ応答");
+  });
+});
