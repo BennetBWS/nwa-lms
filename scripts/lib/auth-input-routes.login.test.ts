@@ -71,6 +71,10 @@ after(() => {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
+  // 差し替えた globalThis.prisma を元に戻す（#87 レビュー 任意 6）
+  const g = globalThis as unknown as { prisma?: unknown };
+  if (prismaBefore === undefined) delete g.prisma;
+  else g.prisma = prismaBefore;
 });
 
 beforeEach(() => {

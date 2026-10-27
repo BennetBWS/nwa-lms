@@ -1,4 +1,4 @@
-import { afterEach, before, beforeEach, describe, it, mock } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEACTIVATED_EMAIL,
@@ -33,6 +33,9 @@ let touched: string[];
 let logs: LogEntry[];
 let fetchCalls: number;
 
+/** 差し替える前の globalThis.prisma（after で戻す） */
+const prismaBefore = (globalThis as unknown as { prisma?: unknown }).prisma;
+
 before(async () => {
   fake = installFakePrisma();
   const target = fake;
@@ -60,6 +63,13 @@ beforeEach(() => {
 
 afterEach(() => {
   mock.restoreAll();
+});
+
+after(() => {
+  // 差し替えた globalThis.prisma を元に戻す（#87 レビュー 任意 6）
+  const g = globalThis as unknown as { prisma?: unknown };
+  if (prismaBefore === undefined) delete g.prisma;
+  else g.prisma = prismaBefore;
 });
 
 const BAD_EMAILS: Array<[string, unknown]> = [

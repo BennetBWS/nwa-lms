@@ -42,7 +42,7 @@ describe("isValidEmailInput", () => {
     ["空", ""],
     ["空白だけ", "   "],
     ["タブ・改行だけ", "\t\n"],
-    ["全角空白だけ", "　"],
+    ["全角空白だけ", "\u3000"],
     ["NUL", "a\u0000@example.com"],
     ["NUL だけ", "\u0000"],
     ["上位サロゲートだけ", "a\uD800@example.com"],
@@ -63,7 +63,7 @@ describe("isValidEmailInput", () => {
     ["254 文字", emailOfLength(254)],
     ["前後に空白（正規化はしない）", " student@example.com "],
     ["絵文字（サロゲートペア）", "a\u{1F600}@example.com"],
-    ["置換文字", "a�@example.com"],
+    ["置換文字", "a\uFFFD@example.com"],
   ];
   for (const [label, v] of GOOD) {
     it(`${label} は true`, () => {

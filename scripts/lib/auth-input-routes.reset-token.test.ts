@@ -1,4 +1,4 @@
-import { afterEach, before, beforeEach, describe, it, mock } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createFakeDb, seed, type FakeDb } from "./student-routes.test-helpers";
 
@@ -26,6 +26,9 @@ const resetReq = (body: unknown) =>
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+
+/** 差し替える前の globalThis.prisma（after で戻す） */
+const prismaBefore = (globalThis as unknown as { prisma?: unknown }).prisma;
 
 before(async () => {
   db = createFakeDb();
@@ -64,6 +67,13 @@ beforeEach(() => {
 
 afterEach(() => {
   mock.restoreAll();
+});
+
+after(() => {
+  // 差し替えた globalThis.prisma を元に戻す（#87 レビュー 任意 6）
+  const g = globalThis as unknown as { prisma?: unknown };
+  if (prismaBefore === undefined) delete g.prisma;
+  else g.prisma = prismaBefore;
 });
 
 const BAD_STRING_TOKENS: Array<[string, string]> = [
@@ -174,7 +184,7 @@ describe("GET /api/auth/verify-reset-token：DB に渡せない token（#87）",
   });
 
   it("対になっていないサロゲートは query では U+FFFD になって届く（DB は読むが 500 にならない）", async () => {
-    for (const q of ["x%ED%A0%80", encodeURIComponent("x�")]) {
+    for (const q of ["x%ED%A0%80", encodeURIComponent("x\uFFFD")]) {
       touched = [];
       const res = await verify(new Request(`http://localhost/api/auth/verify-reset-token?token=${q}`));
       assert.equal(res.status, 200, `${q}：200`);

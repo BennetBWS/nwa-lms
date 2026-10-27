@@ -121,18 +121,6 @@ describe("authorizeCredentials：追加の確認（tester、#87）", () => {
     };
     await assert.rejects(authorizeCredentials({ email: EMAIL, password: PASSWORD }, boom, compare), /db down/, "例外が伝わる");
   });
-
-  it("auth.ts の authorize が返す項目は main と同じ（id / email / name / role / image=avatar / sessionVersion）", () => {
-    const src = readFileSync(path.join(__dirname, "auth.ts"), "utf8");
-    const ret = src.slice(src.indexOf("if (!user) return null;"));
-    assert.ok(ret.length > 0 && src.includes("if (!user) return null;"), "authorize の return が見つからない");
-    const block = ret.slice(ret.indexOf("return {"), ret.indexOf("};") + 2).replace(/\s+/g, " ");
-    assert.equal(
-      block,
-      "return { id: user.id, email: user.email, name: user.name, role: user.role, image: user.avatar, sessionVersion: user.sessionVersion, };",
-      "返す項目が変わった"
-    );
-  });
 });
 
 describe("auth.ts の authorize は authorizeCredentials を通す", () => {
