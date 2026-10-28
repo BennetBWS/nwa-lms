@@ -3708,7 +3708,7 @@ const AdminQuestions = () => {
 // ADMIN QUIZ — クイズ管理（#81 Q2）
 // ═══════════════════════════════════════════
 // クイズの一覧（GET）→ 詳細（GET）→ 1 問ずつの編集（PATCH）。URL は src/lib/admin-quiz-view.ts の定数・関数だけを使い、ここにはパスを書かない
-// （admin-closed-apis.test.ts が page.tsx のパスの直書きと、GET・PATCH 以外での呼び出しを検査している）。
+// （admin-closed-apis.test.ts が page.tsx のパスの直書きと、AdminQuiz の method: が "PATCH" の 1 か所だけであることを検査している）。
 // 文言・判定・送る body の組み立ては src/lib/admin-quiz-view.ts。ここは表示と通信の順だけを持つ。
 // 生徒管理・質問対応と同じ作り：authFetch と classifyAuthFailure、セッション切れの ref、送信中の ref と disabled、role="status"
 const AdminQuiz = () => {
@@ -3824,6 +3824,11 @@ const AdminQuiz = () => {
     } else {
       setDetail(null);
       setDetailError(outcome);
+      // 読み直し（keep）でクイズがなくなった：開いたボタンごと消えるので、詳細の見出しへフォーカスを移す
+      if (keep) {
+        const heading = detailHeadingRef.current;
+        if (heading && heading.isConnected) heading.focus();
+      }
     }
     setDetailLoading(false);
     setRefreshing(false);
@@ -3892,17 +3897,19 @@ const AdminQuiz = () => {
     setEditStep("edit");
   };
 
-  // ダイアログが開いている間だけ Esc で閉じる（保存中は closeEdit が閉じない）
+  // ダイアログが開いている間だけ Esc を扱う。入力の段では閉じ、確認の段では入力の段に戻る（下書きを残す）。
+  // 保存中は closeEdit・backToEdit が何もしない
   useEffect(() => {
     if (!editing) return;
     const closeOnEscape = (e) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
-      closeEdit();
+      if (editStep === "confirm") backToEdit();
+      else closeEdit();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [editing, saving]);
+  }, [editing, editStep, saving]);
 
   // ダイアログが閉じたら、開いたボタンにフォーカスを戻す（ボタンが画面にないときは何もしない）
   const editOpen = editing !== null;
@@ -4188,7 +4195,7 @@ const AdminQuiz = () => {
         {editing && draft && (
           <ModalPortal>
           <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, overflowY: "auto", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", fontFamily: "var(--font-zen), 'Zen Kaku Gothic New', sans-serif", color: T.textPrimary }}>
-            <div role="dialog" aria-modal="true" aria-labelledby="nwa-quiz-edit-title" aria-describedby={editStep === "confirm" ? "nwa-quiz-edit-confirm" : undefined} onClick={e => e.stopPropagation()} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 560, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="nwa-quiz-edit-title" aria-describedby={editStep === "confirm" ? "nwa-quiz-edit-confirm" : undefined} style={{ ...glassStyle(), borderRadius: 20, padding: 32, width: 560, maxWidth: "90vw", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", margin: "auto" }}>
               <h3 id="nwa-quiz-edit-title" style={{ fontSize: 18, fontWeight: 700, color: T.dark, margin: "0 0 16px", fontFamily: adminFont }}>{editDialogTitle(editing.number)}</h3>
               {editStep === "confirm" && pendingEdit ? (
                 <div>

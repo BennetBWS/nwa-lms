@@ -103,7 +103,8 @@ describe("AdminQuiz：配線", () => {
     const lines = block.split("\n").map((l) => l.trim());
     assert.match(lines[1], /^<div style=\{\{ position: "fixed", inset: 0,/);
     assert.match(lines[2], /role="dialog" aria-modal="true" aria-labelledby="nwa-quiz-edit-title"/);
-    assert.match(lines[2], /onClick=\{e => e\.stopPropagation\(\)\}/);
+    // 背景のクリックで閉じないので、本体でクリックを止める必要はない（stopPropagation を付けない）
+    assert.doesNotMatch(block, /stopPropagation/);
     assert.match(lines[2], /maxHeight: "calc\(100dvh - 32px\)"/);
     assert.match(block, /<Button key="edit-cancel" variant="outline" autoFocus onClick=\{closeEdit\}/);
     assert.equal(compSrc.split('position: "fixed"').length - 1, 1, "fixed がダイアログの背景のほかにもある");
@@ -724,6 +725,31 @@ describe("AdminQuiz 描画：保存", () => {
     assert.deepEqual(jsonBody(r), { revision: REV, options: ["選択肢B", "選択肢C"], correctIndex: 0 });
   });
 
+  it("確認の段の Esc は入力の段に戻り、下書きを残す（ダイアログは閉じない）。入力の段の Esc で閉じる", async () => {
+    const { m, trigger } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    change(byLabel(m.render(), "選択肢 1"), "直したA");
+    click(button(m.render(), "保存"));
+    assert.ok(hasButton(dialog(m.render()), "保存する"), "確認の段へ進んでいない（前提）");
+    assert.equal(m.key("Escape"), true, "Esc を扱っていない");
+    let d = dialog(m.render());
+    assert.equal(hasButton(d, "保存する"), false, "確認の段のまま");
+    assert.equal(button(d, "キャンセル").props.autoFocus, true, "入力の段のキャンセルに autoFocus がない");
+    assert.equal(questionInput(d).props.value, "直した問題文", "問題文の下書きを残していない");
+    assert.equal(byLabel(d, "選択肢 1").props.value, "直したA", "選択肢の下書きを残していない");
+    assert.equal(m.reqs.length, 2, "Esc で送った");
+    // もう一度確認へ進めば、同じ内容で送れる
+    click(button(m.render(), "保存"));
+    d = dialog(m.render());
+    assert.ok(hasButton(d, "保存する"), "もう一度確認の段へ進めない");
+    m.key("Escape");
+    m.render();
+    m.key("Escape");
+    m.render();
+    assert.equal(dialogs(m.render()).length, 0, "入力の段の Esc で閉じない");
+    assert.equal(m.focused(), trigger, "閉じたあと開いたボタンにフォーカスが戻らない");
+  });
+
   it("二重送信を防ぐ：保存中の連打では送らず、ボタンは disabled。Esc・キャンセルでも閉じない", async () => {
     const { m } = await editing(2);
     change(questionInput(m.render()), "直した問題文");
@@ -737,6 +763,7 @@ describe("AdminQuiz 描画：保存", () => {
     assert.equal(button(d, "戻る").props.disabled, true);
     m.key("Escape");
     assert.equal(dialogs(m.render()).length, 1, "保存中に Esc で閉じた");
+    assert.ok(hasButton(dialog(m.render()), "保存中..."), "保存中に Esc で入力の段に戻った");
   });
 
   it("成功：閉じてフォーカスを戻し、role=status で知らせ、新しい revision で次の編集を送る", async () => {
@@ -876,6 +903,23 @@ describe("AdminQuiz 描画：保存の失敗と読み直し（tester 追加）",
     tree = m.render();
     assert.ok(text(byRole(tree, "alert")[0] ?? "").includes(QUIZ_DETAIL_NOT_FOUND_MESSAGE), "クイズが見つからない表示がない");
     assert.equal(hasButton(tree, "問題 2 を編集"), false, "なくなったクイズの問題を出したまま");
+    // 開いたボタンがなくなったので、詳細の見出しへフォーカスを移す
+    const focused = m.focused() as El;
+    assert.ok(focused && focused.type === "h2" && focused.props.tabIndex === -1, `詳細の見出しへフォーカスを移していない：${inspect(focused, { depth: 0 })}`);
+  });
+
+  it("409 の読み直しでクイズが 404 になったときも、詳細の見出しへフォーカスを移す", async () => {
+    const { m, trigger } = await editing(2);
+    change(questionInput(m.render()), "直した問題文");
+    saveFromDialog(m).release(res({ error: "Conflict", reason: "edit_conflict" }, { status: 409, ok: false }));
+    await settle();
+    m.render();
+    assert.equal(m.focused(), trigger, "閉じたあと開いたボタンにフォーカスが戻らない（前提）");
+    m.reqs[m.reqs.length - 1].release(res(null, { status: 404, ok: false }));
+    await settle();
+    m.render();
+    const focused = m.focused() as El;
+    assert.ok(focused && focused.type === "h2" && focused.props.tabIndex === -1, "詳細の見出しへフォーカスを移していない");
   });
 
   it("403・500：ダイアログに文言を出して下書きを残し、読み直さない。もう一度「保存する」まで進めば同じ revision で送り直せる", async () => {
