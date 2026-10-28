@@ -1056,8 +1056,8 @@ describe("AdminQuiz 描画：壊れた問題と組み合わせた操作（tester
     for (const [label, apply, reason] of [
       ["問題文の NUL", (t: El) => change(questionInput(t), "A\u0000"), "invalid_question"],
       ["問題文の対になっていないサロゲート", (t: El) => change(questionInput(t), "A\uD800"), "invalid_question"],
-      ["選択肢のゼロ幅だけ", (t: El) => change(byLabel(t, "選択肢 1"), "​⁠"), "invalid_options"],
-      ["見た目が同じ選択肢", (t: El) => change(byLabel(t, "選択肢 1"), "選択肢B️"), "invalid_options"],
+      ["選択肢のゼロ幅だけ", (t: El) => change(byLabel(t, "選択肢 1"), "\u200B\u2060"), "invalid_options"],
+      ["見た目が同じ選択肢", (t: El) => change(byLabel(t, "選択肢 1"), "選択肢B\uFE0F"), "invalid_options"],
     ] as Array<[string, (t: El) => void, string]>) {
       const { m } = await editing(2);
       apply(m.render());

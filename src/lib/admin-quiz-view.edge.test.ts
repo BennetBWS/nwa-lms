@@ -69,7 +69,7 @@ function applyOnServer(original: AdminQuizQuestion, body: unknown, rawOptions: u
 describe("送る body：乱数で元の問題の形（壊れた選択肢・範囲外の正解・前後の空白・10 件）も変えて照合（tester 追加）", () => {
   it("ready の body はサーバーで通り、反映後は下書きどおり。選択肢か正解を送れば、反映後の問題は受験できる形になる", () => {
     const rand = rng(0x81_0a02);
-    const words = ["甲", "乙", "丙", "丁", " 戊 ", "己", "庚", "​", "甲​", "が", "が"];
+    const words = ["甲", "乙", "丙", "丁", " 戊 ", "己", "庚", "\u200B", "甲\u200B", "か\u3099", "が"];
     let ready = 0;
     let fromBroken = 0;
     let fromOutOfRange = 0;
@@ -217,14 +217,14 @@ describe("入力の境界と文言（tester 追加）", () => {
   const d = initialQuestionDraft(q);
 
   it("問題文の長さ：前後の空白は数えない。サロゲートペアは 1 字、結合文字は別の 1 字", () => {
-    const padded = " \n" + "\u{20BB7}".repeat(QUESTION_MAX_LENGTH) + "　 ";
+    const padded = " \n" + "\u{20BB7}".repeat(QUESTION_MAX_LENGTH) + "\u3000 ";
     const ok = questionEditOutcome(q, setDraftQuestion(d, padded));
     assert.equal(ok.kind, "ready", "前後の空白を除いて 1000 字なのに断った");
     if (ok.kind === "ready") assert.equal(ok.body.question, "\u{20BB7}".repeat(QUESTION_MAX_LENGTH), "前後の空白を除いて送っていない");
     assert.equal(questionEditOutcome(q, setDraftQuestion(d, "\u{1F600}".repeat(QUESTION_MAX_LENGTH + 1))).kind, "invalid", "1001 字（サロゲートペア）を通した");
     // 「か」+ 濁点の結合文字は 2 字と数える（サーバーと同じ。見た目は 1000 字でも 2000 字）
-    assert.equal(questionEditOutcome(q, setDraftQuestion(d, "が".repeat(QUESTION_MAX_LENGTH / 2))).kind, "ready");
-    assert.equal(questionEditOutcome(q, setDraftQuestion(d, "が".repeat(QUESTION_MAX_LENGTH / 2) + "か")).kind, "invalid");
+    assert.equal(questionEditOutcome(q, setDraftQuestion(d, "か\u3099".repeat(QUESTION_MAX_LENGTH / 2))).kind, "ready");
+    assert.equal(questionEditOutcome(q, setDraftQuestion(d, "か\u3099".repeat(QUESTION_MAX_LENGTH / 2) + "か")).kind, "invalid");
   });
 
   it("選択肢の長さ：300 字（サロゲートペア）は通り、301 字は断る", () => {
@@ -245,7 +245,7 @@ describe("入力の境界と文言（tester 追加）", () => {
   });
 
   it("見えない文字だけ（ゼロ幅・BOM・ワードジョイナー・全角空白・ソフトハイフン）は断る", () => {
-    for (const bad of ["​", "﻿", "⁠‍", "　​", "­", "‎‏"]) {
+    for (const bad of ["\u200B", "\uFEFF", "\u2060\u200D", "\u3000\u200B", "\u00AD", "\u200E\u200F"]) {
       assert.deepEqual(questionEditOutcome(q, setDraftQuestion(d, bad)), { kind: "invalid", message: patchReasonMessage("invalid_question") }, `問題文 ${JSON.stringify(bad)}`);
       assert.deepEqual(questionEditOutcome(q, setDraftOptionText(d, keyAt(d, 0), bad)), { kind: "invalid", message: patchReasonMessage("invalid_options") }, `選択肢 ${JSON.stringify(bad)}`);
     }
@@ -253,23 +253,23 @@ describe("入力の境界と文言（tester 追加）", () => {
 
   it("見た目が同じ選択肢の重複：ゼロ幅・異体字セレクタ・ソフトハイフン・NFC と NFD・前後の空白を同じとみなす", () => {
     const pairs: Array<[string, string]> = [
-      ["選択肢B​", "ゼロ幅スペース"],
-      ["​選択肢B", "先頭のゼロ幅スペース"],
-      ["選択肢B️", "異体字セレクタ"],
-      ["選択­肢B", "ソフトハイフン"],
-      ["選択肢B⁠", "ワードジョイナー"],
-      [" 選択肢B　", "前後の空白・全角空白"],
+      ["選択肢B\u200B", "ゼロ幅スペース"],
+      ["\u200B選択肢B", "先頭のゼロ幅スペース"],
+      ["選択肢B\uFE0F", "異体字セレクタ"],
+      ["選択\u00AD肢B", "ソフトハイフン"],
+      ["選択肢B\u2060", "ワードジョイナー"],
+      [" 選択肢B\u3000", "前後の空白・全角空白"],
     ];
     for (const [text, label] of pairs) {
       assert.deepEqual(questionEditOutcome(q, setDraftOptionText(d, keyAt(d, 0), text)), { kind: "invalid", message: patchReasonMessage("invalid_options") }, label);
     }
-    const nfc = setDraftOptionText(setDraftOptionText(d, keyAt(d, 0), "が"), keyAt(d, 2), "が");
+    const nfc = setDraftOptionText(setDraftOptionText(d, keyAt(d, 0), "が"), keyAt(d, 2), "か\u3099");
     assert.deepEqual(questionEditOutcome(q, nfc), { kind: "invalid", message: patchReasonMessage("invalid_options") }, "NFC と NFD");
   });
 
   it("問題文を NFD に書き換えただけ（見た目は同じ）は、変更として送る（サーバーも別の値として保存する）", () => {
     const nfcOriginal = question({ question: "がっこう" });
-    const out = questionEditOutcome(nfcOriginal, setDraftQuestion(initialQuestionDraft(nfcOriginal), "がっこう"));
+    const out = questionEditOutcome(nfcOriginal, setDraftQuestion(initialQuestionDraft(nfcOriginal), "か\u3099っこう"));
     assert.equal(out.kind, "ready", "NFD の問題文を unchanged とみなした");
     if (out.kind === "ready") {
       const r = applyOnServer(nfcOriginal, out.body);
