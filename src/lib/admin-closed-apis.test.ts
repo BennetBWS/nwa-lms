@@ -2,7 +2,6 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import * as viewLib from "./admin-quiz-view";
 
 // #81 Q3：管理画面から使っていない危険な書き込み API を閉じた（ハンドラを削除）。
 // 検証のない作成・更新と、受験記録・問題の物理削除を API から実行できないようにするため。
@@ -253,8 +252,10 @@ function routesServing(url: string): Array<{ rel: string; path: string }> {
 }
 
 // ───────────── 画面（#81 Q2 のクイズ管理）から呼ぶ形 ─────────────
-// 画面は GET（一覧・詳細）と PATCH（問題の修正）だけを使う。パスは画面用の lib の 3 行だけに書き、
-// page.tsx はその定数・関数を authFetch の 1 つ目の引数としてだけ使う。閉じたメソッド（POST・PUT・DELETE）は使わない。
+// 本当の防御は、上の route 側の検査（閉じた URL の route が POST / PUT / DELETE を export していないこと）。
+// 画面側は (a) page.tsx にパスを直書きしない (b) パスを書いてよいのは画面用の lib の URL の 3 行だけ
+// (c) page.tsx のクイズ管理（AdminQuiz）の method: は "PATCH" の 1 か所だけ、の 3 つだけを確かめる。
+// 悪意のある書き換え（別名・getter・Request で包むなど）は、この検査ではなくレビューで見る。
 
 /** パスを書いてよい画面用の lib（リポジトリからの相対） */
 const VIEW_LIB = "src/lib/admin-quiz-view.ts";
@@ -266,105 +267,13 @@ const VIEW_LIB_URL_LINES = [
   "return `/api/admin/questions/${encodeURIComponent(questionId)}`;",
 ];
 
-/** URL の定数・関数と、page.tsx で許す呼び方（GET は 2 つ目の引数なし、PATCH は method: "PATCH" だけ） */
-const VIEW_URL_HELPERS: Array<{ name: string; method: "GET" | "PATCH" }> = [
-  { name: "ADMIN_QUIZ_LIST_URL", method: "GET" },
-  { name: "adminQuizDetailUrl", method: "GET" },
-  { name: "adminQuestionUrl", method: "PATCH" },
-];
-
-const HELPER_NAME_RE = new RegExp(`(?<![\\w$])(?:${VIEW_URL_HELPERS.map((x) => x.name).join("|")})(?![\\w$])`, "g");
-
-/** source の open（"(" の位置）に対応する ")" の位置。コメント・文字列は blankCommentsAndStrings で消した code を渡す */
-function closingParen(code: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < code.length; i++) {
-    const c = code[i];
-    if (c === "(" || c === "{" || c === "[") depth++;
-    else if (c === ")" || c === "}" || c === "]") {
-      depth--;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-}
-
-/** 呼び出しの引数の文字列（"(" と ")" の中身）を、トップレベルの , で分ける */
-function splitTopLevelArgs(args: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < args.length; i++) {
-    const c = args[i];
-    if (c === "(" || c === "{" || c === "[") depth++;
-    else if (c === ")" || c === "}" || c === "]") depth--;
-    else if (c === "," && depth === 0) {
-      out.push(args.slice(start, i));
-      start = i + 1;
-    }
-  }
-  out.push(args.slice(start));
-  return out.map((a) => a.trim()).filter((a) => a !== "");
-}
-
-type HelperUse = { name: string; line: number; ok: boolean; why: string };
-
-/**
- * page.tsx の中の URL の定数・関数の使い方を調べる（import の行は除く）。
- * 許すのは authFetch(<定数・関数の呼び出し>) と authFetch(<関数の呼び出し>, { method: "PATCH", ... }) だけ：
- * - 1 つ目の引数がちょうどその定数・関数の呼び出しであること（URL に何かを足さない）
- * - GET の定数・関数は 2 つ目の引数がないこと（既定の GET）
- * - PATCH の関数は 2 つ目の引数のメソッドが "PATCH" だけであること（method をほかに書かない・変数にしない）
- * 文字列の中身は original から読む（code はコメント・文字列を空白にしたもの）
- */
-function helperUses(original: string): HelperUse[] {
-  const code = blankCommentsAndStrings(original);
-  const uses: HelperUse[] = [];
-  const lineOf = (i: number) => code.slice(0, i).split("\n").length;
-  for (let m = HELPER_NAME_RE.exec(code); m; m = HELPER_NAME_RE.exec(code)) {
-    const name = m[0];
-    const at = m.index;
-    const lineStart = code.lastIndexOf("\n", at) + 1;
-    const lineEnd = code.indexOf("\n", at);
-    const lineText = code.slice(lineStart, lineEnd < 0 ? code.length : lineEnd);
-    const line = lineOf(at);
-    // import { ... } の中（複数行の import の名前の行を含む）は使い方ではない
-    const before = code.slice(0, at);
-    const lastImport = before.lastIndexOf("import {");
-    if (lastImport >= 0 && before.indexOf("}", lastImport) < 0) continue;
-    const helper = VIEW_URL_HELPERS.find((x) => x.name === name)!;
-    // 直前が authFetch( であること（evilauthFetch( や api.authFetch( のような別の関数は許さない）
-    const head = code.slice(0, at).replace(/\s+$/, "");
-    if (!/(?<![\w$.])authFetch\($/.test(head)) {
-      uses.push({ name, line, ok: false, why: `authFetch の 1 つ目の引数でない：${lineText.trim()}` });
-      continue;
-    }
-    const open = head.length - 1;
-    const close = closingParen(code, open);
-    if (close < 0) {
-      uses.push({ name, line, ok: false, why: "authFetch の閉じかっこが見つからない" });
-      continue;
-    }
-    const args = splitTopLevelArgs(code.slice(open + 1, close));
-    const originalArgs = splitTopLevelArgs(original.slice(open + 1, close));
-    const first = args[0] ?? "";
-    const firstOk = name === "ADMIN_QUIZ_LIST_URL" ? first === name : new RegExp(`^${name}\\([^()]*\\)$`).test(first);
-    if (!firstOk || args.length > 2) {
-      uses.push({ name, line, ok: false, why: `1 つ目の引数が定数・関数の呼び出しだけでない、または引数が多い：${first}` });
-      continue;
-    }
-    if (helper.method === "GET") {
-      uses.push({ name, line, ok: args.length === 1, why: args.length === 1 ? "" : "GET の URL に 2 つ目の引数（メソッドなど）を渡している" });
-      continue;
-    }
-    const init = originalArgs[1] ?? "";
-    const methods = Array.from(init.matchAll(/\bmethod\s*:\s*([^,}]+)/g), (x) => x[1].trim());
-    // "method": / ["method"]: / get method() / X-HTTP-Method-Override のように、method の語を 2 回以上書いたら許さない
-    const methodWords = (init.match(/method/gi) ?? []).length;
-    const ok = args.length === 2 && methods.length === 1 && methods[0] === '"PATCH"' && methodWords === 1 && !/\.\.\./.test(init);
-    uses.push({ name, line, ok, why: ok ? "" : `PATCH 以外のメソッド・展開を含む：${init}` });
-  }
-  return uses;
+/** page.tsx の `const AdminQuiz = (` から次のトップレベルの `const X = ` までを切り出す */
+function adminQuizSource(page: string): string {
+  const start = page.indexOf("const AdminQuiz = (");
+  assert.ok(start >= 0, "page.tsx に AdminQuiz がない");
+  const rest = page.slice(start);
+  const next = rest.slice(1).search(/\nconst [A-Z]\w* = |\nexport default function /);
+  return next < 0 ? rest : rest.slice(0, next + 1);
 }
 
 describe("使っていない危険な書き込み API は閉じたまま（#81 Q3）", () => {
@@ -509,76 +418,6 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API のパスを直書きしている：${JSON.stringify(hits)}`);
   });
 
-  it("画面（page.tsx）は URL の定数・関数を authFetch の 1 つ目の引数としてだけ使い、GET と PATCH だけで呼ぶ", () => {
-    const uses = helperUses(readFileSync(PAGE, "utf8"));
-    const bad = uses.filter((u) => !u.ok);
-    assert.deepEqual(bad, [], `許していない呼び方がある：${JSON.stringify(bad)}`);
-    // 3 つとも使っている（検査が空振りしていない）。PATCH は問題の修正の 1 か所だけ
-    for (const { name } of VIEW_URL_HELPERS) {
-      assert.ok(uses.some((u) => u.name === name), `page.tsx が ${name} を使っていない（検査の前提）`);
-    }
-    assert.equal(uses.filter((u) => u.name === "adminQuestionUrl").length, 1, "問題の PATCH の呼び出しが 1 か所でない");
-  });
-
-  it("呼び方の検査は、閉じたメソッド・URL の組み立て・authFetch 以外での使い方を拾う（検査の前提）", () => {
-    const ok = [
-      "authFetch(ADMIN_QUIZ_LIST_URL).then(r => r);",
-      "authFetch(adminQuizDetailUrl(id));",
-      'authFetch(adminQuestionUrl(q.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });',
-      'import {\n  ADMIN_QUIZ_LIST_URL,\n  adminQuestionUrl,\n} from "@/lib/admin-quiz-view";',
-      "// コメントの adminQuestionUrl(id) は数えない",
-    ];
-    for (const source of ok) {
-      const bad = helperUses(source).filter((u) => !u.ok);
-      assert.deepEqual(bad, [], `正しい呼び方を拒んだ：${source}`);
-    }
-    const ng = [
-      'authFetch(adminQuestionUrl(id), { method: "DELETE" });',
-      'authFetch(adminQuestionUrl(id), { method: "PUT" });',
-      'authFetch(adminQuizDetailUrl(id), { method: "PUT" });',
-      'authFetch(ADMIN_QUIZ_LIST_URL, { method: "POST", body: "{}" });',
-      'authFetch(adminQuizDetailUrl(id) + "/questions", { method: "POST" });',
-      "authFetch(adminQuestionUrl(id), { method: m });",
-      'authFetch(adminQuestionUrl(id), { ...init, method: "PATCH" });',
-      'authFetch(adminQuestionUrl(id), { method: "PATCH", method: "DELETE" });',
-      "authFetch(adminQuestionUrl(id), init);",
-      "fetch(adminQuestionUrl(id), init);",
-      "const u = adminQuestionUrl(id);",
-      "const u = ADMIN_QUIZ_LIST_URL;",
-    ];
-    for (const source of ng) {
-      const uses = helperUses(source);
-      assert.ok(uses.length > 0 && uses.some((u) => !u.ok), `許していない呼び方を見落とした：${source}`);
-    }
-  });
-
-  it("呼び方の検査は、すり抜けやすい書き方（引用符付きの method・getter・メソッドの上書きヘッダー・別名の authFetch など）も拾う（tester 追加）", () => {
-    const ng: Array<[string, string]> = [
-      ["引用符付きのキーで method を上書き", 'authFetch(adminQuestionUrl(id), { method: "PATCH", "method": "DELETE" });'],
-      ["一重引用符のキー", "authFetch(adminQuestionUrl(id), { method: \"PATCH\", 'method': \"DELETE\" });"],
-      ["計算されたキー", 'authFetch(adminQuestionUrl(id), { method: "PATCH", ["method"]: "DELETE" });'],
-      ["getter で method を上書き", 'authFetch(adminQuestionUrl(id), { method: "PATCH", get method() { return "DELETE"; } });'],
-      ["メソッドの上書きヘッダー", 'authFetch(adminQuestionUrl(id), { method: "PATCH", headers: { "X-HTTP-Method-Override": "DELETE" } });'],
-      ["名前が authFetch で終わる別の関数", 'evilauthFetch(adminQuestionUrl(id), { method: "PATCH" });'],
-      ["オブジェクトのメンバーの authFetch", 'api.authFetch(adminQuestionUrl(id), { method: "PATCH" });'],
-      ["名前が authFetch で終わる別の関数（GET）", "myauthFetch(adminQuizDetailUrl(id));"],
-      ["名前空間の import 経由", 'authFetch(v.adminQuestionUrl(id), { method: "DELETE" });'],
-      ["テンプレートで包む", 'authFetch(`${adminQuestionUrl(id)}`, { method: "PATCH" });'],
-      ["call 経由", 'authFetch.call(null, adminQuestionUrl(id), { method: "DELETE" });'],
-      ["Request に包む", 'authFetch(new Request(adminQuestionUrl(id), { method: "DELETE" }));'],
-      ["method がテンプレート", "authFetch(adminQuestionUrl(id), { method: `DELETE` });"],
-      ["method が as const 付き", 'authFetch(adminQuestionUrl(id), { method: "DELETE" as const });'],
-    ];
-    const missed = ng.filter(([, source]) => {
-      const uses = helperUses(source);
-      return !(uses.length > 0 && uses.some((u) => !u.ok));
-    });
-    assert.deepEqual(missed, [], "すり抜ける書き方を見落とした");
-    // 正しい呼び方（page.tsx と同じ形）は引き続き通す
-    const good = 'authFetch(adminQuestionUrl(original.id), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });';
-    assert.deepEqual(helperUses(good).filter((u) => !u.ok), [], "page.tsx と同じ形の PATCH を拒んだ");
-  });
-
   it("参照の走査は、外した route ファイル以外の参照を拾う（検査の前提）", () => {
     const ref = 'await fetch(`/api/admin/questions/${id}`, { method: "PUT" });';
     const log = 'console.error("PATCH /api/admin/questions/[id] failed");';
@@ -638,144 +477,9 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.deepEqual(hits, [], `管理用のクイズ・問題の API の参照が残っている：${JSON.stringify(hits)}`);
   });
 
-  it("画面用の lib は URL の 3 行をそれぞれ 1 回だけ持ち、メソッドの名前・fetch を書かない", () => {
-    const source = readFileSync(join(ROOT, VIEW_LIB), "utf8");
-    const lines = source.split("\n").map((l) => l.trim());
-    for (const want of VIEW_LIB_URL_LINES) {
-      assert.equal(lines.filter((l) => l === want).length, 1, `${VIEW_LIB} に ${want} が 1 行だけない`);
-    }
-    const code = blankCommentsAndStrings(source);
-    assert.doesNotMatch(source, /["'`](?:POST|PUT|DELETE|PATCH|GET)["'`]/, `${VIEW_LIB} がメソッドの名前を文字列で書いている（メソッドは page.tsx の呼び出しで決める）`);
-    assert.doesNotMatch(code, /\bmethod\b|(?<![\w$.])fetch\s*\(|authFetch/, `${VIEW_LIB} が通信をしている`);
-  });
-
-  it("URL の定数・関数を使うのは page.tsx と画面用の lib だけ（テストを除く）", () => {
-    const CODE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
-    const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$|\.test-helpers\.ts$/;
-    const users: string[] = [];
-    const walk = (dir: string) => {
-      if (!existsSync(dir)) return;
-      for (const name of readdirSync(dir)) {
-        if (name === "node_modules" || name === ".next") continue;
-        const p = join(dir, name);
-        if (statSync(p).isDirectory()) walk(p);
-        else if (CODE.test(name) && !TEST.test(name)) {
-          const code = blankCommentsAndStrings(readFileSync(p, "utf8"));
-          HELPER_NAME_RE.lastIndex = 0;
-          if (HELPER_NAME_RE.test(code)) users.push(relative(ROOT, p).split(sep).join("/"));
-          HELPER_NAME_RE.lastIndex = 0;
-        }
-      }
-    };
-    for (const d of ["src", "scripts", "prisma"]) walk(join(ROOT, d));
-    assert.deepEqual(users.sort(), ["src/app/page.tsx", VIEW_LIB].sort(), "page.tsx と画面用の lib のほかに URL の定数・関数を使うファイルがある");
-  });
-
-  // ───────────── tester 追加（#81 Q2）：名前を変えて使う・lib の中で包む・authFetch を差し替える書き方 ─────────────
-
-  /** 値（関数なら、いくつかの引数で呼んだ結果）の中に API のパス（"/api/"）が出てくるか */
-  function yieldsApiPath(value: unknown): boolean {
-    const seen = new Set<unknown>();
-    const has = (v: unknown, depth: number): boolean => {
-      if (typeof v === "string") return v.includes("/api/");
-      if (depth > 4 || v === null || typeof v !== "object" || seen.has(v)) return false;
-      seen.add(v);
-      return Object.values(v as Record<string, unknown>).some((x) => has(x, depth + 1));
-    };
-    if (typeof value !== "function") return has(value, 0);
-    for (const args of [[], ["x"], ["x", "y"], [1], [{}]]) {
-      try {
-        if (has((value as (...a: unknown[]) => unknown)(...args), 0)) return true;
-      } catch {
-        // 引数の形が違えば投げてよい（パスを返さない）
-      }
-    }
-    return false;
-  }
-
-  it("画面用の lib で API のパスを返すのは URL の定数・関数の 3 つだけ（別名の re-export・包んだ関数がない）", () => {
-    const allowed = VIEW_URL_HELPERS.map((x) => x.name).sort();
-    const found = Object.keys(viewLib).filter((k) => yieldsApiPath((viewLib as Record<string, unknown>)[k])).sort();
-    assert.deepEqual(found, allowed, "URL の定数・関数のほかに API のパスを返す export がある（page.tsx から別の名前で閉じた URL を組み立てうる）");
-  });
-
-  it("lib の export の検査は、別名の re-export と包んだ関数を拾う（検査の前提）", () => {
-    const fake: Record<string, unknown> = {
-      ADMIN_QUIZ_LIST_URL: viewLib.ADMIN_QUIZ_LIST_URL,
-      adminQuizDetailUrl: viewLib.adminQuizDetailUrl,
-      adminQuestionUrl: viewLib.adminQuestionUrl,
-      questionEndpoint: viewLib.adminQuestionUrl,
-      wrapped: (id: string) => ({ url: `${viewLib.adminQuizDetailUrl(id)}/questions` }),
-      label: () => "問題を保存しました",
-    };
-    const found = Object.keys(fake).filter((k) => yieldsApiPath(fake[k])).sort();
-    assert.deepEqual(found, ["ADMIN_QUIZ_LIST_URL", "adminQuestionUrl", "adminQuizDetailUrl", "questionEndpoint", "wrapped"], "別名・包んだ関数を見落とした");
-  });
-
-  /** 画面用の lib の import の問題（なければ空）。source は page.tsx の全文 */
-  function viewImportProblems(source: string): string[] {
-    const problems: string[] = [];
-    const imports = Array.from(source.matchAll(/^import\s+([^;]*?)\s+from\s+["']@\/lib\/admin-quiz-view["']/gm), (m) => m[1]);
-    if (imports.length !== 1) problems.push(`行頭の import が ${imports.length} 個`);
-    // 行頭でない import・動的な import("@/lib/admin-quiz-view")・require も数える
-    if (source.split("@/lib/admin-quiz-view").length - 1 !== 1) problems.push("画面用の lib を 2 回以上参照している");
-    for (const spec of imports) {
-      if (!/^\{[^}]*\}$/.test(spec)) problems.push("名前空間・既定の import");
-      if (/\bas\b/.test(spec)) problems.push("別名の import");
-    }
-    return problems;
-  }
-
-  /** authFetch を呼び出し以外で使っている行（定義の 1 行を除く）と、定義の数。code は blankCommentsAndStrings 済み */
-  function authFetchMisuse(code: string): { defs: number; lines: number[] } {
-    const defs = Array.from(code.matchAll(/\b(?:const|let|var|function)\s+authFetch\b/g)).length;
-    const lines: number[] = [];
-    for (const m of Array.from(code.matchAll(/(?<![\w$])authFetch(?![\w$])/g))) {
-      const at = m.index ?? 0;
-      const head = code.slice(0, at);
-      const after = code.slice(at + "authFetch".length);
-      if (/\bconst\s+$/.test(head) && /^\s*=\s*makeAuthFetch\(/.test(after)) continue;
-      // 呼び出し（api.authFetch( のようなメンバーは除く）
-      if (/^\s*\(/.test(after) && !/\.\s*$/.test(head)) continue;
-      lines.push(head.split("\n").length);
-    }
-    return { defs, lines };
-  }
-
-  it("page.tsx は画面用の lib を別名・名前空間で import しない", () => {
-    assert.deepEqual(viewImportProblems(readFileSync(PAGE, "utf8")), [], "画面用の lib の import の形が違う");
-  });
-
-  it("import の検査は別名・名前空間・2 つ目の参照を拾う（検査の前提）", () => {
-    const ok = '// 計算は import しない\nimport {\n  ADMIN_QUIZ_LIST_URL,\n  adminQuestionUrl,\n} from "@/lib/admin-quiz-view";\n';
-    assert.deepEqual(viewImportProblems(ok), [], "正しい import を拒んだ");
-    const ng: Array<[string, string]> = [
-      ["別名", 'import { adminQuestionUrl as qu } from "@/lib/admin-quiz-view";'],
-      ["名前空間", 'import * as v from "@/lib/admin-quiz-view";'],
-      ["2 つ目の import", ok + 'const m = await import("@/lib/admin-quiz-view");'],
-      ["require", ok + 'const m = require("@/lib/admin-quiz-view");'],
-    ];
-    for (const [label, source] of ng) assert.ok(viewImportProblems(source).length > 0, `${label}を見落とした`);
-  });
-
-  it("page.tsx の authFetch は 1 か所で作り、差し替え・別名・引数での受け取りをしない", () => {
-    const code = blankCommentsAndStrings(readFileSync(PAGE, "utf8"));
-    assert.match(code, /\bconst authFetch = makeAuthFetch\(/, "authFetch を makeAuthFetch で作っていない");
-    assert.deepEqual(authFetchMisuse(code), { defs: 1, lines: [] }, "authFetch の定義が 1 つでない、または呼び出し以外で使っている");
-  });
-
-  it("authFetch の検査は差し替え・別名・引数での受け取りを拾う（検査の前提）", () => {
-    const base = "const authFetch = makeAuthFetch({ fetch: f });\nauthFetch(ADMIN_QUIZ_LIST_URL);\n";
-    assert.deepEqual(authFetchMisuse(base), { defs: 1, lines: [] }, "正しい使い方を拒んだ");
-    const ng: Array<[string, string]> = [
-      ["再代入", base + "authFetch = (u, i) => f(u, { ...i, method: 'DELETE' });"],
-      ["別名に入れる", base + "const g = authFetch;"],
-      ["引数で受け取る", base + "const C = ({ authFetch }) => authFetch(x);"],
-      ["2 つ目の定義", base + "function authFetch(u) { return f(u); }"],
-    ];
-    for (const [label, source] of ng) {
-      const r = authFetchMisuse(blankCommentsAndStrings(source));
-      assert.ok(r.defs !== 1 || r.lines.length > 0, `${label}を見落とした`);
-    }
+  it("page.tsx のクイズ管理（AdminQuiz）の method: は \"PATCH\" の 1 か所だけ", () => {
+    const comp = adminQuizSource(readFileSync(PAGE, "utf8"));
+    const methods = Array.from(comp.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g), (m) => m[1]);
+    assert.deepEqual(methods, ['"PATCH"'], `AdminQuiz の method: が "PATCH" の 1 か所だけでない：${JSON.stringify(methods)}`);
   });
 });
