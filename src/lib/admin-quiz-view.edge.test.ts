@@ -24,6 +24,7 @@ import {
   setDraftCorrect,
   setDraftOptionText,
   setDraftQuestion,
+  tooManyOptionsMessage,
   toAdminQuizGroups,
   type QuestionDraft,
 } from "./admin-quiz-view";
@@ -167,9 +168,17 @@ describe("元のデータが今の規則の外にある問題（tester 追加）
     const original = question({ options: Array.from({ length: MAX_OPTIONS + 1 }, (_, i) => `元${i}`), correctIndex: 2 });
     let d = initialQuestionDraft(original);
     assert.equal(d.options.length, MAX_OPTIONS + 1);
-    // 文を 1 つ直すだけでは件数の誤り（invalid_options）
+    // 文を 1 つ直すだけでは、いまの件数を添えて 10 件以下にするよう知らせる
     const textOnly = questionEditOutcome(original, setDraftOptionText(d, keyAt(d, 0), "直した"));
-    assert.deepEqual(textOnly, { kind: "invalid", message: patchReasonMessage("invalid_options") });
+    assert.deepEqual(textOnly, { kind: "invalid", message: "選択肢を 10 件以下にしてください（いま 11 件）" });
+    assert.equal(tooManyOptionsMessage(13), "選択肢を 10 件以下にしてください（いま 13 件）");
+    // 選択肢を変えない（問題文だけ）なら、件数は確かめずに送る（サーバーも選択肢を送らなければ件数を見ない）
+    assert.deepEqual(questionEditOutcome(original, setDraftQuestion(d, "直した問題文")), { kind: "ready", body: { revision: REV, question: "直した問題文" }, changed: ["question"] });
+    // 正解が範囲外（正解を選んでいない）でも、件数の文言を先に出す
+    const outOfRange = { ...original, correctIndex: 99, valid: false };
+    const od = initialQuestionDraft(outOfRange);
+    assert.equal(od.correctKey, null);
+    assert.deepEqual(questionEditOutcome(outOfRange, setDraftOptionText(od, keyAt(od, 0), "直した")), { kind: "invalid", message: tooManyOptionsMessage(MAX_OPTIONS + 1) });
     d = removeDraftOption(d, keyAt(d, MAX_OPTIONS));
     const out = questionEditOutcome(original, d);
     assert.equal(out.kind, "ready");

@@ -4,8 +4,7 @@
  *
  * 使う API（#81 Q1）：クイズの一覧の GET・クイズの詳細の GET・問題の PATCH（1 問の問題文・選択肢の文・正解を直す。
  * revision による楽観ロック）。閉じた書き込み API（#81 Q3。POST・PUT・DELETE）は使わない。
- * パスは下の「URL」の 3 行だけに書く（admin-closed-apis.test.ts が、ほかの行のパスを呼び出し元とみなし、
- * このファイルにメソッドの名前を書いていないこと、page.tsx が GET と PATCH だけで呼ぶことを検査している）。
+ * パスは下の「URL」の 3 行だけに書く（admin-closed-apis.test.ts が、ほかの行のパスを呼び出し元とみなす）。
  *
  * revision の計算（admin-quiz-revision.ts・node:crypto）は import しない。revision はサーバーの値をそのまま送り返す。
  * 入力の検証はサーバーと同じ parsePatchQuestionBody（admin-quizzes.ts）を使い、保存の前に文言を出す。
@@ -360,6 +359,11 @@ export type QuestionEditOutcome =
 export const EDIT_UNCHANGED_MESSAGE = "変更がありません。";
 export const CORRECT_NOT_SELECTED_MESSAGE = "正解の選択肢を選んでください。";
 
+/** 選択肢が MAX_OPTIONS 件を超えているとき（元の問題が 11 件以上）の文言 */
+export function tooManyOptionsMessage(count: number): string {
+  return `選択肢を ${MAX_OPTIONS} 件以下にしてください（いま ${count} 件）`;
+}
+
 /** 400 の reason ごとの文言（保存の前の検証と、サーバーの 400 の両方に使う） */
 const REASON_MESSAGES: Readonly<Record<PatchQuestionReason | "invalid_id", string>> = {
   invalid_question: `問題文は ${QUESTION_MAX_LENGTH} 文字以内で入力してください（空白・見えない文字だけにはできません。使えない文字が含まれていないかも確かめてください）。`,
@@ -390,7 +394,7 @@ function sameTrimmed(a: ReadonlyArray<string>, b: ReadonlyArray<string> | null):
  * - 問題文：前後の空白を除いて、元（前後の空白を除いたもの）と違えば送る
  * - 選択肢：各要素の前後の空白を除いて、元と件数・並び・文のどれかが違えば送る（元が壊れていれば必ず送る）
  * - 正解：下書きの正解の今の位置（並べ替え・削除のあとの位置）が元の correctIndex と違えば送る
- * 選択肢を送るのに正解を選んでいなければ invalid。サーバーと同じ parsePatchQuestionBody で確かめ、通らなければ reason の文言
+ * 選択肢を送るのに、MAX_OPTIONS 件を超えている・正解を選んでいなければ invalid。サーバーと同じ parsePatchQuestionBody で確かめ、通らなければ reason の文言
  */
 export function questionEditOutcome(original: AdminQuizQuestion, draft: QuestionDraft): QuestionEditOutcome {
   const question = draft.question.trim();
@@ -402,6 +406,8 @@ export function questionEditOutcome(original: AdminQuizQuestion, draft: Question
   const correctChanged = finalIndex !== null && finalIndex !== original.correctIndex;
 
   if (!questionChanged && !optionsChanged && !correctChanged) return { kind: "unchanged" };
+  // 元の問題が 11 件以上（seed・旧 API で作られたもの）で選択肢を変えるときは、件数を先に知らせる
+  if (optionsChanged && options.length > MAX_OPTIONS) return { kind: "invalid", message: tooManyOptionsMessage(options.length) };
   if (optionsChanged && finalIndex === null) return { kind: "invalid", message: CORRECT_NOT_SELECTED_MESSAGE };
 
   const body: QuestionPatchBody = { revision: original.revision };
