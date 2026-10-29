@@ -5,6 +5,7 @@
  * password / an invalid token, so responses do not reveal that the account
  * exists but is deactivated.
  */
+import { isValidEmailInput } from "./auth-input";
 
 export function isDeactivated(user: { deactivatedAt: Date | null }): boolean {
   return user.deactivatedAt !== null && user.deactivatedAt !== undefined;
@@ -32,6 +33,30 @@ export async function checkCredentials<U extends { password: string; deactivated
   if (isDeactivated(user)) return null;
 
   return user;
+}
+
+/**
+ * NextAuth の Credentials の authorize の本体（#87。auth.ts から DB の読み込みと比較を渡す）。
+ *
+ * 未ログインで呼べるので、email が DB に渡せない形（string でない・空白だけ・長すぎる・
+ * NUL や対になっていないサロゲートを含む）なら DB を読まずに null を返す。password が
+ * string でないときも比較せずに null を返す。どちらも通常のログインの失敗と同じ null で、
+ * 例外を投げない。値は正規化せず、ログにも出さない。
+ */
+export async function authorizeCredentials<U extends { password: string; deactivatedAt: Date | null }>(
+  credentials: Partial<Record<"email" | "password", unknown>> | undefined,
+  findUserByEmail: (email: string) => Promise<U | null>,
+  compare: PasswordCompare
+): Promise<U | null> {
+  const email = credentials?.email;
+  const password = credentials?.password;
+  if (!email || !password) return null;
+  if (!isValidEmailInput(email) || typeof password !== "string") return null;
+
+  const user = await findUserByEmail(email);
+
+  // Wrong password and deactivated account (#7) both return null (same error).
+  return checkCredentials(user, password, compare);
 }
 
 export type ResetTokenRecord = {
