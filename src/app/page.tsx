@@ -22,7 +22,7 @@ import {
   ChevronRight, Clock, FileText, HelpCircle, Lock, Search, ArrowLeft,
   Plus, Award, Flame, CheckCircle2, PlayCircle, GraduationCap,
   LogOut, Target, Zap, Sparkles, ArrowUpRight, User,
-  AlertTriangle, Pencil, ChevronUp, ChevronDown, Trash2
+  AlertTriangle, Pencil, Trash2
 } from "lucide-react";
 import {
   DEFAULT_STUDENT_TAB,
@@ -151,7 +151,6 @@ import {
   editDialogTitle,
   initialQuestionDraft,
   interpretQuestionPatchResponse,
-  moveDraftOption,
   questionEditConfirmLines,
   questionEditOutcome,
   questionSavedMessage,
@@ -3925,7 +3924,7 @@ const AdminQuiz = () => {
     setEditError("");
   };
 
-  // 「保存」：送る内容を決めて確認の段へ進む（変わった項目と revision だけ。正解の位置は並べ替え・削除のあとの位置）
+  // 「保存」：送る内容を決めて確認の段へ進む（変わった項目と revision だけ。正解の位置は追加・削除のあとの位置）
   const goConfirm = () => {
     if (!editing || !draft || savingRef.current) return;
     const outcome = questionEditOutcome(editing.original, draft);
@@ -4224,8 +4223,6 @@ const AdminQuiz = () => {
                         <div key={o.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <input type="radio" name="nwa-quiz-edit-correct" checked={draft.correctKey === o.key} onChange={() => updateDraft(d => setDraftCorrect(d, o.key))} aria-label={`選択肢 ${i + 1} を正解にする`} style={{ flexShrink: 0, width: 16, height: 16, accentColor: T.success }} />
                           <input type="text" value={o.text} onChange={e => updateDraft(d => setDraftOptionText(d, o.key, e.target.value))} aria-label={`選択肢 ${i + 1}`} style={{ ...inputStyle, flex: 1, minWidth: 0, padding: "8px 12px", fontSize: 13.5 }} />
-                          <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を上へ`} disabled={i === 0} onClick={() => updateDraft(d => moveDraftOption(d, o.key, -1))} style={{ padding: "4px 6px", flexShrink: 0 }}><ChevronUp size={14} aria-hidden="true" /></Button>
-                          <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を下へ`} disabled={i === draft.options.length - 1} onClick={() => updateDraft(d => moveDraftOption(d, o.key, 1))} style={{ padding: "4px 6px", flexShrink: 0 }}><ChevronDown size={14} aria-hidden="true" /></Button>
                           <Button size="sm" variant="ghost" aria-label={`選択肢 ${i + 1} を削除`} disabled={!canRemoveOption(draft)} onClick={() => updateDraft(d => removeDraftOption(d, o.key))} style={{ padding: "4px 6px", flexShrink: 0, color: T.danger }}><Trash2 size={14} aria-hidden="true" /></Button>
                         </div>
                       ))}

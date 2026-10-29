@@ -274,7 +274,7 @@ export function quizStatusAfterEdit(questions: ReadonlyArray<AdminQuizQuestion>,
 export type OptionDraft = { key: number; text: string };
 
 /**
- * 編集中の内容。正解は位置ではなく選択肢の key で持つ（並べ替え・削除しても同じ選択肢を指す）。
+ * 編集中の内容。正解は位置ではなく選択肢の key で持つ（ほかの選択肢を削除・追加しても同じ選択肢を指す）。
  * 送るときに今の位置（correctIndex）に直す（questionEditOutcome）
  */
 export type QuestionDraft = {
@@ -323,16 +323,6 @@ export function addDraftOption(d: QuestionDraft): QuestionDraft {
 export function removeDraftOption(d: QuestionDraft, key: number): QuestionDraft {
   if (!canRemoveOption(d) || !d.options.some((o) => o.key === key)) return d;
   return { ...d, options: d.options.filter((o) => o.key !== key), correctKey: d.correctKey === key ? null : d.correctKey };
-}
-
-/** 選択肢を 1 つ上（-1）・下（+1）へ動かす。端なら何もしない。正解は key で持つので、同じ選択肢のまま */
-export function moveDraftOption(d: QuestionDraft, key: number, delta: -1 | 1): QuestionDraft {
-  const i = d.options.findIndex((o) => o.key === key);
-  const j = i + delta;
-  if (i < 0 || j < 0 || j >= d.options.length) return d;
-  const options = [...d.options];
-  [options[i], options[j]] = [options[j], options[i]];
-  return { ...d, options };
 }
 
 /** 正解の今の位置（0 から）。選んでいなければ null */
@@ -393,7 +383,7 @@ function sameTrimmed(a: ReadonlyArray<string>, b: ReadonlyArray<string> | null):
  * 元の問題（ダイアログを開いたときの内容）と下書きから、送る body を決める。送るのは変わった項目と revision だけ。
  * - 問題文：前後の空白を除いて、元（前後の空白を除いたもの）と違えば送る
  * - 選択肢：各要素の前後の空白を除いて、元と件数・並び・文のどれかが違えば送る（元が壊れていれば必ず送る）
- * - 正解：下書きの正解の今の位置（並べ替え・削除のあとの位置）が元の correctIndex と違えば送る
+ * - 正解：下書きの正解の今の位置（削除・追加のあとの位置）が元の correctIndex と違えば送る
  * 選択肢を送るのに、MAX_OPTIONS 件を超えている・正解を選んでいなければ invalid。サーバーと同じ parsePatchQuestionBody で確かめ、通らなければ reason の文言
  */
 export function questionEditOutcome(original: AdminQuizQuestion, draft: QuestionDraft): QuestionEditOutcome {

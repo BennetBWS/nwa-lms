@@ -155,8 +155,6 @@ const COMPONENTS = {
   CheckCircle2: stub("CheckCircle2"),
   ArrowLeft: stub("ArrowLeft"),
   Plus: stub("Plus"),
-  ChevronUp: stub("ChevronUp"),
-  ChevronDown: stub("ChevronDown"),
   Trash2: stub("Trash2"),
 };
 
@@ -707,21 +705,22 @@ describe("AdminQuiz 描画：編集ダイアログ", () => {
 });
 
 describe("AdminQuiz 描画：保存", () => {
-  it("選択肢の並べ替え：正解の位置を計算し直し、変わった項目と revision だけを PATCH で送る", async () => {
+  it("選択肢に上下の並べ替えボタンを出さない（#79 で受講生には毎回シャッフルして出すため。Tec 指示）", async () => {
     const { m } = await editing(2);
-    // 正解（B、2 番目）を上へ → [B, A, C]、正解は 0
-    click(button(m.render(), "選択肢 2 を上へ"));
-    assert.deepEqual(radios(dialog(m.render())).map((r) => r.props.checked), [true, false, false], "正解の印が選択肢についていかない");
+    const d = dialog(m.render());
+    for (let i = 1; i <= 3; i++) {
+      assert.equal(hasButton(d, `選択肢 ${i} を上へ`), false, `選択肢 ${i} を上へ のボタンがある`);
+      assert.equal(hasButton(d, `選択肢 ${i} を下へ`), false, `選択肢 ${i} を下へ のボタンがある`);
+    }
+  });
+
+  it("正解より前の選択肢の削除：PATCH で、正解の位置を詰めて変わった項目と revision だけを送る", async () => {
+    const { m } = await editing(2);
+    click(button(m.render(), "選択肢 1 を削除"));
+    assert.deepEqual(radios(dialog(m.render())).map((r) => r.props.checked), [true, false], "正解の印が選択肢についていかない");
     const r = saveFromDialog(m);
     assert.equal(r.url, adminQuestionUrl("qb"));
     assert.equal(r.init?.method, "PATCH");
-    assert.deepEqual(jsonBody(r), { revision: REV, options: ["選択肢B", "選択肢A", "選択肢C"], correctIndex: 0 });
-  });
-
-  it("正解でない選択肢の削除：正解の位置を詰めて送る", async () => {
-    const { m } = await editing(2);
-    click(button(m.render(), "選択肢 1 を削除"));
-    const r = saveFromDialog(m);
     assert.deepEqual(jsonBody(r), { revision: REV, options: ["選択肢B", "選択肢C"], correctIndex: 0 });
   });
 
@@ -1067,23 +1066,21 @@ describe("AdminQuiz 描画：壊れた問題と組み合わせた操作（tester
     assert.equal((plan.value.after.options as string[])[plan.value.after.correctIndex], "新C");
   });
 
-  it("追加 → 入力 → 先頭へ移動 → 正解に選ぶ → 元の選択肢を削除：body は下書きの並びと正解の位置", async () => {
+  it("追加 → 入力 → 正解に選ぶ → 元の正解だった選択肢を削除：body は下書きの並びと、削除のあとの正解の位置", async () => {
     const { m } = await editing(2);
     click(button(m.render(), "選択肢を追加"));
     change(byLabel(m.render(), "選択肢 4"), "新しいD");
-    for (let i = 4; i > 1; i--) click(button(m.render(), `選択肢 ${i} を上へ`));
-    assert.deepEqual(optionInputs(dialog(m.render())).map((i) => i.props.value), ["新しいD", "選択肢A", "選択肢B", "選択肢C"]);
-    pick(radios(dialog(m.render()))[0]);
-    // 元の正解だった B（3 番目）を消す
-    click(button(m.render(), "選択肢 3 を削除"));
+    pick(radios(dialog(m.render()))[3]);
+    // 元の正解だった B（2 番目）を消す。足した D（4 番目）が 3 番目に詰まる
+    click(button(m.render(), "選択肢 2 を削除"));
     const d = dialog(m.render());
-    assert.deepEqual(optionInputs(d).map((i) => i.props.value), ["新しいD", "選択肢A", "選択肢C"]);
-    assert.deepEqual(radios(d).map((r) => r.props.checked), [true, false, false], "正解の印がずれた");
+    assert.deepEqual(optionInputs(d).map((i) => i.props.value), ["選択肢A", "選択肢C", "新しいD"]);
+    assert.deepEqual(radios(d).map((r) => r.props.checked), [false, false, true], "正解の印がずれた");
     click(button(m.render(), "保存"));
     assert.ok(text(dialog(m.render())).includes("変更する項目：選択肢・正解"), "変更する項目が違う");
     click(button(m.render(), "保存する"));
     const body = jsonBody(m.reqs[m.reqs.length - 1]);
-    assert.deepEqual(body, { revision: REV, options: ["新しいD", "選択肢A", "選択肢C"], correctIndex: 0 });
+    assert.deepEqual(body, { revision: REV, options: ["選択肢A", "選択肢C", "新しいD"], correctIndex: 2 });
   });
 
   it("正解の選択肢を消すと正解なしに戻り、保存で知らせる（送らない）", async () => {

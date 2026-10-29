@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { MAX_OPTIONS, OPTION_MAX_LENGTH, QUESTION_MAX_LENGTH, parsePatchQuestionBody, planQuestionEdit, type AdminQuizDetail, type AdminQuizQuestion, type AdminQuizSummary } from "./admin-quizzes";
 import { MIN_OPTIONS } from "./student-quizzes";
+import * as adminQuizViewModule from "./admin-quiz-view";
 import {
   ADMIN_QUIZ_LIST_URL,
   BROKEN_OPTIONS_WARNING,
@@ -26,7 +27,6 @@ import {
   editDialogTitle,
   initialQuestionDraft,
   interpretQuestionPatchResponse,
-  moveDraftOption,
   pastAttemptsNotice,
   patchReasonMessage,
   questionEditConfirmLines,
@@ -324,15 +324,15 @@ describe("下書き", () => {
     assert.equal(draftCorrectIndex(removedCorrect), null);
   });
 
-  it("並べ替え：端では動かない。正解は同じ選択肢のまま", () => {
+  it("並べ替えの関数は持たない（#79 で受講生には毎回シャッフルして出すため。Tec 指示）", () => {
+    assert.equal("moveDraftOption" in adminQuizViewModule, false);
+  });
+
+  it("追加しても正解は同じ選択肢・同じ位置のまま。足した選択肢を正解にすると最後の位置", () => {
     const d = initialQuestionDraft(question());
-    assert.equal(moveDraftOption(d, keyAt(d, 0), -1), d);
-    assert.equal(moveDraftOption(d, keyAt(d, 2), 1), d);
-    const up = moveDraftOption(d, keyAt(d, 1), -1);
-    assert.deepEqual(up.options.map((o) => o.text), ["選択肢B", "選択肢A", "選択肢C"]);
-    assert.equal(draftCorrectIndex(up), 0);
-    const down = moveDraftOption(d, keyAt(d, 0), 1);
-    assert.equal(draftCorrectIndex(down), 0, "正解の前の選択肢を後ろへ動かしても正解の位置が追従しない");
+    const added = addDraftOption(d);
+    assert.equal(draftCorrectIndex(added), 1);
+    assert.equal(draftCorrectIndex(setDraftCorrect(added, keyAt(added, 3))), 3);
   });
 
   it("setDraftCorrect は存在しない key を無視する。setDraft* は元の下書きを変えない", () => {
@@ -375,23 +375,28 @@ describe("questionEditOutcome（送る body）", () => {
     assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["直したA", "選択肢B", "選択肢C"] }, changed: ["options"] });
   });
 
-  it("並べ替え：正解の選択肢を動かすと、選択肢と新しい位置の correctIndex を送る", () => {
-    const d = initialQuestionDraft(q);
-    const out = questionEditOutcome(q, moveDraftOption(d, keyAt(d, 1), 1));
-    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["選択肢A", "選択肢C", "選択肢B"], correctIndex: 2 }, changed: ["options", "correctIndex"] });
-  });
-
-  it("並べ替え：正解の前の選択肢を後ろへ動かすと、正解の位置が 1 つ前になる", () => {
-    const d = initialQuestionDraft(q);
-    const out = questionEditOutcome(q, moveDraftOption(moveDraftOption(d, keyAt(d, 0), 1), keyAt(d, 0), 1));
-    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["選択肢B", "選択肢C", "選択肢A"], correctIndex: 0 }, changed: ["options", "correctIndex"] });
-  });
-
-  it("並べ替え：正解でない 2 つを入れ替えても正解の位置が同じなら correctIndex は送らない", () => {
-    const q4 = question({ options: ["A", "B", "C", "D"], correctIndex: 0 });
+  it("削除：正解より後ろを消しても正解の位置は同じなので、correctIndex は送らない", () => {
+    const q4 = question({ options: ["A", "B", "C", "D"], correctIndex: 1 });
     const d = initialQuestionDraft(q4);
-    const out = questionEditOutcome(q4, moveDraftOption(d, keyAt(d, 2), 1));
-    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["A", "B", "D", "C"] }, changed: ["options"] });
+    const out = questionEditOutcome(q4, removeDraftOption(d, keyAt(d, 3)));
+    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["A", "B", "C"] }, changed: ["options"] });
+  });
+
+  it("削除：正解より前を 2 つ消すと、正解の位置を 2 つ詰める", () => {
+    const q4 = question({ options: ["A", "B", "C", "D"], correctIndex: 3 });
+    const d = initialQuestionDraft(q4);
+    const out = questionEditOutcome(q4, removeDraftOption(removeDraftOption(d, keyAt(d, 0)), keyAt(d, 2)));
+    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["B", "D"], correctIndex: 1 }, changed: ["options", "correctIndex"] });
+  });
+
+  it("追加して正解に選び、正解より前を消す：正解の位置は削除のあとの位置", () => {
+    const d0 = initialQuestionDraft(q);
+    let d = addDraftOption(d0);
+    const added = keyAt(d, 3);
+    d = setDraftCorrect(setDraftOptionText(d, added, "選択肢D"), added);
+    d = removeDraftOption(d, keyAt(d0, 0));
+    const out = questionEditOutcome(q, d);
+    assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["選択肢B", "選択肢C", "選択肢D"], correctIndex: 2 }, changed: ["options", "correctIndex"] });
   });
 
   it("削除：正解より前を消すと正解の位置を詰める。正解を消すと invalid", () => {
@@ -483,12 +488,11 @@ describe("questionEditOutcome（送る body）", () => {
       let d = initialQuestionDraft(original);
       for (let step = 0; step < 6; step++) {
         const k = d.options[rand(d.options.length)].key;
-        switch (rand(6)) {
-          case 0: d = moveDraftOption(d, k, rand(2) === 0 ? -1 : 1); break;
-          case 1: d = removeDraftOption(d, k); break;
-          case 2: d = setDraftOptionText(addDraftOption(d), d.nextKey, `追加${round}-${step}`); break;
-          case 3: d = setDraftOptionText(d, k, words[rand(words.length)] + round); break;
-          case 4: d = setDraftCorrect(d, k); break;
+        switch (rand(5)) {
+          case 0: d = removeDraftOption(d, k); break;
+          case 1: d = setDraftOptionText(addDraftOption(d), d.nextKey, `追加${round}-${step}`); break;
+          case 2: d = setDraftOptionText(d, k, words[rand(words.length)] + round); break;
+          case 3: d = setDraftCorrect(d, k); break;
           default: d = setDraftQuestion(d, rand(2) === 0 ? original.question : `問題${round}`);
         }
       }

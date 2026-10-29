@@ -16,7 +16,6 @@ import {
   addDraftOption,
   initialQuestionDraft,
   interpretQuestionPatchResponse,
-  moveDraftOption,
   patchReasonMessage,
   questionEditConfirmLines,
   questionEditOutcome,
@@ -88,13 +87,12 @@ describe("送る body：乱数で元の問題の形（壊れた選択肢・範�
       const steps = 1 + rand(7);
       for (let step = 0; step < steps; step++) {
         const k = d.options[rand(d.options.length)].key;
-        switch (rand(7)) {
-          case 0: d = moveDraftOption(d, k, rand(2) === 0 ? -1 : 1); break;
-          case 1: d = removeDraftOption(d, k); break;
-          case 2: { const next = d.nextKey; d = addDraftOption(d); d = setDraftOptionText(d, next, `追加${round}-${step}`); break; }
-          case 3: d = setDraftOptionText(d, k, words[rand(words.length)] + (rand(2) === 0 ? round : "")); break;
-          case 4:
-          case 5: d = setDraftCorrect(d, k); break;
+        switch (rand(6)) {
+          case 0: d = removeDraftOption(d, k); break;
+          case 1: { const next = d.nextKey; d = addDraftOption(d); d = setDraftOptionText(d, next, `追加${round}-${step}`); break; }
+          case 2: d = setDraftOptionText(d, k, words[rand(words.length)] + (rand(2) === 0 ? round : "")); break;
+          case 3:
+          case 4: d = setDraftCorrect(d, k); break;
           default: d = setDraftQuestion(d, rand(2) === 0 ? original.question : `問題${round}`);
         }
       }
@@ -141,25 +139,22 @@ describe("送る body：乱数で元の問題の形（壊れた選択肢・範�
     assert.ok(counts.unchanged >= 5 && counts.invalid >= 20, `unchanged / invalid の回数が少ない（検査の前提）：${JSON.stringify(counts)}`);
   });
 
-  it("10 件で追加・削除・並べ替えを組み合わせる：正解の選択肢を末尾へ動かしたあと 1 つ消しても、正解の位置は詰めて送る", () => {
-    const original = question({ options: Array.from({ length: MAX_OPTIONS }, (_, i) => `元${i}`), correctIndex: 0 });
+  it("10 件で追加・削除を組み合わせる：正解より前を 1 つ消して 1 つ足しても、正解の位置は詰めて送る", () => {
+    const original = question({ options: Array.from({ length: MAX_OPTIONS }, (_, i) => `元${i}`), correctIndex: 9 });
     let d = initialQuestionDraft(original);
     assert.equal(addDraftOption(d), d, "10 件で追加できた");
-    const correctKey = keyAt(d, 0);
-    for (let i = 0; i < MAX_OPTIONS; i++) d = moveDraftOption(d, correctKey, 1);
-    assert.equal(d.options[MAX_OPTIONS - 1].key, correctKey, "末尾まで動いていない");
     d = removeDraftOption(d, keyAt(d, 3));
     d = addDraftOption(d);
     d = setDraftOptionText(d, d.options[d.options.length - 1].key, "追加");
-    // 並び：元1, 元2, 元3, 元5, ..., 元9, 元0（正解）, 追加
+    // 並び：元0, 元1, 元2, 元4, ..., 元9（正解）, 追加
     const out = questionEditOutcome(original, d);
     assert.equal(out.kind, "ready");
     if (out.kind !== "ready") return;
-    assert.deepEqual(out.body.options, ["元1", "元2", "元3", "元5", "元6", "元7", "元8", "元9", "元0", "追加"]);
+    assert.deepEqual(out.body.options, ["元0", "元1", "元2", "元4", "元5", "元6", "元7", "元8", "元9", "追加"]);
     assert.equal(out.body.correctIndex, 8);
     const r = applyOnServer(original, out.body);
     assert.ok(!("error" in r), "サーバーで通らない");
-    assert.equal((r.plan.after.options as string[])[r.plan.after.correctIndex], "元0", "正解が元の正解の選択肢でない");
+    assert.equal((r.plan.after.options as string[])[r.plan.after.correctIndex], "元9", "正解が元の正解の選択肢でない");
   });
 });
 
@@ -214,9 +209,9 @@ describe("元のデータが今の規則の外にある問題（tester 追加）
     assert.deepEqual(out, { kind: "ready", body: { revision: REV, options: ["A", "B"], correctIndex: 0 }, changed: ["options", "correctIndex"] });
   });
 
-  it("正解が範囲外の問題：選択肢を並べ替えただけ（正解を選んでいない）は、正解を選ぶよう知らせる", () => {
+  it("正解が範囲外の問題：選択肢を消しただけ（正解を選んでいない）は、正解を選ぶよう知らせる", () => {
     const out = question({ correctIndex: 7, valid: false });
-    const d = moveDraftOption(initialQuestionDraft(out), 0, 1);
+    const d = removeDraftOption(initialQuestionDraft(out), 0);
     assert.deepEqual(questionEditOutcome(out, d), { kind: "invalid", message: CORRECT_NOT_SELECTED_MESSAGE });
   });
 });
