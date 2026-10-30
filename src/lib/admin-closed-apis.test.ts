@@ -251,6 +251,31 @@ function routesServing(url: string): Array<{ rel: string; path: string }> {
     .filter(({ rel }) => routeServes(toSegments(rel.split("/").slice(0, -1).join("/")), closed));
 }
 
+// ───────────── 画面（#81 Q2 のクイズ管理）から呼ぶ形 ─────────────
+// 本当の防御は、上の route 側の検査（閉じた URL の route が POST / PUT / DELETE を export していないこと）。
+// 画面側は (a) page.tsx にパスを直書きしない (b) パスを書いてよいのは画面用の lib の URL の 3 行だけ
+// (c) page.tsx のクイズ管理（AdminQuiz）の method: は "PATCH" の 1 か所だけ、の 3 つだけを確かめる。
+// 悪意のある書き換え（別名・getter・Request で包むなど）は、この検査ではなくレビューで見る。
+
+/** パスを書いてよい画面用の lib（リポジトリからの相対） */
+const VIEW_LIB = "src/lib/admin-quiz-view.ts";
+
+/** VIEW_LIB の中で、パスを書いてよい行（前後の空白を除いた全文）。URL の定数・関数の 3 行だけ */
+const VIEW_LIB_URL_LINES = [
+  'export const ADMIN_QUIZ_LIST_URL = "/api/admin/quizzes";',
+  "return `/api/admin/quizzes/${encodeURIComponent(quizId)}`;",
+  "return `/api/admin/questions/${encodeURIComponent(questionId)}`;",
+];
+
+/** page.tsx の `const AdminQuiz = (` から次のトップレベルの `const X = ` までを切り出す */
+function adminQuizSource(page: string): string {
+  const start = page.indexOf("const AdminQuiz = (");
+  assert.ok(start >= 0, "page.tsx に AdminQuiz がない");
+  const rest = page.slice(start);
+  const next = rest.slice(1).search(/\nconst [A-Z]\w* = |\nexport default function /);
+  return next < 0 ? rest : rest.slice(0, next + 1);
+}
+
 describe("使っていない危険な書き込み API は閉じたまま（#81 Q3）", () => {
   it("exportedMethods は関数・const・export { } の形を拾う（検査の前提）", () => {
     const sample = [
@@ -382,15 +407,15 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     assert.ok(exportedMethods(readFileSync(path, "utf8")).has("GET"), "admin/quizzes/route.ts に GET がない");
   });
 
-  // Q2 で画面から管理用のクイズ・問題の API（GET / PATCH）を呼ぶときは、閉じたメソッド（POST / PUT / DELETE）を
-  // 使っていないことを確かめてから、この検査と下の「テスト以外のコード」の検査の両方を更新する
-  it("画面（page.tsx）は管理用のクイズ・問題の API を呼んでいない", () => {
+  // #81 Q2：画面（クイズ管理）は GET（一覧・詳細）と PATCH（問題の修正）だけを、画面用の lib の URL の定数・関数で呼ぶ。
+  // 呼び出しを足す・変えるときは、閉じたメソッド（POST / PUT / DELETE）を使っていないことを確かめてから、ここと下の検査を更新する
+  it("画面（page.tsx）は管理用のクイズ・問題の API のパスを直書きしない", () => {
     const source = readFileSync(PAGE, "utf8");
     const hits = source
       .split("\n")
       .map((text, i) => ({ line: i + 1, text: text.trim() }))
       .filter(({ text }) => /\/api\/admin\/(quizzes|questions)\b/.test(text));
-    assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API を参照している：${JSON.stringify(hits)}`);
+    assert.deepEqual(hits, [], `page.tsx が管理用のクイズ・問題の API のパスを直書きしている：${JSON.stringify(hits)}`);
   });
 
   it("参照の走査は、外した route ファイル以外の参照を拾う（検査の前提）", () => {
@@ -416,8 +441,9 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
     }
   });
 
-  // Q2 で呼び出し元を足すときは、閉じたメソッドを使っていないことを確かめてから、この検査と上の page.tsx の検査の両方を更新する
-  it("テスト以外のコード（src・scripts・prisma）は管理用のクイズ・問題の API を参照していない", () => {
+  // #81 Q2：パスを書いてよいのは画面用の lib（VIEW_LIB）の URL の 3 行だけ。呼び出し元を足すときは、閉じたメソッドを
+  // 使っていないことを確かめてから、この検査と上の page.tsx の検査の両方を更新する
+  it("テスト以外のコード（src・scripts・prisma）は、画面用の lib の URL の 3 行のほかに管理用のクイズ・問題の API を参照していない", () => {
     const CODE = /\.(?:ts|tsx|js|jsx|mjs|cjs)$/;
     const TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$|\.test-helpers\.ts$/;
     const files: string[] = [];
@@ -437,8 +463,23 @@ describe("使っていない危険な書き込み API は閉じたまま（#81 Q
       // 管理用のクイズ・問題の API 自身の route ファイル（src/app/api/admin/quizzes/・questions/ の下）は外す。
       // ログ・コメントに自分のパスを書く慣習があり、Q1 で PATCH /api/admin/questions/[id] を足すと落ちるため。
       // そのほかのファイルに出てくるパスは呼び出し元とみなす（外す範囲は isOwnAdminQuizRoute と上の前提の検査を参照）
-      hits.push(...adminQuizApiRefs(relative(ROOT, f).split(sep).join("/"), readFileSync(f, "utf8")));
+      const rel = relative(ROOT, f).split(sep).join("/");
+      const source = readFileSync(f, "utf8");
+      const refs = adminQuizApiRefs(rel, source);
+      if (rel !== VIEW_LIB) {
+        hits.push(...refs);
+        continue;
+      }
+      // 画面用の lib は、URL の 3 行だけを許す（コメントにもパスを書かない）
+      const lines = source.split("\n");
+      hits.push(...refs.filter((r) => !VIEW_LIB_URL_LINES.includes(lines[Number(r.split(":").pop()) - 1].trim())));
     }
     assert.deepEqual(hits, [], `管理用のクイズ・問題の API の参照が残っている：${JSON.stringify(hits)}`);
+  });
+
+  it("page.tsx のクイズ管理（AdminQuiz）の method: は \"PATCH\" の 1 か所だけ", () => {
+    const comp = adminQuizSource(readFileSync(PAGE, "utf8"));
+    const methods = Array.from(comp.matchAll(/\bmethod\s*:\s*([^,}\s]+)/g), (m) => m[1]);
+    assert.deepEqual(methods, ['"PATCH"'], `AdminQuiz の method: が "PATCH" の 1 か所だけでない：${JSON.stringify(methods)}`);
   });
 });

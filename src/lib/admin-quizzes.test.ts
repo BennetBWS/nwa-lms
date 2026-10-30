@@ -531,7 +531,8 @@ describe("import の境界（node:crypto を画面に入れない）", () => {
     return Array.from(src.matchAll(/(?:from\s+|import\s*\(\s*|require\s*\(\s*)["']([^"']+)["']/g), (m) => m[1]);
   };
 
-  for (const rel of ["src/app/page.tsx", "src/lib/admin-quizzes.ts"]) {
+  // admin-quiz-view.ts は #81 Q2 の画面用の lib（page.tsx が import する）
+  for (const rel of ["src/app/page.tsx", "src/lib/admin-quizzes.ts", "src/lib/admin-quiz-view.ts"]) {
     it(`${rel} は admin-quiz-revision・node:crypto を import しない`, () => {
       const specs = importsOf(rel);
       assert.ok(specs.length > 0, `${rel} の import を読めていない`);
